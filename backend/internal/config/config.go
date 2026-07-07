@@ -14,6 +14,8 @@ type Config struct {
 	LogLevel            string
 	AllowAllCORS        bool
 	ReadTimeout         time.Duration
+	WriteTimeout        time.Duration
+	IdleTimeout         time.Duration
 	ShutdownGrace       time.Duration
 	MongoEnabled        bool
 	MongoURI            string
@@ -37,8 +39,20 @@ type Config struct {
 	AssistantAPIKey string
 	AssistantModel  string
 
+	// Project files
+	FilesStoragePath string
+
+	// External URL exposed to agents for file download (e.g. "http://192.168.1.100:8080")
+	ExternalURL string
+
+	// Download token TTL for agent file access
+	DownloadTokenTTL time.Duration
+
 	// Market
 	MarketDataPath string
+
+	// Platform branding
+	PlatformName string
 }
 
 func Load() Config {
@@ -50,6 +64,8 @@ func Load() Config {
 		LogLevel:            getEnv("LOG_LEVEL", "info"),
 		AllowAllCORS:        getEnvBool("ALLOW_ALL_CORS", true),
 		ReadTimeout:         getEnvDuration("READ_TIMEOUT", 10*time.Second),
+		WriteTimeout:        getEnvDuration("WRITE_TIMEOUT", 30*time.Second),
+		IdleTimeout:         getEnvDuration("IDLE_TIMEOUT", 120*time.Second),
 		ShutdownGrace:       getEnvDuration("SHUTDOWN_GRACE", 8*time.Second),
 		MongoEnabled:        getEnvBool("MONGO_ENABLED", true),
 		MongoURI:            getEnv("MONGO_URI", "mongodb://127.0.0.1:27017"),
@@ -67,11 +83,18 @@ func Load() Config {
 		QdrantURL:          getEnv("QDRANT_URL", "http://127.0.0.1:6333"),
 		KnowledgeStorePath: getEnv("KNOWLEDGE_STORAGE_PATH", "/var/lib/trustmesh-knowledge"),
 
+		FilesStoragePath: getEnv("FILES_STORAGE_PATH", "/var/lib/trustmesh-files"),
+
+		ExternalURL:      getEnv("TRUSTMESH_EXTERNAL_URL", "http://127.0.0.1:8080"),
+		DownloadTokenTTL: getEnvDuration("DOWNLOAD_TOKEN_TTL", 10*time.Minute),
+
 		AssistantAPIURL: getEnv("ASSISTANT_API_URL", "https://api.openai.com/v1"),
 		AssistantAPIKey: getEnv("ASSISTANT_API_KEY", ""),
 		AssistantModel:  getEnv("ASSISTANT_MODEL", "gpt-4o-mini"),
 
 		MarketDataPath: getEnv("MARKET_DATA_PATH", "data/roles_index.json"),
+
+		PlatformName: getEnv("PLATFORM_NAME", "TrustMesh"),
 	}
 }
 

@@ -2,7 +2,7 @@ name: trustmesh
 
 services:
   mongo:
-    image: mongodb/mongodb-community-server:8.2-ubuntu2204
+    image: mongodb/mongodb-community-server:7.0-ubuntu2204
     container_name: trustmesh-mongo
     restart: unless-stopped
     command: ["--bind_ip_all"]
@@ -40,7 +40,12 @@ services:
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-1536}
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
       KNOWLEDGE_STORAGE_PATH: ${KNOWLEDGE_STORAGE_PATH:-/var/lib/trustmesh-knowledge}
+      FILES_STORAGE_PATH: ${FILES_STORAGE_PATH:-/var/lib/trustmesh-files}
+      TRUSTMESH_EXTERNAL_URL: ${TRUSTMESH_EXTERNAL_URL:-http://127.0.0.1:8080}
+      DOWNLOAD_TOKEN_TTL: ${DOWNLOAD_TOKEN_TTL:-10m}
+      WRITE_TIMEOUT: ${WRITE_TIMEOUT:-0}
       ASSISTANT_API_URL: ${ASSISTANT_API_URL:-https://api.openai.com/v1}
+      PLATFORM_NAME: ${PLATFORM_NAME:-TrustMesh}
       ASSISTANT_API_KEY: ${ASSISTANT_API_KEY:-}
       ASSISTANT_MODEL: ${ASSISTANT_MODEL:-gpt-4o-mini}
     ports:
@@ -48,6 +53,7 @@ services:
     volumes:
       - trustmesh-transfer-data:/var/lib/trustmesh-transfers:ro
       - trustmesh-knowledge-data:/var/lib/trustmesh-knowledge
+      - trustmesh-files-data:/var/lib/trustmesh-files
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1"]
       interval: 10s
@@ -129,3 +135,4 @@ volumes:
   trustmesh-transfer-data:
   trustmesh-qdrant-data:
   trustmesh-knowledge-data:
+  trustmesh-files-data:

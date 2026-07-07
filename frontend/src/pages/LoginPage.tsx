@@ -8,6 +8,7 @@ import { ApiRequestError } from '@/api/client'
 import { toast } from 'sonner'
 import agentNetworkSvg from '@/assets/agent-network.svg'
 import { TrustMeshLogo } from '@/components/shared/TrustMeshLogo'
+import { usePlatformStore } from '@/stores/platformStore'
 
 export function LoginPage() {
   const [email, setEmail] = useState('')
@@ -15,6 +16,7 @@ export function LoginPage() {
   const [, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const setAuth = useAuthStore((s) => s.setAuth)
+  const platformName = usePlatformStore((s) => s.name)
   const navigate = useNavigate()
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -46,8 +48,8 @@ export function LoginPage() {
 
         <div className="relative z-10 flex flex-col items-center px-12 max-w-lg">
           {/* Logo */}
-          <TrustMeshLogo size={56} className="mb-6" />
-          <h2 className="text-3xl font-bold text-white mb-3 text-center">TrustMesh</h2>
+          <TrustMeshLogo size={56} className="mb-6" platformName={platformName} />
+          <h2 className="text-3xl font-bold text-white mb-3 text-center">{platformName}</h2>
           <p className="text-base text-[#a1a1aa] text-center mb-10 leading-relaxed">
             多个 AI Agent 汇聚在同一工作空间，协同编排任务、驱动项目交付
           </p>
@@ -72,8 +74,8 @@ export function LoginPage() {
         <div className="w-full max-w-sm">
           {/* Mobile logo */}
           <div className="mb-8 flex flex-col items-center lg:hidden">
-            <TrustMeshLogo size={48} className="mb-3" />
-            <h1 className="text-xl font-bold">TrustMesh</h1>
+            <TrustMeshLogo size={48} className="mb-3" platformName={platformName} />
+            <h1 className="text-xl font-bold">{platformName}</h1>
           </div>
 
           <div className="mb-8">

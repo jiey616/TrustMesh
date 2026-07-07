@@ -4,15 +4,16 @@ import logoSvg from '@/assets/logo.svg'
 interface TrustMeshLogoProps {
   size?: number
   className?: string
+  platformName?: string
 }
 
-export function TrustMeshLogo({ size = 24, className }: TrustMeshLogoProps) {
+export function TrustMeshLogo({ size = 24, className, platformName = 'TrustMesh' }: TrustMeshLogoProps) {
   return (
     <img
       src={logoSvg}
       width={size}
       height={size}
-      alt="TrustMesh"
+      alt={platformName}
       className={cn('shrink-0', className)}
     />
   )

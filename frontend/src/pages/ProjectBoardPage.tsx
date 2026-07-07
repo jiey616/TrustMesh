@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { MessageSquarePlus, MoreHorizontal, Pencil, Archive, Loader2 } from 'lucide-react'
+import { MessageSquarePlus, MoreHorizontal, Pencil, Archive, Loader2, FolderOpen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
 import { AgentStatusDot, ProjectStatusBadge, ProjectWorkStatusBadge } from '@/components/shared/StatusBadge'
@@ -9,6 +9,7 @@ import { TaskListView } from '@/components/task/TaskListView'
 import { TaskWorkspace } from '@/components/task/TaskWorkspace'
 import { EditProjectDialog } from '@/components/project/EditProjectDialog'
 import { ArchiveProjectDialog } from '@/components/project/ArchiveProjectDialog'
+import { FileExplorer } from '@/components/project/FileExplorer'
 import { useProject } from '@/hooks/useProjects'
 import { useTasks } from '@/hooks/useTasks'
 import { formatDateTime, formatRelativeTime } from '@/lib/utils'
@@ -26,6 +27,8 @@ type WorkspaceState =
   | { kind: 'draft'; projectId: string }
   | null
 
+type ProjectTab = 'tasks' | 'files'
+
 export function ProjectBoardPage() {
   const navigate = useNavigate()
   const { projectId } = useParams<{ projectId: string }>()
@@ -34,6 +37,7 @@ export function ProjectBoardPage() {
   const [workspace, setWorkspace] = useState<WorkspaceState>(null)
   const [editOpen, setEditOpen] = useState(false)
   const [archiveOpen, setArchiveOpen] = useState(false)
+  const [activeTab, setActiveTab] = useState<ProjectTab>('tasks')
   const setFabVisibility = useAssistantStore((state) => state.setFabVisibility)
   const [taskSelectionState, setTaskSelectionState] = useState<TaskSelectionState>({
     observedTasks: undefined,
@@ -171,8 +175,38 @@ export function ProjectBoardPage() {
         </div>
       </div>
 
-      {/* Split layout: Task List + Detail Panel (Asana style) */}
-      {isLoading ? (
+      {/* Tabs */}
+      <div className="flex items-center gap-0 border-b px-6">
+        <button
+          onClick={() => setActiveTab('tasks')}
+          className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'tasks'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <MessageSquarePlus className="size-4" />
+          任务
+        </button>
+        <button
+          onClick={() => setActiveTab('files')}
+          className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'files'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <FolderOpen className="size-4" />
+          文件
+        </button>
+      </div>
+
+      {/* Content */}
+      {activeTab === 'files' ? (
+        <div className="flex-1 min-h-0">
+          <FileExplorer projectId={projectId!} />
+        </div>
+      ) : isLoading ? (
         <div className="flex flex-1 items-center justify-center">
           <Loader2 className="size-8 animate-spin text-muted-foreground" />
         </div>

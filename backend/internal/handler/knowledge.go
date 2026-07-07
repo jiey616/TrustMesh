@@ -46,12 +46,22 @@ func (h *KnowledgeHandler) Upload(c *gin.Context) {
 		return
 	}
 
+	// Apply upload limits: max file size 100MB + file type whitelist
+	applyUploadLimit(c)
+
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
 		transport.WriteError(c, transport.BadRequest("BAD_REQUEST", "file is required"))
 		return
 	}
 	defer file.Close()
+
+	// Validate file extension against whitelist
+	if !validateFileExtension(header.Filename) {
+		transport.WriteError(c, transport.BadRequest("UNSUPPORTED_FILE_TYPE",
+			"不支持的文件类型。允许的格式：文档、图片、压缩包、代码文件等。"))
+		return
+	}
 
 	title := strings.TrimSpace(c.PostForm("title"))
 	if title == "" {

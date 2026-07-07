@@ -25,6 +25,7 @@ import { useAgents } from '@/hooks/useAgents'
 import { useUnreadCount } from '@/hooks/useNotifications'
 import { useJoinRequests } from '@/hooks/useJoinRequests'
 import { useAuthStore } from '@/stores/authStore'
+import { usePlatformStore } from '@/stores/platformStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { useState, useEffect } from 'react'
 import type { ProjectWorkStatus } from '@/types'
@@ -72,6 +73,7 @@ export function Sidebar({ onCreateProject }: SidebarProps) {
   const { data: projects } = useProjects()
   const { data: agents } = useAgents()
   const { data: unreadCount } = useUnreadCount()
+  const platformName = usePlatformStore((s) => s.name)
   const { data: pendingRequests } = useJoinRequests('pending')
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
@@ -103,8 +105,8 @@ export function Sidebar({ onCreateProject }: SidebarProps) {
       <div className="flex h-14 items-center gap-2 px-4">
         {!collapsed && (
           <Link to="/dashboard" className="flex items-center gap-2 font-semibold text-lg">
-            <TrustMeshLogo size={28} />
-            智能体协作平台
+            <TrustMeshLogo size={28} platformName={platformName} />
+            {platformName}
           </Link>
         )}
         <Button

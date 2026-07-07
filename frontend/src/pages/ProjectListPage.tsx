@@ -15,7 +15,8 @@ import { formatRelativeTime } from '@/lib/utils'
 export function ProjectListPage() {
   const { data: projects, isLoading } = useProjects()
   const [showCreate, setShowCreate] = useState(false)
-  const activeProjects = projects?.filter((p) => p.status === 'active') ?? []
+  const activeProjects = (projects ?? []).filter((p) => p.status === 'active')
+  const archivedProjects = (projects ?? []).filter((p) => p.status === 'archived')
 
   return (
     <PageContainer>
@@ -44,7 +45,7 @@ export function ProjectListPage() {
             </Card>
           ))}
         </div>
-      ) : activeProjects.length === 0 ? (
+      ) : projects?.length === 0 ? (
         <EmptyState
           icon={FolderKanban}
           title="还没有项目"
@@ -57,14 +58,25 @@ export function ProjectListPage() {
           }
         />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {activeProjects.map((project) => (
+        <>
+          {activeProjects.length === 0 && archivedProjects.length > 0 && (
+            <div className="mb-4 p-3 border rounded-md bg-muted/30 text-sm text-muted-foreground">
+              当前没有活跃项目，以下为已归档项目。
+            </div>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {[...activeProjects, ...archivedProjects].map((project) => (
             <Link key={project.id} to={`/projects/${project.id}`}>
-              <Card className="transition-all hover:shadow-md hover:border-primary/30 cursor-pointer group">
+              <Card className={`transition-all hover:shadow-md hover:border-primary/30 cursor-pointer group ${project.status === 'archived' ? 'opacity-60 hover:opacity-80' : ''}`}>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-base group-hover:text-primary transition-colors">
                     <FolderKanban className="size-4 shrink-0" />
                     {project.name}
+                    {project.status === 'archived' && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-normal">
+                        已归档
+                      </span>
+                    )}
                   </CardTitle>
                   <div>
                     <ProjectWorkStatusBadge status={project.task_summary.work_status} />
@@ -106,6 +118,7 @@ export function ProjectListPage() {
             </Link>
           ))}
         </div>
+        </>
       )}
 
       <CreateProjectDialog open={showCreate} onOpenChange={setShowCreate} />

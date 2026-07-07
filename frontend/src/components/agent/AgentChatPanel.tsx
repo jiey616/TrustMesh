@@ -10,6 +10,7 @@ import { MessageInput } from '@/components/task-thread/MessageInput'
 import { useAgentChat, useAgentChatSession, useAgentChatSessions, useResetAgentChat, useSendAgentChatMessage } from '@/hooks/useAgentChat'
 import { cn, formatDateTime, formatRelativeTime } from '@/lib/utils'
 import { ApiRequestError } from '@/api/client'
+import { usePlatformStore } from '@/stores/platformStore'
 import type { Agent, AgentChatSessionSummary } from '@/types'
 
 interface AgentChatPanelProps {
@@ -29,6 +30,7 @@ export function AgentChatPanel({ agent }: AgentChatPanelProps) {
   const resetChat = useResetAgentChat()
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
   const [isDraftingNewSession, setIsDraftingNewSession] = useState(false)
+  const platformName = usePlatformStore((s) => s.name)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const effectiveSelectedSessionId = useMemo(() => {
     if (isDraftingNewSession) {
@@ -148,7 +150,7 @@ export function AgentChatPanel({ agent }: AgentChatPanelProps) {
               <div>
                 <p className="text-sm font-medium">{selectedIsActive ? `开始和 ${agent.name} 对话` : '该对话暂无消息'}</p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {selectedIsActive ? '消息会保存在 TrustMesh，远端上下文由 Agent 自身维护。' : '这是历史记录中的空会话。'}
+                  {selectedIsActive ? `消息会保存在 ${platformName}，远端上下文由 Agent 自身维护。` : '这是历史记录中的空会话。'}
                 </p>
               </div>
             </div>

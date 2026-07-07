@@ -16,6 +16,7 @@ import { RoleDetailPage } from '@/pages/RoleDetailPage'
 import { useAuthStore } from '@/stores/authStore'
 import { Toaster } from '@/components/ui/sonner'
 import { RealtimeProvider } from '@/realtime/provider'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { refresh as refreshApi } from '@/api/auth'
 
 const queryClient = new QueryClient({
@@ -70,39 +71,41 @@ export default function App() {
   if (!ready) return null
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <RealtimeProvider>
-        <BrowserRouter>
-          <Routes>
-            {/* Guest Routes */}
-            <Route path="/login" element={<GuestRoute><LoginPage /></GuestRoute>} />
-            <Route path="/register" element={<GuestRoute><RegisterPage /></GuestRoute>} />
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <RealtimeProvider>
+          <BrowserRouter>
+            <Routes>
+              {/* Guest Routes */}
+              <Route path="/login" element={<GuestRoute><LoginPage /></GuestRoute>} />
+              <Route path="/register" element={<GuestRoute><RegisterPage /></GuestRoute>} />
 
-            {/* Protected Routes */}
-            <Route
-              element={
-                <ProtectedRoute>
-                  <MainLayout />
-                </ProtectedRoute>
-              }
-            >
-              <Route path="/dashboard" element={<DashboardPage />} />
-              <Route path="/inbox" element={<InboxPage />} />
-              <Route path="/projects" element={<ProjectListPage />} />
-              <Route path="/projects/:projectId" element={<ProjectBoardPage />} />
-              <Route path="/agent-invite" element={<AgentInvitePage />} />
-              <Route path="/agents/:id" element={<AgentDetailPage />} />
-              <Route path="/knowledge" element={<KnowledgePage />} />
-              <Route path="/market" element={<MarketPage />} />
-              <Route path="/market/roles/:id" element={<RoleDetailPage />} />
-            </Route>
+              {/* Protected Routes */}
+              <Route
+                element={
+                  <ProtectedRoute>
+                    <MainLayout />
+                  </ProtectedRoute>
+                }
+              >
+                <Route path="/dashboard" element={<DashboardPage />} />
+                <Route path="/inbox" element={<InboxPage />} />
+                <Route path="/projects" element={<ProjectListPage />} />
+                <Route path="/projects/:projectId" element={<ProjectBoardPage />} />
+                <Route path="/agent-invite" element={<AgentInvitePage />} />
+                <Route path="/agents/:id" element={<AgentDetailPage />} />
+                <Route path="/knowledge" element={<KnowledgePage />} />
+                <Route path="/market" element={<MarketPage />} />
+                <Route path="/market/roles/:id" element={<RoleDetailPage />} />
+              </Route>
 
-            {/* Redirect */}
-            <Route path="*" element={<Navigate to="/dashboard" replace />} />
-          </Routes>
-        </BrowserRouter>
-      </RealtimeProvider>
-      <Toaster position="top-center" />
-    </QueryClientProvider>
+              {/* Redirect */}
+              <Route path="*" element={<Navigate to="/dashboard" replace />} />
+            </Routes>
+          </BrowserRouter>
+        </RealtimeProvider>
+        <Toaster position="top-center" />
+      </QueryClientProvider>
+    </ErrorBoundary>
   )
 }
