@@ -1,12 +1,17 @@
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronRight, Plus } from 'lucide-react'
 import { useState } from 'react'
 import { TodoList } from './TodoList'
+import { Button } from '@/components/ui/button'
 import type { TaskArtifact, Todo } from '@/types'
 
 interface TaskTodoSectionProps {
   todos: Todo[]
   artifacts: TaskArtifact[]
   defaultCollapsed?: boolean
+  editable?: boolean
+  onAddTodo?: () => void
+  onEditTodo?: (todo: Todo) => void
+  onDeleteTodo?: (todo: Todo) => void
 }
 
 function summarizeTodos(todos: Todo[]) {
@@ -50,6 +55,10 @@ export function TaskTodoSection({
   todos,
   artifacts,
   defaultCollapsed = true,
+  editable = false,
+  onAddTodo,
+  onEditTodo,
+  onDeleteTodo,
 }: TaskTodoSectionProps) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed)
   const summary = summarizeTodos(todos)
@@ -74,7 +83,23 @@ export function TaskTodoSection({
 
       {!collapsed && (
         <div className="border-t px-3 py-3">
-          <TodoList todos={todos} artifacts={artifacts} />
+          <TodoList
+            todos={todos}
+            artifacts={artifacts}
+            onEditTodo={editable ? onEditTodo : undefined}
+            onDeleteTodo={editable ? onDeleteTodo : undefined}
+          />
+          {editable && onAddTodo && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-2 w-full gap-1 text-muted-foreground hover:text-foreground"
+              onClick={onAddTodo}
+            >
+              <Plus className="size-3.5" />
+              添加 TODO
+            </Button>
+          )}
         </div>
       )}
     </section>

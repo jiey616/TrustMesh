@@ -19,19 +19,20 @@ export interface CreateTaskInput {
   description: string
   priority?: TaskPriority
   assignee_agent_id: string
+  file_ids?: string[]
 }
 
 export async function createTask(projectId: string, input: CreateTaskInput) {
   return api.post(`projects/${projectId}/tasks`, { json: input }).json<ApiResponse<TaskDetail>>()
 }
 
-export async function createPlanningTask(projectId: string, input: CreatePlanningTaskRequest) {
+export async function createPlanningTask(projectId: string, input: CreatePlanningTaskRequest & { file_ids?: string[] }) {
   return api.post(`projects/${projectId}/tasks/planning`, { json: input }).json<ApiResponse<TaskDetail>>()
 }
 
-export async function createTaskFromText(projectId: string, content: string, agentId?: string) {
+export async function createTaskFromText(projectId: string, content: string, agentId?: string, fileIds?: string[]) {
   return api
-    .post(`projects/${projectId}/tasks/from-text`, { json: { content, agent_id: agentId ?? '' } })
+    .post(`projects/${projectId}/tasks/from-text`, { json: { content, agent_id: agentId ?? '', file_ids: fileIds ?? [] } })
     .json<ApiResponse<TaskDetail>>()
 }
 
@@ -91,4 +92,45 @@ export async function addTaskComment(taskId: string, input: AddTaskCommentInput)
 
 export async function getTaskArtifactContent(taskId: string, transferId: string) {
   return api.get(`tasks/${taskId}/artifacts/${transferId}/content`).blob()
+}
+
+// ─── Dynamic TODO management ───
+
+export interface AddTodoInput {
+  title: string
+  description?: string
+  assignee_id: string
+}
+
+export interface InsertTodoInput {
+  title: string
+  description?: string
+  assignee_id: string
+  before_todo_id: string
+}
+
+export interface UpdateTodoInput {
+  title?: string
+  description?: string
+  assignee_id?: string
+}
+
+export async function addTaskTodo(taskId: string, input: AddTodoInput) {
+  return api.post(`tasks/${taskId}/todos`, { json: input }).json<ApiResponse<TaskDetail>>()
+}
+
+export async function insertTaskTodo(taskId: string, todoId: string, input: AddTodoInput) {
+  return api.post(`tasks/${taskId}/todos/${todoId}/insert`, { json: input }).json<ApiResponse<TaskDetail>>()
+}
+
+export async function updateTaskTodo(taskId: string, todoId: string, input: UpdateTodoInput) {
+  return api.patch(`tasks/${taskId}/todos/${todoId}`, { json: input }).json<ApiResponse<TaskDetail>>()
+}
+
+export async function removeTaskTodo(taskId: string, todoId: string) {
+  return api.delete(`tasks/${taskId}/todos/${todoId}`).json<ApiResponse<TaskDetail>>()
+}
+
+export async function reorderTaskTodos(taskId: string, todoIds: string[]) {
+  return api.put(`tasks/${taskId}/todos/reorder`, { json: { todo_ids: todoIds } }).json<ApiResponse<TaskDetail>>()
 }

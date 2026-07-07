@@ -112,6 +112,35 @@ type TodoAssignedPayload struct {
 	ExecBrief    *TodoExecBrief    `json:"exec_brief,omitempty"`
 	TaskContext  *TaskContext      `json:"task_context,omitempty"`
 	PriorResults []TodoPriorResult `json:"prior_results,omitempty"`
+	AttachedFiles []TaskAttachedFileRef `json:"attached_files,omitempty"`
+}
+
+// TaskAttachedFileRef carries file info embedded in task messages.
+type TaskAttachedFileRef struct {
+	ID          string `json:"id"`
+	FileName    string `json:"file_name"`
+	FileSize    int64  `json:"file_size"`
+	MimeType    string `json:"mime_type"`
+	Source      string `json:"source"`
+	DownloadUrl string `json:"download_url,omitempty"`
+}
+
+// TaskAttachedFilesToRefs converts model-level attached files to protocol refs.
+func TaskAttachedFilesToRefs(files []model.TaskAttachedFile) []TaskAttachedFileRef {
+	if len(files) == 0 {
+		return nil
+	}
+	out := make([]TaskAttachedFileRef, len(files))
+	for i, f := range files {
+		out[i] = TaskAttachedFileRef{
+			ID:       f.ID,
+			FileName: f.FileName,
+			FileSize: f.FileSize,
+			MimeType: f.MimeType,
+			Source:   f.Source,
+		}
+	}
+	return out
 }
 
 // TaskContext provides task-level context for the assigned agent.
@@ -209,13 +238,34 @@ type PMTaskAgent struct {
 
 // PMTaskMessage is published by TrustMesh to PM Agent during planning phase.
 type PMTaskMessage struct {
-	SchemaVersion   string            `json:"schema_version"`
-	TaskID          string            `json:"task_id"`
-	ProjectID       string            `json:"project_id"`
-	Content         string            `json:"content"`
-	UserContent     string            `json:"user_content"`
-	IsInitial       bool              `json:"is_initial_message"`
-	UserUIResponse  *model.UIResponse `json:"user_ui_response,omitempty"`
-	Project         *PMTaskProject    `json:"project,omitempty"`
-	CandidateAgents []PMTaskAgent     `json:"candidate_agents,omitempty"`
+	SchemaVersion   string               `json:"schema_version"`
+	TaskID          string               `json:"task_id"`
+	ProjectID       string               `json:"project_id"`
+	Content         string               `json:"content"`
+	UserContent     string               `json:"user_content"`
+	IsInitial       bool                 `json:"is_initial_message"`
+	UserUIResponse  *model.UIResponse    `json:"user_ui_response,omitempty"`
+	Project         *PMTaskProject       `json:"project,omitempty"`
+	CandidateAgents []PMTaskAgent        `json:"candidate_agents,omitempty"`
+	AttachedFiles   []TaskAttachedFileRef `json:"attached_files,omitempty"`
+}
+
+// ——— PM Agent dynamic todo management ———
+
+// TodoAddPayload is published by PM Agent to dynamically append a new TODO.
+type TodoAddPayload struct {
+	TaskID          string `json:"task_id"`
+	Title           string `json:"title"`
+	Description    string `json:"description"`
+	AssigneeNodeID string `json:"assignee_node_id"`
+	BeforeTodoID   string `json:"before_todo_id,omitempty"` // empty = append to end
+}
+
+// TodoModifyPayload is published by PM Agent to dynamically update a TODO.
+type TodoModifyPM struct {
+	TaskID          string `json:"task_id"`
+	TodoID          string `json:"todo_id"`
+	Title           string `json:"title,omitempty"`
+	Description    string `json:"description,omitempty"`
+	AssigneeNodeID string `json:"assignee_node_id,omitempty"`
 }

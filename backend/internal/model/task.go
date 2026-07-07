@@ -40,6 +40,9 @@ type Todo struct {
 	CancelReason *string      `json:"cancel_reason" bson:"cancel_reason"`
 	Result       TodoResult   `json:"result" bson:"result"`
 	CreatedAt    time.Time    `json:"created_at" bson:"created_at"`
+	AssignedAt   *time.Time   `json:"assigned_at,omitempty" bson:"assigned_at,omitempty"`
+	RetryCount   int          `json:"retry_count" bson:"retry_count"`
+	MaxRetries   int          `json:"max_retries" bson:"max_retries"`
 }
 
 type ActorRef struct {
@@ -84,25 +87,35 @@ type TaskListItem struct {
 }
 
 type TaskDetail struct {
-	ID           string         `json:"id" bson:"_id"`
-	UserID       string         `json:"-" bson:"user_id"`
-	ProjectID    string         `json:"project_id" bson:"project_id"`
-	Title        string         `json:"title" bson:"title"`
-	Description  string         `json:"description" bson:"description"`
-	Status       string         `json:"status" bson:"status"`
-	Priority     string         `json:"priority" bson:"priority"`
-	PMAgentID    string         `json:"-" bson:"pm_agent_id"`
-	PMAgent      PMAgentSummary `json:"pm_agent" bson:"pm_agent"`
-	Messages     []TaskMessage  `json:"messages,omitempty" bson:"messages,omitempty"`
-	Todos        []Todo         `json:"todos" bson:"todos"`
-	Artifacts    []TaskArtifact `json:"artifacts" bson:"-"`
-	Result       TaskResult     `json:"result" bson:"result"`
-	Version      int            `json:"version" bson:"version"`
-	CanceledAt   *time.Time     `json:"canceled_at" bson:"canceled_at"`
-	CanceledBy   *ActorRef      `json:"canceled_by" bson:"canceled_by"`
-	CancelReason *string        `json:"cancel_reason" bson:"cancel_reason"`
-	CreatedAt    time.Time      `json:"created_at" bson:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at" bson:"updated_at"`
+	ID           string             `json:"id" bson:"_id"`
+	UserID       string             `json:"-" bson:"user_id"`
+	ProjectID    string             `json:"project_id" bson:"project_id"`
+	Title        string             `json:"title" bson:"title"`
+	Description  string             `json:"description" bson:"description"`
+	Status       string             `json:"status" bson:"status"`
+	Priority     string             `json:"priority" bson:"priority"`
+	PMAgentID    string             `json:"-" bson:"pm_agent_id"`
+	PMAgent      PMAgentSummary     `json:"pm_agent" bson:"pm_agent"`
+	Messages     []TaskMessage      `json:"messages,omitempty" bson:"messages,omitempty"`
+	Todos        []Todo             `json:"todos" bson:"todos"`
+	Artifacts    []TaskArtifact     `json:"artifacts" bson:"-"`
+	AttachedFiles []TaskAttachedFile `json:"attached_files" bson:"attached_files"`
+	Result       TaskResult         `json:"result" bson:"result"`
+	Version      int                `json:"version" bson:"version"`
+	CanceledAt   *time.Time         `json:"canceled_at" bson:"canceled_at"`
+	CanceledBy   *ActorRef          `json:"canceled_by" bson:"canceled_by"`
+	CancelReason *string            `json:"cancel_reason" bson:"cancel_reason"`
+	CreatedAt    time.Time          `json:"created_at" bson:"created_at"`
+	UpdatedAt    time.Time          `json:"updated_at" bson:"updated_at"`
+}
+
+// TaskAttachedFile is a lightweight reference to a project file attached to a task.
+type TaskAttachedFile struct {
+	ID       string `json:"id" bson:"id"`
+	FileName string `json:"file_name" bson:"file_name"`
+	FileSize int64  `json:"file_size" bson:"file_size"`
+	MimeType string `json:"mime_type" bson:"mime_type"`
+	Source   string `json:"source" bson:"source"` // "user_upload" | "agent_artifact"
 }
 
 func (t *TaskDetail) NextDispatchableTodo() *Todo {

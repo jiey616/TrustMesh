@@ -1,4 +1,4 @@
-import { X, MessageSquare, PackageCheck } from 'lucide-react'
+import { X, MessageSquare, PackageCheck, Paperclip, Download, File, Upload, FolderOpen } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { TaskStatusBadge, PriorityBadge } from '@/components/shared/StatusBadge'
@@ -16,9 +16,12 @@ import { useTask, useAddTaskComment, useAppendTaskMessage, useCreateTaskFromText
 import { useAgents } from '@/hooks/useAgents'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { ApiRequestError } from '@/api/client'
+import { downloadProjectFile, uploadProjectFile } from '@/api/projectFiles'
+import { useProjectFiles } from '@/hooks/useProjectFiles'
+import { Checkbox } from '@/components/ui/checkbox'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { TaskMessage, TaskDetail, UIResponse, Todo } from '@/types'
-import { normalizeEscapedText } from '@/lib/utils'
+import type { TaskMessage, TaskDetail, UIResponse, Todo, TaskAttachedFile, ProjectFile } from '@/types'
+import { normalizeEscapedText, cn } from '@/lib/utils'
 
 type TaskWorkspaceProps = {
   onClose: () => void
@@ -58,6 +61,75 @@ function buildTaskMentionCandidates(task: TaskDetail | undefined): TaskMentionCa
   }
 
   return candidates
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function AttachedFileItem({
+  file,
+  projectId,
+}: {
+  file: TaskAttachedFile
+  projectId: string
+}) {
+  const [downloading, setDownloading] = useState(false)
+
+  const handleDownload = async () => {
+    setDownloading(true)
+    try {
+      const blob = await downloadProjectFile(projectId, file.id)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = file.file_name
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch {
+      toast.error(`下载 ${file.file_name} 失败`)
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-muted/40 border text-sm">
+      <File className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="flex-1 truncate">{file.file_name}</span>
+      <span className="shrink-0 text-xs text-muted-foreground">{formatFileSize(file.file_size)}</span>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-6 shrink-0"
+        disabled={downloading}
+        onClick={handleDownload}
+        title="下载文件"
+      >
+        <Download className="size-3.5" />
+      </Button>
+    </div>
+  )
+}
+
+function AttachedFilesSection({ files, projectId }: { files: TaskAttachedFile[]; projectId: string }) {
+  if (!files || files.length === 0) return null
+
+  return (
+    <div className="mt-3 flex flex-col gap-1.5">
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Paperclip className="size-3" />
+        <span>附加文件 ({files.length})</span>
+      </div>
+      {files.map((f) => (
+        <AttachedFileItem key={f.id} file={f} projectId={projectId} />
+      ))}
+    </div>
+  )
 }
 
 function PlanReviewPanel({
@@ -145,19 +217,83 @@ function PlanReviewPanel({
   )
 }
 
+interface SelectedFile {
+  id: string
+  file_name: string
+}
+
 function DraftPlanningState({
+  projectId,
   onSubmit,
   disabled,
   candidates,
 }: {
-  onSubmit: (content: string, agentId?: string) => Promise<void>
+  projectId?: string
+  onSubmit: (content: string, agentId?: string, fileIds?: string[]) => Promise<void>
   disabled: boolean
   candidates: TaskMentionCandidate[]
 }) {
+  const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([])
+  const [attachOpen, setAttachOpen] = useState(false)
+  const [filesPopoverOpen, setFilesPopoverOpen] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const attachRef = useRef<HTMLDivElement>(null)
+  const { data: projectFiles } = useProjectFiles(projectId, { source: 'user_upload' })
+
+  // Close attach dropdown on outside click
+  useEffect(() => {
+    if (!attachOpen) return
+    const handler = (e: MouseEvent) => {
+      if (attachRef.current && !attachRef.current.contains(e.target as Node)) {
+        setAttachOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [attachOpen])
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !projectId) return
+    setAttachOpen(false)
+    setUploading(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const res = await uploadProjectFile(projectId, formData)
+      setSelectedFiles((prev) => {
+        if (prev.some((f) => f.id === res.data.id)) return prev
+        return [...prev, { id: res.data.id, file_name: res.data.file_name }]
+      })
+    } catch {
+      toast.error('上传失败')
+    } finally {
+      setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const toggleProjectFile = (file: ProjectFile) => {
+    setSelectedFiles((prev) => {
+      const exists = prev.find((f) => f.id === file.id)
+      if (exists) return prev.filter((f) => f.id !== file.id)
+      return [...prev, { id: file.id, file_name: file.file_name }]
+    })
+  }
+
+  const removeFile = (fileId: string) => {
+    setSelectedFiles((prev) => prev.filter((f) => f.id !== fileId))
+  }
+
   const handleSubmit = async ({ content, mentionAgentIds }: TaskCommentSubmitInput) => {
-    await onSubmit(content, mentionAgentIds[0])
+    const fileIds = selectedFiles.length > 0 ? selectedFiles.map((f) => f.id) : undefined
+    await onSubmit(content, mentionAgentIds[0], fileIds)
+    setSelectedFiles([])
     return true
   }
+
+  const fileList = (projectFiles ?? []) as ProjectFile[]
 
   return (
     <>
@@ -178,13 +314,142 @@ function DraftPlanningState({
       </div>
 
       <div className="border-t px-4 py-3 shrink-0">
-        <TaskCommentComposer
-          candidates={candidates}
-          disabled={disabled}
-          placeholder="描述需求，或 @ 执行 Agent 直接指派任务... (Enter 发送，Shift+Enter 换行)"
-          onSubmit={handleSubmit}
-        />
+        {/* Selected files chips */}
+        {selectedFiles.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {selectedFiles.map((f) => (
+              <span
+                key={f.id}
+                className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-xs"
+              >
+                <File className="size-3 text-muted-foreground" />
+                <span className="max-w-[140px] truncate">{f.file_name}</span>
+                <button
+                  type="button"
+                  className="ml-0.5 rounded-full hover:bg-muted-foreground/20"
+                  onClick={() => removeFile(f.id)}
+                >
+                  <X className="size-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-end gap-2">
+          <div className="flex-1">
+            <TaskCommentComposer
+              candidates={candidates}
+              disabled={disabled || uploading}
+              placeholder="描述需求，或 @ 执行 Agent 直接指派任务... (Enter 发送，Shift+Enter 换行)"
+              onSubmit={handleSubmit}
+            />
+          </div>
+
+          {/* Attach button */}
+          <div ref={attachRef} className="relative shrink-0">
+            <Button
+              size="icon"
+              variant="outline"
+              className="size-9"
+              onClick={() => setAttachOpen(!attachOpen)}
+              disabled={disabled || uploading}
+              title="添加文件"
+            >
+              <Paperclip className="size-4" />
+            </Button>
+
+            {attachOpen && (
+              <div className="absolute bottom-full right-0 mb-2 w-44 rounded-lg border bg-popover shadow-lg p-1 z-50">
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-accent"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Upload className="size-4" />
+                  从本地上传
+                </button>
+                {projectId && (
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-accent"
+                    onClick={() => {
+                      setFilesPopoverOpen(true)
+                      setAttachOpen(false)
+                    }}
+                  >
+                    <FolderOpen className="size-4" />
+                    从项目文件引用
+                  </button>
+                )}
+              </div>
+            )}
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              onChange={handleUpload}
+            />
+          </div>
+        </div>
       </div>
+
+      {/* Project file reference popover */}
+      {filesPopoverOpen && (
+        <div className="fixed inset-0 z-50" onClick={() => setFilesPopoverOpen(false)}>
+          <div
+            className="absolute bottom-24 right-8 w-80 max-h-80 rounded-lg border bg-popover shadow-lg flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-3 py-2 border-b shrink-0">
+              <span className="text-sm font-medium">项目文件</span>
+              <button
+                type="button"
+                className="rounded-md p-0.5 hover:bg-muted"
+                onClick={() => setFilesPopoverOpen(false)}
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
+              {fileList.length === 0 ? (
+                <p className="text-xs text-muted-foreground px-2 py-4 text-center">
+                  暂无文件，请先从本地上传
+                </p>
+              ) : (
+                fileList.map((f) => {
+                  const checked = selectedFiles.some((sf) => sf.id === f.id)
+                  return (
+                    <label
+                      key={f.id}
+                      className={cn(
+                        'flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer text-sm',
+                        checked ? 'bg-accent' : 'hover:bg-accent/60',
+                      )}
+                    >
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={() => toggleProjectFile(f)}
+                      />
+                      <File className="size-3.5 text-muted-foreground shrink-0" />
+                      <span className="truncate">{f.file_name}</span>
+                      <span className="text-xs text-muted-foreground ml-auto shrink-0">
+                        {formatFileSize(f.file_size)}
+                      </span>
+                    </label>
+                  )
+                })
+              )}
+            </div>
+            <div className="border-t px-3 py-2 shrink-0">
+              <Button size="sm" className="w-full" onClick={() => setFilesPopoverOpen(false)}>
+                确定
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }
@@ -295,12 +560,12 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     }
   }
 
-  const handleCreateTaskFromText = async (content: string, agentId?: string) => {
+  const handleCreateTaskFromText = async (content: string, agentId?: string, fileIds?: string[]) => {
     if (!projectId) {
       return
     }
     try {
-      const res = await createTaskFromText.mutateAsync({ projectId, content, agentId })
+      const res = await createTaskFromText.mutateAsync({ projectId, content, agentId, fileIds })
       props.onTaskCreated?.(res.data.id)
     } catch (error) {
       const message = error instanceof ApiRequestError ? error.message : '创建任务失败'
@@ -326,6 +591,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
           </Button>
         </div>
         <DraftPlanningState
+          projectId={projectId}
           onSubmit={handleCreateTaskFromText}
           disabled={createTaskFromText.isPending}
           candidates={executorCandidates}
@@ -384,6 +650,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
         {task.description && (
           <TaskDescription description={task.description} />
         )}
+        <AttachedFilesSection files={task.attached_files ?? []} projectId={task.project_id} />
         {task.cancel_reason && (
           <p className="mt-2 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
             终止原因：{task.cancel_reason}

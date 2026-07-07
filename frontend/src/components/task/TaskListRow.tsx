@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronRight, Circle, CheckCircle2, Loader2, XCircle, CircleSlash2, MessageSquareMore } from 'lucide-react'
 import { useTask } from '@/hooks/useTasks'
-import { TodoList } from './TodoList'
+import { TaskTodoPanel } from './TaskTodoPanel'
 import { cn, normalizeEscapedText } from '@/lib/utils'
 import { formatRelativeTime } from '@/lib/utils'
 import { PriorityBadge } from '@/components/shared/StatusBadge'
@@ -42,7 +42,7 @@ export function TaskListRow({ task, isSelected, onClick }: TaskListRowProps) {
     : 0
   const Icon = statusIcon[task.status].icon
   const iconClass = statusIcon[task.status].className
-  const canExpandTodos = task.todo_count > 0
+  const canExpandTodos = task.todo_count > 0 || task.status === 'pending' || task.status === 'in_progress'
   const isPlanning = task.status === 'planning'
 
   return (
@@ -137,11 +137,7 @@ export function TaskListRow({ task, isSelected, onClick }: TaskListRowProps) {
                 <span>加载执行清单...</span>
               </div>
             ) : taskDetail ? (
-              <TodoList
-                todos={taskDetail.todos}
-                artifacts={taskDetail.artifacts}
-                variant="nested"
-              />
+              <TaskTodoPanel task={taskDetail} variant="embedded" />
             ) : (
               <div className="py-4 text-sm text-muted-foreground">执行清单加载失败</div>
             )}

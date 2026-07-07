@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"trustmesh/backend/internal/agentfile"
 	"trustmesh/backend/internal/assistant"
 	"trustmesh/backend/internal/auth"
 	"trustmesh/backend/internal/clawsynapse"
@@ -14,6 +15,7 @@ import (
 	"trustmesh/backend/internal/handler"
 	"trustmesh/backend/internal/knowledge"
 	"trustmesh/backend/internal/middleware"
+	"trustmesh/backend/internal/project"
 	"trustmesh/backend/internal/store"
 )
 
@@ -30,11 +32,16 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	engine.Use(middleware.Recovery(log))
 	engine.Use(middleware.Logging(log))
 	engine.Use(middleware.CORS(cfg.AllowAllCORS))
+	engine.Use(middleware.RateLimit(log))
 
 	s, err := store.NewWithConfig(cfg, log)
 	if err != nil {
 		return nil, err
 	}
+	// Start background cleanup ticker to prevent unbounded memory growth (OOM).
+	go s.StartCleanupTicker(context.Background())
+	// Start timeout monitor to detect and retry/fail stuck in_progress todos.
+	go s.StartTimeoutMonitor(context.Background())
 	jwtManager := auth.NewJWTManager(cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
 	clawClient := clawsynapse.NewClient(cfg.ClawSynapseAPIURL, cfg.ClawSynapseTimeout)
 	webhookHandler := clawsynapse.NewWebhookHandler(s, clawClient, log)
@@ -52,13 +59,14 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	agentChatHandler := handler.NewAgentChatHandler(s, clawClient, log)
 	projectHandler := handler.NewProjectHandler(s)
 
-	taskHandler := handler.NewTaskHandler(s, clawClient, webhookHandler, log)
+	taskHandler := handler.NewTaskHandler(s, clawClient, webhookHandler, cfg.ExternalURL, []byte(cfg.JWTSecret), cfg.DownloadTokenTTL, log)
 	transferHandler := handler.NewTransferHandler(s)
 	dashboardHandler := handler.NewDashboardHandler(s)
 	clawSynapseHandler := handler.NewClawSynapseHandler(clawClient)
 	notificationHandler := handler.NewNotificationHandler(s)
 	joinRequestHandler := handler.NewJoinRequestHandler(s, clawClient, cfg)
 	realtimeHandler := handler.NewRealtimeHandler(s)
+	platformHandler := handler.NewPlatformHandler(cfg.PlatformName)
 
 	// Knowledge base components (optional - requires EMBEDDING_API_KEY)
 	var knowledgeHandler *handler.KnowledgeHandler
@@ -108,6 +116,8 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 		v1.GET("/market/roles/:id/download", marketHandler.DownloadRole)
 	}
 
+	v1.GET("/platform/info", platformHandler.Info)
+
 	authed := v1.Group("")
 	authed.Use(middleware.RequireAuth(jwtManager))
 
@@ -135,6 +145,32 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	authed.PATCH("/projects/:projectId", projectHandler.Update)
 	authed.DELETE("/projects/:projectId", projectHandler.Archive)
 
+	// Project files
+	projectFileStorage := project.NewLocalFileStorage(cfg.FilesStoragePath)
+	projectFileHandler := handler.NewProjectFileHandler(s, projectFileStorage, log)
+	webhookHandler.SetProjectFileStorage(projectFileStorage)
+	webhookHandler.SetAgentFileConfig(cfg.ExternalURL, []byte(cfg.JWTSecret), cfg.DownloadTokenTTL)
+
+	// Agent file download endpoint (authenticated by short-lived download token, not JWT).
+	// New format: /api/v1/files/agent/:fileId/token/:token (token in path, not query).
+	// Old format: /api/v1/files/agent/:fileId?token=xxx (kept for compatibility).
+	agentFileHandler := agentfile.NewHandler(s, projectFileStorage, jwtManager, log)
+	v1.GET("/files/agent/:fileId/token/:token", agentFileHandler.Download)
+	v1.GET("/files/agent/:fileId", agentFileHandler.Download)
+	v1.GET("/debug/gen-token/:fileId", agentFileHandler.DebugGenToken)
+
+	authed.POST("/projects/:projectId/files", projectFileHandler.Upload)
+	authed.POST("/projects/:projectId/folders", projectFileHandler.CreateFolder)
+	authed.GET("/projects/:projectId/files/browse", projectFileHandler.Browse)
+	authed.GET("/projects/:projectId/files/artifacts", projectFileHandler.ListArtifacts)
+	authed.GET("/projects/:projectId/files/tree", projectFileHandler.GetTree)
+	authed.GET("/projects/:projectId/files", projectFileHandler.List)
+	authed.GET("/projects/:projectId/files/:fileId/content", projectFileHandler.GetContent)
+	authed.DELETE("/projects/:projectId/files/:fileId", projectFileHandler.Delete)
+	authed.PATCH("/projects/:projectId/files/:fileId/rename", projectFileHandler.Rename)
+	authed.PATCH("/projects/:projectId/files/:fileId/move", projectFileHandler.Move)
+	authed.POST("/projects/:projectId/files/batch-delete", projectFileHandler.BatchDelete)
+
 	authed.POST("/projects/:projectId/tasks", taskHandler.Create)
 	authed.POST("/projects/:projectId/tasks/planning", taskHandler.CreatePlanning)
 	authed.POST("/projects/:projectId/tasks/from-text", taskHandler.CreateFromText)
@@ -145,6 +181,11 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	authed.POST("/tasks/:id/approve", taskHandler.ApprovePlan)
 	authed.POST("/tasks/:id/reject", taskHandler.RejectPlan)
 	authed.POST("/tasks/:id/cancel", taskHandler.Cancel)
+	authed.POST("/tasks/:id/todos", taskHandler.AddTodo)
+	authed.POST("/tasks/:id/todos/:todoId/insert", taskHandler.InsertTodo)
+	authed.PATCH("/tasks/:id/todos/:todoId", taskHandler.UpdateTodo)
+	authed.DELETE("/tasks/:id/todos/:todoId", taskHandler.RemoveTodo)
+	authed.PUT("/tasks/:id/todos/reorder", taskHandler.ReorderTodos)
 	authed.POST("/tasks/:id/todos/:todoId/dispatch", taskHandler.DispatchTodo)
 	authed.GET("/tasks/:id/comments", taskHandler.ListComments)
 	authed.POST("/tasks/:id/comments", taskHandler.AddComment)

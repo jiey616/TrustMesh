@@ -1,8 +1,15 @@
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronRight, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
 import { normalizeEscapedText } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import type { Todo, TaskArtifact } from '@/types'
 
 const statusIndicatorColors = {
@@ -19,9 +26,11 @@ interface TodoListProps {
   todos: Todo[]
   artifacts: TaskArtifact[]
   variant?: 'card' | 'nested'
+  onEditTodo?: (todo: Todo) => void
+  onDeleteTodo?: (todo: Todo) => void
 }
 
-export function TodoList({ todos, artifacts, variant = 'card' }: TodoListProps) {
+export function TodoList({ todos, artifacts, variant = 'card', onEditTodo, onDeleteTodo }: TodoListProps) {
   const safeArtifacts = artifacts ?? []
 
   if (todos.length === 0) {
@@ -36,6 +45,8 @@ export function TodoList({ todos, artifacts, variant = 'card' }: TodoListProps) 
           todo={todo}
           artifacts={safeArtifacts}
           variant={variant}
+          onEdit={onEditTodo}
+          onDelete={onDeleteTodo}
         />
       ))}
     </div>
@@ -46,15 +57,20 @@ function TodoItem({
   todo,
   artifacts,
   variant,
+  onEdit,
+  onDelete,
 }: {
   todo: Todo
   artifacts: TaskArtifact[]
   variant: 'card' | 'nested'
+  onEdit?: (todo: Todo) => void
+  onDelete?: (todo: Todo) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const relatedArtifacts = (artifacts ?? []).filter((a) => a.todo_id === todo.id)
   const hasDetails = todo.description || todo.error || relatedArtifacts.length > 0
   const isCard = variant === 'card'
+  const canModify = todo.status === 'pending'
 
   return (
     <div
@@ -98,6 +114,33 @@ function TodoItem({
               : <ChevronRight className="size-4 shrink-0 text-muted-foreground mt-0.5" />
           )}
         </button>
+
+        {/* Edit/Delete menu for pending todos */}
+        {canModify && (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button variant="ghost" size="icon" className="size-7 shrink-0 -mr-1">
+                  <MoreHorizontal className="size-3.5" />
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="end" className="w-32">
+              {onEdit && (
+                <DropdownMenuItem onClick={() => onEdit(todo)}>
+                  <Pencil className="mr-2 size-3.5" />
+                  编辑
+                </DropdownMenuItem>
+              )}
+              {onDelete && (
+                <DropdownMenuItem onClick={() => onDelete(todo)} className="text-destructive focus:text-destructive">
+                  <Trash2 className="mr-2 size-3.5" />
+                  删除
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
       {expanded && hasDetails && (

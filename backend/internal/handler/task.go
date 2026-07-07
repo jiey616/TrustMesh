@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"trustmesh/backend/internal/agentfile"
 	"trustmesh/backend/internal/clawsynapse"
 	"trustmesh/backend/internal/model"
 	"trustmesh/backend/internal/protocol"
@@ -25,11 +27,22 @@ type TaskHandler struct {
 	store          *store.Store
 	publisher      *clawsynapse.Client
 	webhookHandler *clawsynapse.WebhookHandler
+	externalURL    string
+	jwtSecret      []byte
+	downloadTTL    time.Duration
 	log            *zap.Logger
 }
 
-func NewTaskHandler(s *store.Store, publisher *clawsynapse.Client, wh *clawsynapse.WebhookHandler, log *zap.Logger) *TaskHandler {
-	return &TaskHandler{store: s, publisher: publisher, webhookHandler: wh, log: log}
+func NewTaskHandler(s *store.Store, publisher *clawsynapse.Client, wh *clawsynapse.WebhookHandler, externalURL string, jwtSecret []byte, downloadTTL time.Duration, log *zap.Logger) *TaskHandler {
+	return &TaskHandler{
+		store:          s,
+		publisher:      publisher,
+		webhookHandler: wh,
+		externalURL:    externalURL,
+		jwtSecret:      jwtSecret,
+		downloadTTL:    downloadTTL,
+		log:            log,
+	}
 }
 
 func (h *TaskHandler) Create(c *gin.Context) {
@@ -39,10 +52,11 @@ func (h *TaskHandler) Create(c *gin.Context) {
 	}
 
 	var body struct {
-		Title           string `json:"title"`
-		Description     string `json:"description"`
-		Priority        string `json:"priority"`
-		AssigneeAgentID string `json:"assignee_agent_id"`
+		Title           string   `json:"title"`
+		Description     string   `json:"description"`
+		Priority        string   `json:"priority"`
+		AssigneeAgentID string   `json:"assignee_agent_id"`
+		FileIDs         []string `json:"file_ids"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid request body"))
@@ -55,6 +69,7 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		Description:     body.Description,
 		Priority:        body.Priority,
 		AssigneeAgentID: body.AssigneeAgentID,
+		FileIDs:         body.FileIDs,
 	})
 	if appErr != nil {
 		transport.WriteError(c, appErr)
@@ -75,8 +90,9 @@ func (h *TaskHandler) CreateFromText(c *gin.Context) {
 	}
 
 	var body struct {
-		Content string `json:"content"`
-		AgentID string `json:"agent_id"`
+		Content string   `json:"content"`
+		AgentID string   `json:"agent_id"`
+		FileIDs []string `json:"file_ids"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Content) == "" {
 		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "content is required"))
@@ -92,6 +108,7 @@ func (h *TaskHandler) CreateFromText(c *gin.Context) {
 			Description:     body.Content,
 			Priority:        "medium",
 			AssigneeAgentID: body.AgentID,
+			FileIDs:         body.FileIDs,
 		})
 		if appErr != nil {
 			transport.WriteError(c, appErr)
@@ -102,7 +119,7 @@ func (h *TaskHandler) CreateFromText(c *gin.Context) {
 		return
 	}
 
-	h.createPlanningTask(c, userID, projectID, body.Content)
+	h.createPlanningTask(c, userID, projectID, body.Content, body.FileIDs)
 }
 
 // deriveTitle extracts a short title from free-form content.
@@ -138,8 +155,8 @@ func truncateTitle(s string, max int) string {
 }
 
 // createPlanningTask creates a planning-mode task and notifies the PM agent.
-func (h *TaskHandler) createPlanningTask(c *gin.Context, userID, projectID, content string) {
-	task, appErr := h.store.CreateTaskPlanning(userID, projectID, content)
+func (h *TaskHandler) createPlanningTask(c *gin.Context, userID, projectID, content string, fileIDs []string) {
+	task, appErr := h.store.CreateTaskPlanningWithFiles(userID, projectID, content, fileIDs)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -165,6 +182,7 @@ func (h *TaskHandler) autoDispatchFirstTodo(ctx context.Context, userID string, 
 			Objective:    "执行分派的 Todo 任务；及时回报进度；完成后提交结果，失败时说明原因。",
 			MustUseSkill: "tm-task-exec",
 		},
+		AttachedFiles: h.enrichAttachedFiles(task.AttachedFiles),
 	}
 	if _, err := h.publisher.Publish(ctx, todo.Assignee.NodeID, "todo.assigned", payload, task.ID, map[string]any{"source": "user_created"}); err != nil {
 		if h.log != nil {
@@ -266,6 +284,7 @@ func (h *TaskHandler) DispatchTodo(c *gin.Context) {
 			Objective:    "执行分派的 Todo 任务；及时回报进度；完成后提交结果，失败时说明原因。",
 			MustUseSkill: "tm-task-exec",
 		},
+		AttachedFiles: h.enrichAttachedFiles(task.AttachedFiles),
 	}
 	if _, err := h.publisher.Publish(context.Background(), todo.Assignee.NodeID, "todo.assigned", payload, task.ID, map[string]any{"source": "manual_dispatch"}); err != nil {
 		if h.log != nil {
@@ -509,7 +528,8 @@ func (h *TaskHandler) CreatePlanning(c *gin.Context) {
 	}
 
 	var body struct {
-		Content string `json:"content"`
+		Content string   `json:"content"`
+		FileIDs []string `json:"file_ids"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid request body"))
@@ -517,7 +537,7 @@ func (h *TaskHandler) CreatePlanning(c *gin.Context) {
 	}
 
 	projectID := c.Param("projectId")
-	task, appErr := h.store.CreateTaskPlanning(userID, projectID, body.Content)
+	task, appErr := h.store.CreateTaskPlanningWithFiles(userID, projectID, body.Content, body.FileIDs)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -581,6 +601,21 @@ func (h *TaskHandler) buildPMTaskMessage(userID, projectID, taskID, userContent 
 		IsInitial:      initial,
 		UserUIResponse: uiResponse,
 	}
+
+	// Enrich with attached files from the task.
+	task, err := h.store.GetTask(userID, taskID)
+	if err == nil && task != nil {
+		payload.AttachedFiles = h.enrichAttachedFiles(task.AttachedFiles)
+		if h.log != nil && len(payload.AttachedFiles) > 0 {
+			h.log.Info("enriched attached files for PM message",
+				zap.String("task_id", taskID),
+				zap.String("external_url", h.externalURL),
+				zap.Int("jwt_secret_len", len(h.jwtSecret)),
+				zap.String("first_download_url", payload.AttachedFiles[0].DownloadUrl),
+			)
+		}
+	}
+
 	if initial {
 		payload.Content = "请使用 /tm-task-plan skill 处理本次需求。"
 	} else {
@@ -644,4 +679,149 @@ func agentStatusRank(status string) int {
 	default:
 		return 2
 	}
+}
+
+// enrichAttachedFiles converts model attached files to protocol refs with download URLs.
+func (h *TaskHandler) enrichAttachedFiles(files []model.TaskAttachedFile) []protocol.TaskAttachedFileRef {
+	return agentfile.EnrichWithDownloadURLs(files, h.externalURL, h.jwtSecret, h.downloadTTL)
+}
+
+// AddTodo creates a new TODO at the end of a task's todo list.
+func (h *TaskHandler) AddTodo(c *gin.Context) {
+	userID, ok := currentUserID(c)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		AssigneeID  string `json:"assignee_id"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid request body"))
+		return
+	}
+
+	task, appErr := h.store.AppendTodo(userID, c.Param("id"), store.TodoModifyInput{
+		Title:       body.Title,
+		Description: body.Description,
+		AssigneeID:  body.AssigneeID,
+	})
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
+
+	// Dispatch via ClawSynapse if this todo is the next one in sequence
+	if h.webhookHandler != nil {
+		task = h.webhookHandler.DispatchNextTodo(c.Request.Context(), task)
+	}
+	transport.WriteData(c, http.StatusCreated, task)
+}
+
+// InsertTodo creates a new TODO before a specified todo.
+func (h *TaskHandler) InsertTodo(c *gin.Context) {
+	userID, ok := currentUserID(c)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		AssigneeID  string `json:"assignee_id"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid request body"))
+		return
+	}
+
+	task, appErr := h.store.InsertTodo(userID, c.Param("id"), c.Param("todoId"), store.TodoModifyInput{
+		Title:       body.Title,
+		Description: body.Description,
+		AssigneeID:  body.AssigneeID,
+	})
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
+
+	// Dispatch via ClawSynapse if this todo is the next one in sequence
+	if h.webhookHandler != nil {
+		task = h.webhookHandler.DispatchNextTodo(c.Request.Context(), task)
+	}
+	transport.WriteData(c, http.StatusCreated, task)
+}
+
+// UpdateTodo updates a todo's title, description, and/or assignee.
+func (h *TaskHandler) UpdateTodo(c *gin.Context) {
+	userID, ok := currentUserID(c)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		AssigneeID  string `json:"assignee_id"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid request body"))
+		return
+	}
+
+	task, appErr := h.store.UpdateTodo(userID, c.Param("id"), c.Param("todoId"), store.TodoModifyInput{
+		Title:       body.Title,
+		Description: body.Description,
+		AssigneeID:  body.AssigneeID,
+	})
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
+	transport.WriteData(c, http.StatusOK, task)
+}
+
+// RemoveTodo deletes a pending todo from a task.
+func (h *TaskHandler) RemoveTodo(c *gin.Context) {
+	userID, ok := currentUserID(c)
+	if !ok {
+		return
+	}
+
+	task, appErr := h.store.RemoveTodo(userID, c.Param("id"), c.Param("todoId"))
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
+
+	// Dispatch via ClawSynapse if there is a next pending todo
+	if h.webhookHandler != nil {
+		task = h.webhookHandler.DispatchNextTodo(c.Request.Context(), task)
+	}
+	transport.WriteData(c, http.StatusOK, task)
+}
+
+// ReorderTodos reorders all todos in a task.
+func (h *TaskHandler) ReorderTodos(c *gin.Context) {
+	userID, ok := currentUserID(c)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		TodoIDs []string `json:"todo_ids"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid request body"))
+		return
+	}
+
+	task, appErr := h.store.ReorderTodos(userID, c.Param("id"), body.TodoIDs)
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
+	transport.WriteData(c, http.StatusOK, task)
 }

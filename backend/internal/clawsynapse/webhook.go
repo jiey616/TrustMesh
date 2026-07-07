@@ -3,15 +3,18 @@ package clawsynapse
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"trustmesh/backend/internal/agentfile"
 	"trustmesh/backend/internal/embedding"
 	"trustmesh/backend/internal/knowledge"
 	"trustmesh/backend/internal/model"
+	"trustmesh/backend/internal/project"
 	"trustmesh/backend/internal/protocol"
 	"trustmesh/backend/internal/store"
 	"trustmesh/backend/internal/transport"
@@ -23,6 +26,12 @@ type WebhookHandler struct {
 	log      *zap.Logger
 	embedder embedding.Client
 	qdrant   *knowledge.QdrantClient
+
+	projectFileStorage project.FileStorage
+
+	externalURL string
+	jwtSecret   []byte
+	downloadTTL time.Duration
 }
 
 func NewWebhookHandler(st *store.Store, client *Client, log *zap.Logger) *WebhookHandler {
@@ -37,6 +46,18 @@ func NewWebhookHandler(st *store.Store, client *Client, log *zap.Logger) *Webhoo
 func (h *WebhookHandler) SetKnowledgeComponents(embedder embedding.Client, qdrant *knowledge.QdrantClient) {
 	h.embedder = embedder
 	h.qdrant = qdrant
+}
+
+// SetProjectFileStorage injects the project file storage for artifact auto-indexing.
+func (h *WebhookHandler) SetProjectFileStorage(storage project.FileStorage) {
+	h.projectFileStorage = storage
+}
+
+// SetAgentFileConfig injects external URL and JWT secret for building download URLs.
+func (h *WebhookHandler) SetAgentFileConfig(externalURL string, jwtSecret []byte, downloadTTL time.Duration) {
+	h.externalURL = externalURL
+	h.jwtSecret = jwtSecret
+	h.downloadTTL = downloadTTL
 }
 
 func (h *WebhookHandler) HandleWebhook(c *gin.Context) {
@@ -67,6 +88,10 @@ func (h *WebhookHandler) HandleWebhook(c *gin.Context) {
 		h.handleTaskReply(c, payload)
 	case "task.plan_ready":
 		h.handleTaskPlanReady(c, payload)
+	case "task.todo_add":
+		h.handleTodoAdd(c, payload)
+	case "task.todo_modify":
+		h.handleTodoModify(c, payload)
 	case "todo.progress":
 		h.handleTodoProgress(c, payload)
 	case "todo.complete":
@@ -77,6 +102,8 @@ func (h *WebhookHandler) HandleWebhook(c *gin.Context) {
 		h.handleTaskComment(c, payload)
 	case "knowledge.query":
 		h.handleKnowledgeQuery(c, payload)
+	case "task.response":
+		h.handleTaskResponse(c, payload)
 	case "transfer.received":
 		h.handleTransferReceived(c, payload)
 	case "task.context.query":
@@ -166,6 +193,214 @@ func (h *WebhookHandler) handleTaskReply(c *gin.Context, webhook protocol.Webhoo
 	}
 
 	task, appErr := h.store.AppendPMTaskReply(webhook.From, payload.TaskID, payload.Content, payload.UIBlocks)
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
+
+	transport.WriteData(c, http.StatusOK, task)
+}
+
+// handleTaskResponse processes task.response messages from PM agents.
+// PM agents use this type for status updates, ACKs, and intermediate replies.
+// It supports three message formats:
+//  1. Structured: {"data":{"id":"...", ...}} — extracts task_id from data.id
+//  2. JSON reply:  {"task_id":"...", "content":"..."} — treats as task.reply
+//  3. Plain text:  plain status message — stored as PM reply
+//
+// Silent ACKs ("ACK ...\n\nWAITING", "↻ Resumed session") are ignored.
+func (h *WebhookHandler) handleTaskResponse(c *gin.Context, webhook protocol.WebhookPayload) {
+	msg := strings.TrimSpace(webhook.Message)
+
+	// Ignore silent ACK messages that carry no actionable content.
+	if isSilentACK(msg) {
+		transport.WriteData(c, http.StatusOK, gin.H{"status": "ok", "ignored": true})
+		return
+	}
+
+	// Try to extract structured content from the message.
+	taskID, content := extractTaskResponseContent(msg, webhook.SessionKey)
+	if taskID == "" || content == "" {
+		transport.WriteData(c, http.StatusOK, gin.H{"status": "ok", "ignored": true})
+		return
+	}
+
+	// Store as a PM reply so the user can see the status update.
+	task, appErr := h.store.AppendPMTaskReply(webhook.From, taskID, content, nil)
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
+
+	transport.WriteData(c, http.StatusOK, task)
+}
+
+// isSilentACK returns true for messages that should be silently ignored.
+func isSilentACK(msg string) bool {
+	if msg == "" {
+		return true
+	}
+	// ACK messages from PM: "ACK task.reply\n\nWAITING"
+	if strings.HasPrefix(msg, "ACK ") && strings.Contains(msg, "WAITING") {
+		return true
+	}
+	// Session resume notifications
+	if strings.HasPrefix(msg, "↻ Resumed session") {
+		return true
+	}
+	return false
+}
+
+// extractTaskResponseContent parses a task.response message and returns
+// (taskID, content). It handles three formats:
+//
+//	{"data": {"id": "task_xxx", ...}}        → extracts data.id, content from data
+//	{"task_id": "task_xxx", "content": "..."}  → direct extraction
+//	plain text                                → uses sessionKey as taskID
+func extractTaskResponseContent(msg, sessionKey string) (taskID, content string) {
+	// Try structured JSON first.
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(msg), &raw); err != nil {
+		// Plain text fallback.
+		return sessionKey, msg
+	}
+
+	// Format 2: direct task_id + content fields.
+	if tid, ok := raw["task_id"].(string); ok && tid != "" {
+		if c, ok := raw["content"].(string); ok {
+			return tid, c
+		}
+		return tid, msg
+	}
+
+	// Format 1: {data: {id: "...", ...}}
+	if data, ok := raw["data"].(map[string]any); ok {
+		tid, _ := data["id"].(string)
+		if tid == "" {
+			tid = sessionKey
+		}
+
+		// Try to extract meaningful content from the data wrapper.
+		// Prefer status/title fields that convey progress.
+		var parts []string
+		if title, ok := data["title"].(string); ok && title != "" {
+			parts = append(parts, "📋 当前任务：**"+title+"**")
+		}
+		if status, ok := data["status"].(string); ok && status != "" {
+			statusMap := map[string]string{
+				"planning":    "🔍 PM 规划中",
+				"in_progress": "⚙️ 执行中",
+				"done":        "✅ 已完成",
+				"canceled":    "❌ 已取消",
+			}
+			label := statusMap[status]
+			if label == "" {
+				label = status
+			}
+			parts = append(parts, "状态："+label)
+		}
+		if todos, ok := data["todos"].([]any); ok && len(todos) > 0 {
+			parts = append(parts, fmt.Sprintf("已规划 %d 个子任务", len(todos)))
+		}
+
+		if len(parts) > 0 {
+			return tid, strings.Join(parts, "  |  ")
+		}
+		return tid, "" // only have task ID, no meaningful content
+	}
+
+	// Unknown JSON shape — try as plain text.
+	return sessionKey, msg
+}
+
+// handleTodoAdd processes task.todo_add messages from PM Agent.
+// PM Agent can dynamically add a TODO to an existing task after planning.
+func (h *WebhookHandler) handleTodoAdd(c *gin.Context, webhook protocol.WebhookPayload) {
+	var payload protocol.TodoAddPayload
+	if err := decodeWebhookMessage(webhook.Message, &payload); err != nil {
+		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid task.todo_add message"))
+		return
+	}
+
+	// Validate that the sender is the PM agent for this task.
+	task, appErr := h.store.GetTaskByNodeID(webhook.From, payload.TaskID)
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
+	if task.PMAgent.NodeID != webhook.From {
+		transport.WriteError(c, transport.Forbidden("only the task's PM agent can add todos"))
+		return
+	}
+
+	// Find the assignee agent by node ID.
+	assigneeAgent, appErr := h.store.GetAgentByNodeID(payload.AssigneeNodeID)
+	if appErr != nil {
+		transport.WriteError(c, transport.Validation("invalid assignee_node_id", map[string]any{"assignee_node_id": payload.AssigneeNodeID}))
+		return
+	}
+
+	// Add the todo via store.
+	if payload.BeforeTodoID != "" {
+		task, appErr = h.store.InsertTodo(task.UserID, payload.TaskID, payload.BeforeTodoID, store.TodoModifyInput{
+			Title:       payload.Title,
+			Description: payload.Description,
+			AssigneeID:  assigneeAgent.ID,
+		})
+	} else {
+		task, appErr = h.store.AppendTodo(task.UserID, payload.TaskID, store.TodoModifyInput{
+			Title:       payload.Title,
+			Description: payload.Description,
+			AssigneeID:  assigneeAgent.ID,
+		})
+	}
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
+
+	// Dispatch via ClawSynapse if this todo is the next one in sequence
+	task = h.dispatchNextTodo(c.Request.Context(), task)
+
+	transport.WriteData(c, http.StatusCreated, task)
+}
+
+// handleTodoModify processes task.todo_modify messages from PM Agent.
+// PM Agent can update a TODO's title, description, and/or assignee.
+func (h *WebhookHandler) handleTodoModify(c *gin.Context, webhook protocol.WebhookPayload) {
+	var payload protocol.TodoModifyPM
+	if err := decodeWebhookMessage(webhook.Message, &payload); err != nil {
+		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid task.todo_modify message"))
+		return
+	}
+
+	// Validate that the sender is the PM agent for this task.
+	task, appErr := h.store.GetTaskByNodeID(webhook.From, payload.TaskID)
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
+	if task.PMAgent.NodeID != webhook.From {
+		transport.WriteError(c, transport.Forbidden("only the task's PM agent can modify todos"))
+		return
+	}
+
+	// Resolve assignee if provided.
+	assigneeID := payload.AssigneeNodeID
+	if assigneeID != "" {
+		assigneeAgent, appErr := h.store.GetAgentByNodeID(assigneeID)
+		if appErr != nil {
+			transport.WriteError(c, transport.Validation("invalid assignee_node_id", map[string]any{"assignee_node_id": assigneeID}))
+			return
+		}
+		assigneeID = assigneeAgent.ID
+	}
+
+	task, appErr = h.store.UpdateTodo(task.UserID, payload.TaskID, payload.TodoID, store.TodoModifyInput{
+		Title:       payload.Title,
+		Description: payload.Description,
+		AssigneeID:  assigneeID,
+	})
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -385,6 +620,7 @@ func (h *WebhookHandler) buildTodoAssignedPayload(task *model.TaskDetail, todo *
 	if firstTime {
 		payload.TaskContext = buildTaskContext(task, todo.ID)
 		payload.PriorResults = buildAllPriorResults(task, todo)
+		payload.AttachedFiles = h.enrichAttachedFiles(task.AttachedFiles)
 	} else {
 		payload.PriorResults = buildCrossAgentPriorResults(task, todo)
 	}
@@ -582,6 +818,36 @@ func (h *WebhookHandler) handleTransferReceived(c *gin.Context, webhook protocol
 		return
 	}
 
+	// Auto-create ProjectFile and copy artifact to project files volume.
+	if h.projectFileStorage != nil {
+		if projectFile, err := h.store.SaveProjectFileFromArtifact(artifact); err != nil {
+			if h.log != nil {
+				h.log.Warn("failed to create project file from artifact",
+					zap.String("transfer_id", msg.TransferID),
+					zap.Error(err))
+			}
+		} else if projectFile != nil {
+			// Copy the file from transfer volume to project files volume.
+			dstPath, copyErr := h.projectFileStorage.CopyFromPath(
+				c.Request.Context(),
+				msg.LocalPath,
+				projectFile.ProjectID,
+				taskID,
+				artifact.FromAgentID,
+				msg.FileName,
+			)
+			if copyErr != nil {
+				if h.log != nil {
+					h.log.Warn("failed to copy artifact to project files",
+						zap.String("transfer_id", msg.TransferID),
+						zap.Error(copyErr))
+				}
+			} else {
+				_ = h.store.SetProjectFileLocalPath(projectFile.ID, dstPath)
+			}
+		}
+	}
+
 	transport.WriteData(c, http.StatusOK, gin.H{
 		"transfer_id": msg.TransferID,
 		"task_id":     taskID,
@@ -730,4 +996,8 @@ func (h *WebhookHandler) sendKnowledgeError(targetNode string, payload protocol.
 		ProjectID: payload.ProjectID,
 		Error:     errMsg,
 	}, payload.QueryID)
+}
+
+func (h *WebhookHandler) enrichAttachedFiles(files []model.TaskAttachedFile) []protocol.TaskAttachedFileRef {
+	return agentfile.EnrichWithDownloadURLs(files, h.externalURL, h.jwtSecret, h.downloadTTL)
 }

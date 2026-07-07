@@ -106,9 +106,14 @@ function patchProjectCaches(
     project ? updater(project) : project
   ))
 
-  queryClient.setQueryData<Project[] | undefined>(['projects'], (projects) => (
-    projects?.map((project) => (project.id === projectId ? updater(project) : project))
-  ))
+  queryClient.setQueryData<Project[] | undefined>(['projects'], (projects) => {
+    // Guard: if the list cache is undefined or empty, don't overwrite.
+    // During SSE-heavy periods, invalidateQueries may have cleared it temporarily.
+    if (!projects || projects.length === 0) {
+      return projects
+    }
+    return projects.map((project) => (project.id === projectId ? updater(project) : project))
+  })
 }
 
 export function applyProjectTaskUpdated(
@@ -123,8 +128,10 @@ export function applyProjectTaskUpdated(
   const { task, previousTaskStatus, isNewTask, hasEnoughContext } = input
 
   if (!hasEnoughContext) {
+    // Only invalidate the specific project detail — not the full project list.
+    // The full list invalidation every time a task has insufficient context
+    // can cause the project list to briefly disappear during frequent SSE events.
     void queryClient.invalidateQueries({ queryKey: ['projects', task.project_id] })
-    void queryClient.invalidateQueries({ queryKey: ['projects'] })
     return
   }
 

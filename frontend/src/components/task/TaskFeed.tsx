@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Avatar } from '@/components/ui/avatar'
 import { cn, formatRelativeTime, normalizeEscapedText } from '@/lib/utils'
 import { TrustMeshLogo } from '@/components/shared/TrustMeshLogo'
+import { usePlatformStore } from '@/stores/platformStore'
 import { useTaskEvents } from '@/hooks/useTasks'
 import { getTaskArtifactContent } from '@/api/tasks'
 import { ApiRequestError } from '@/api/client'
@@ -346,8 +347,9 @@ function formatFileSize(bytes: number | undefined) {
 // ─── 消息组件 ───
 
 function FeedActorAvatar({ event }: { event: Event }) {
+  const platformName = usePlatformStore((s) => s.name)
   if (event.actor_type === 'system') {
-    return <TrustMeshLogo size={32} />
+    return <TrustMeshLogo size={32} platformName={platformName} />
   }
 
   return (
@@ -364,6 +366,7 @@ function FeedActorAvatar({ event }: { event: Event }) {
 function FeedMessage({ event, showHeader }: { event: Event; showHeader: boolean }) {
   const roleBadge = actorRoleBadge[event.actor_type]
   const isSystem = event.actor_type === 'system'
+  const platformName = usePlatformStore((s) => s.name)
   const label = eventLabel[event.event_type] || ''
 
   if (!showHeader) {
@@ -381,7 +384,7 @@ function FeedMessage({ event, showHeader }: { event: Event; showHeader: boolean 
       <FeedActorAvatar event={event} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="text-sm font-semibold">{isSystem ? 'TrustMesh' : event.actor_name}</span>
+          <span className="text-sm font-semibold">{isSystem ? platformName : event.actor_name}</span>
           {roleBadge && (
             <span className={cn('text-[10px] px-1.5 py-0 rounded-sm font-medium', roleBadge.className)}>
               {roleBadge.label}

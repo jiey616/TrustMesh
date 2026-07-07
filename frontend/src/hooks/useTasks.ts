@@ -113,8 +113,8 @@ export function useCreateTask() {
 export function useCreatePlanningTask() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ projectId, input }: { projectId: string; input: CreatePlanningTaskRequest }) =>
-      tasksApi.createPlanningTask(projectId, input),
+    mutationFn: ({ projectId, input, fileIds }: { projectId: string; input: CreatePlanningTaskRequest; fileIds?: string[] }) =>
+      tasksApi.createPlanningTask(projectId, { ...input, file_ids: fileIds }),
     onSuccess: (res) => {
       qc.setQueryData(['tasks', 'detail', res.data.id], normalizeTaskDetail(res.data))
       qc.invalidateQueries({ queryKey: ['tasks'] })
@@ -128,8 +128,8 @@ export function useCreatePlanningTask() {
 export function useCreateTaskFromText() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ projectId, content, agentId }: { projectId: string; content: string; agentId?: string }) =>
-      tasksApi.createTaskFromText(projectId, content, agentId),
+    mutationFn: ({ projectId, content, agentId, fileIds }: { projectId: string; content: string; agentId?: string; fileIds?: string[] }) =>
+      tasksApi.createTaskFromText(projectId, content, agentId, fileIds),
     onSuccess: (res) => {
       qc.setQueryData(['tasks', 'detail', res.data.id], normalizeTaskDetail(res.data))
       qc.invalidateQueries({ queryKey: ['tasks'] })
@@ -184,6 +184,72 @@ export function useRejectPlan() {
     onSuccess: (res, { taskId }) => {
       qc.setQueryData(['tasks', 'detail', taskId], normalizeTaskDetail(res.data))
       qc.invalidateQueries({ queryKey: ['tasks'] })
+    },
+  })
+}
+
+// ─── Dynamic TODO management ───
+
+export function useAddTaskTodo() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ taskId, input }: { taskId: string; input: tasksApi.AddTodoInput }) =>
+      tasksApi.addTaskTodo(taskId, input),
+    onSuccess: (res, { taskId }) => {
+      qc.setQueryData(['tasks', 'detail', taskId], normalizeTaskDetail(res.data))
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      qc.invalidateQueries({ queryKey: ['tasks', 'events', taskId] })
+    },
+  })
+}
+
+export function useInsertTaskTodo() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ taskId, todoId, input }: { taskId: string; todoId: string; input: tasksApi.AddTodoInput }) =>
+      tasksApi.insertTaskTodo(taskId, todoId, input),
+    onSuccess: (res, { taskId }) => {
+      qc.setQueryData(['tasks', 'detail', taskId], normalizeTaskDetail(res.data))
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      qc.invalidateQueries({ queryKey: ['tasks', 'events', taskId] })
+    },
+  })
+}
+
+export function useUpdateTaskTodo() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ taskId, todoId, input }: { taskId: string; todoId: string; input: tasksApi.UpdateTodoInput }) =>
+      tasksApi.updateTaskTodo(taskId, todoId, input),
+    onSuccess: (res, { taskId }) => {
+      qc.setQueryData(['tasks', 'detail', taskId], normalizeTaskDetail(res.data))
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      qc.invalidateQueries({ queryKey: ['tasks', 'events', taskId] })
+    },
+  })
+}
+
+export function useRemoveTaskTodo() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ taskId, todoId }: { taskId: string; todoId: string }) =>
+      tasksApi.removeTaskTodo(taskId, todoId),
+    onSuccess: (_res, { taskId }) => {
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      qc.invalidateQueries({ queryKey: ['tasks', 'detail', taskId] })
+      qc.invalidateQueries({ queryKey: ['tasks', 'events', taskId] })
+    },
+  })
+}
+
+export function useReorderTaskTodos() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ taskId, todoIds }: { taskId: string; todoIds: string[] }) =>
+      tasksApi.reorderTaskTodos(taskId, todoIds),
+    onSuccess: (_res, { taskId }) => {
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      qc.invalidateQueries({ queryKey: ['tasks', 'detail', taskId] })
     },
   })
 }

@@ -111,6 +111,7 @@ func (s *Store) RecordTodoDispatch(userID, taskID, todoID string) (*model.TaskDe
 	if todo.Status == "pending" {
 		todo.Status = "in_progress"
 		todo.StartedAt = &now
+		todo.AssignedAt = &now
 	}
 	s.updateTaskStatusUnsafe(task, now)
 	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
@@ -172,6 +173,7 @@ func (s *Store) RecordSequentialTodoDispatch(taskID, todoID string) (*model.Task
 	if todo.Status == "pending" {
 		todo.Status = "in_progress"
 		todo.StartedAt = &now
+		todo.AssignedAt = &now
 	}
 	s.updateTaskStatusUnsafe(task, now)
 	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
@@ -339,6 +341,7 @@ type UserTaskCreateInput struct {
 	Description     string
 	Priority        string
 	AssigneeAgentID string
+	FileIDs         []string
 }
 
 func (s *Store) CreateTaskByUser(userID string, in UserTaskCreateInput) (*model.TaskDetail, *transport.AppError) {
@@ -414,6 +417,7 @@ func (s *Store) CreateTaskByUser(userID string, in UserTaskCreateInput) (*model.
 		PMAgentID:   "",
 		PMAgent:     model.PMAgentSummary{},
 		Todos:       []model.Todo{todo},
+		AttachedFiles: s.resolveAttachedFilesUnsafe(in.FileIDs, project.ID),
 
 		Result: model.TaskResult{
 			Summary:     "",
@@ -474,6 +478,29 @@ func normalizeTaskCreateTodos(in []TaskCreateTodoInput) ([]TaskCreateTodoInput, 
 		return out[i].Order < out[j].Order
 	})
 	return out, nil
+}
+
+// resolveAttachedFilesUnsafe looks up file metadata for the given file IDs.
+// Caller must hold s.mu.
+func (s *Store) resolveAttachedFilesUnsafe(fileIDs []string, projectID string) []model.TaskAttachedFile {
+	if len(fileIDs) == 0 {
+		return nil
+	}
+	out := make([]model.TaskAttachedFile, 0, len(fileIDs))
+	for _, fid := range fileIDs {
+		f, ok := s.projectFiles[fid]
+		if !ok || f.ProjectID != projectID || f.IsFolder {
+			continue
+		}
+		out = append(out, model.TaskAttachedFile{
+			ID:       f.ID,
+			FileName: f.FileName,
+			FileSize: f.FileSize,
+			MimeType: f.MimeType,
+			Source:   f.Source,
+		})
+	}
+	return out
 }
 
 func hasIncompletePredecessor(task *model.TaskDetail, todoIdx int) bool {
@@ -537,6 +564,7 @@ func (s *Store) UpdateTodoProgressByNode(nodeID string, in TodoProgressInput) (*
 	if todo.Status == "pending" {
 		todo.Status = "in_progress"
 		todo.StartedAt = &now
+		todo.AssignedAt = &now
 		todo.CanceledAt = nil
 		todo.CancelReason = nil
 		started := fmt.Sprintf("todo started: %s", todo.Title)
@@ -1189,4 +1217,340 @@ func findTodoIndex(task *model.TaskDetail, todoID string) int {
 		}
 	}
 	return -1
+}
+
+// ─── dynamic todo management ───
+
+type TodoModifyInput struct {
+	Title       string
+	Description string
+	AssigneeID  string // agent ID to assign to
+}
+
+func (s *Store) AppendTodo(userID, taskID string, in TodoModifyInput) (*model.TaskDetail, *transport.AppError) {
+	taskID = strings.TrimSpace(taskID)
+	in.Title = strings.TrimSpace(in.Title)
+	in.Description = strings.TrimSpace(in.Description)
+	in.AssigneeID = strings.TrimSpace(in.AssigneeID)
+	if taskID == "" || in.Title == "" || in.AssigneeID == "" {
+		return nil, transport.Validation("invalid todo payload", map[string]any{"title": "required", "assignee_id": "required"})
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	task, ok := s.tasks[taskID]
+	if !ok || task.UserID != userID {
+		return nil, transport.NotFound("task not found")
+	}
+	// Only allow mutation while task is active
+	if err := ensureTaskAcceptingUpdates(task); err != nil {
+		return nil, err
+	}
+	assignee, ok := s.agents[in.AssigneeID]
+	if !ok || assignee.UserID != userID {
+		return nil, transport.Validation("invalid assignee_id", nil)
+	}
+
+	now := time.Now().UTC()
+	maxOrder := 0
+	for i := range task.Todos {
+		if task.Todos[i].Order > maxOrder {
+			maxOrder = task.Todos[i].Order
+		}
+	}
+
+	todo := model.Todo{
+		ID:          uuid.NewString(),
+		Order:       maxOrder + 1,
+		Title:       in.Title,
+		Description: in.Description,
+		Status:      "pending",
+		Assignee: model.TodoAssignee{
+			AgentID: assignee.ID,
+			Name:    assignee.Name,
+			NodeID:  assignee.NodeID,
+		},
+		Result: model.TodoResult{
+			Summary:  "",
+			Output:   "",
+			Metadata: map[string]any{},
+		},
+		CreatedAt: now,
+	}
+	task.Todos = append(task.Todos, todo)
+	task.UpdatedAt = now
+	task.Version++
+
+	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "user", userID, getAgentName(s, userID), "todo_appended", &in.Title, map[string]any{
+		"todo_id":   todo.ID,
+		"todo_title": todo.Title,
+	}, now)
+
+	// Note: ClawSynapse todo.assigned dispatch is handled by the caller (handler layer)
+	// The store only persists the task; the caller calls DispatchNextTodo for ClawSynapse message delivery.
+
+	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
+		return nil, mongoWriteError(err)
+	}
+	s.publishTaskUnsafe(task.ID)
+	return s.copyTaskWithArtifactsUnsafe(task), nil
+}
+
+func (s *Store) InsertTodo(userID, taskID, beforeTodoID string, in TodoModifyInput) (*model.TaskDetail, *transport.AppError) {
+	taskID = strings.TrimSpace(taskID)
+	beforeTodoID = strings.TrimSpace(beforeTodoID)
+	in.Title = strings.TrimSpace(in.Title)
+	in.Description = strings.TrimSpace(in.Description)
+	in.AssigneeID = strings.TrimSpace(in.AssigneeID)
+	if taskID == "" || beforeTodoID == "" || in.Title == "" || in.AssigneeID == "" {
+		return nil, transport.Validation("invalid todo payload", map[string]any{"title": "required", "assignee_id": "required", "before_todo_id": "required"})
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	task, ok := s.tasks[taskID]
+	if !ok || task.UserID != userID {
+		return nil, transport.NotFound("task not found")
+	}
+	if err := ensureTaskAcceptingUpdates(task); err != nil {
+		return nil, err
+	}
+
+	beforeIdx := findTodoIndex(task, beforeTodoID)
+	if beforeIdx < 0 {
+		return nil, transport.NotFound("before_todo not found")
+	}
+
+	assignee, ok := s.agents[in.AssigneeID]
+	if !ok || assignee.UserID != userID {
+		return nil, transport.Validation("invalid assignee_id", nil)
+	}
+
+	now := time.Now().UTC()
+	todo := model.Todo{
+		ID:          uuid.NewString(),
+		Order:       0, // will be recalculated
+		Title:       in.Title,
+		Description: in.Description,
+		Status:      "pending",
+		Assignee: model.TodoAssignee{
+			AgentID: assignee.ID,
+			Name:    assignee.Name,
+			NodeID:  assignee.NodeID,
+		},
+		Result: model.TodoResult{
+			Summary:  "",
+			Output:   "",
+			Metadata: map[string]any{},
+		},
+		CreatedAt: now,
+	}
+
+	// Insert at position beforeIdx
+	task.Todos = append(task.Todos, model.Todo{}) // grow
+	copy(task.Todos[beforeIdx+1:], task.Todos[beforeIdx:])
+	task.Todos[beforeIdx] = todo
+
+	// Recalculate Order for all todos
+	for i := range task.Todos {
+		task.Todos[i].Order = i + 1
+	}
+
+	task.UpdatedAt = now
+	task.Version++
+
+	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "user", userID, getAgentName(s, userID), "todo_appended", &in.Title, map[string]any{
+		"todo_id":    todo.ID,
+		"todo_title": todo.Title,
+	}, now)
+
+	// Note: ClawSynapse todo.assigned dispatch is handled by the caller (handler layer).
+
+	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
+		return nil, mongoWriteError(err)
+	}
+	s.publishTaskUnsafe(task.ID)
+	return s.copyTaskWithArtifactsUnsafe(task), nil
+}
+
+func (s *Store) UpdateTodo(userID, taskID, todoID string, in TodoModifyInput) (*model.TaskDetail, *transport.AppError) {
+	taskID = strings.TrimSpace(taskID)
+	todoID = strings.TrimSpace(todoID)
+	if taskID == "" || todoID == "" {
+		return nil, transport.Validation("invalid payload", map[string]any{"task_id": "required", "todo_id": "required"})
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	task, ok := s.tasks[taskID]
+	if !ok || task.UserID != userID {
+		return nil, transport.NotFound("task not found")
+	}
+	if err := ensureTaskAcceptingUpdates(task); err != nil {
+		return nil, err
+	}
+
+	todoIdx := findTodoIndex(task, todoID)
+	if todoIdx < 0 {
+		return nil, transport.NotFound("todo not found")
+	}
+	todo := &task.Todos[todoIdx]
+	if err := ensureTodoAcceptingUpdates(todo); err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+
+	if in.Title != "" {
+		todo.Title = strings.TrimSpace(in.Title)
+	}
+	if in.Description != "" {
+		todo.Description = strings.TrimSpace(in.Description)
+	}
+	if in.AssigneeID != "" {
+		assignee, ok := s.agents[in.AssigneeID]
+		if !ok || assignee.UserID != userID {
+			return nil, transport.Validation("invalid assignee_id", nil)
+		}
+		todo.Assignee = model.TodoAssignee{
+			AgentID: assignee.ID,
+			Name:    assignee.Name,
+			NodeID:  assignee.NodeID,
+		}
+	}
+
+	task.UpdatedAt = now
+	task.Version++
+
+	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todoID, "user", userID, getAgentName(s, userID), "todo_updated", nil, map[string]any{
+		"todo_id":    todoID,
+		"todo_title": todo.Title,
+	}, now)
+
+	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
+		return nil, mongoWriteError(err)
+	}
+	s.publishTaskUnsafe(task.ID)
+	return s.copyTaskWithArtifactsUnsafe(task), nil
+}
+
+func (s *Store) RemoveTodo(userID, taskID, todoID string) (*model.TaskDetail, *transport.AppError) {
+	taskID = strings.TrimSpace(taskID)
+	todoID = strings.TrimSpace(todoID)
+	if taskID == "" || todoID == "" {
+		return nil, transport.Validation("invalid payload", map[string]any{"task_id": "required", "todo_id": "required"})
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	task, ok := s.tasks[taskID]
+	if !ok || task.UserID != userID {
+		return nil, transport.NotFound("task not found")
+	}
+	if err := ensureTaskAcceptingUpdates(task); err != nil {
+		return nil, err
+	}
+
+	todoIdx := findTodoIndex(task, todoID)
+	if todoIdx < 0 {
+		return nil, transport.NotFound("todo not found")
+	}
+	todo := &task.Todos[todoIdx]
+	if todo.Status != "pending" {
+		return nil, transport.Conflict("TODO_NOT_PENDING", "only pending todos can be removed")
+	}
+
+	now := time.Now().UTC()
+	todoTitle := todo.Title
+
+	// Remove the todo
+	task.Todos = append(task.Todos[:todoIdx], task.Todos[todoIdx+1:]...)
+
+	// Recalculate Order
+	for i := range task.Todos {
+		task.Todos[i].Order = i + 1
+	}
+
+	task.UpdatedAt = now
+	task.Version++
+
+	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todoID, "user", userID, getAgentName(s, userID), "todo_removed", &todoTitle, map[string]any{
+		"todo_id":    todoID,
+		"todo_title": todoTitle,
+	}, now)
+
+	// Re-aggregate task status after removal
+	s.updateTaskStatusUnsafe(task, now)
+	// Note: ClawSynapse todo.assigned dispatch is handled by the caller (handler layer).
+
+	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
+		return nil, mongoWriteError(err)
+	}
+	s.publishTaskUnsafe(task.ID)
+	return s.copyTaskWithArtifactsUnsafe(task), nil
+}
+
+func (s *Store) ReorderTodos(userID, taskID string, todoIDs []string) (*model.TaskDetail, *transport.AppError) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" || len(todoIDs) == 0 {
+		return nil, transport.Validation("invalid payload", map[string]any{"task_id": "required", "todo_ids": "required"})
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	task, ok := s.tasks[taskID]
+	if !ok || task.UserID != userID {
+		return nil, transport.NotFound("task not found")
+	}
+	if err := ensureTaskAcceptingUpdates(task); err != nil {
+		return nil, err
+	}
+
+	if len(todoIDs) != len(task.Todos) {
+		return nil, transport.Validation("todo_ids count mismatch", map[string]any{"expected": len(task.Todos), "got": len(todoIDs)})
+	}
+
+	// Build a lookup
+	todoMap := make(map[string]*model.Todo, len(task.Todos))
+	for i := range task.Todos {
+		todoMap[task.Todos[i].ID] = &task.Todos[i]
+	}
+
+	now := time.Now().UTC()
+	reordered := make([]model.Todo, 0, len(todoIDs))
+	for i, id := range todoIDs {
+		todo, exists := todoMap[id]
+		if !exists {
+			return nil, transport.Validation("unknown todo_id", map[string]any{"todo_id": id})
+		}
+		todo.Order = i + 1
+		reordered = append(reordered, *todo)
+	}
+
+	task.Todos = reordered
+	task.UpdatedAt = now
+	task.Version++
+
+	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, "", "user", userID, getAgentName(s, userID), "todos_reordered", nil, map[string]any{
+		"count": len(todoIDs),
+	}, now)
+
+	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
+		return nil, mongoWriteError(err)
+	}
+	s.publishTaskUnsafe(task.ID)
+	return s.copyTaskWithArtifactsUnsafe(task), nil
+}
+
+// getAgentName is a helper to safely retrieve a user's display name from the store.
+func getAgentName(s *Store, userID string) string {
+	if u, ok := s.users[userID]; ok {
+		return u.Name
+	}
+	return ""
 }

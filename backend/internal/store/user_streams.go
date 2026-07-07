@@ -3,18 +3,40 @@ package store
 import (
 	"time"
 
+	"go.uber.org/zap"
 	"trustmesh/backend/internal/model"
 )
 
-const userStreamBufferSize = 16
+const (
+	userStreamBufferSize    = 16
+	maxSubscriptionsPerUser = 5 // max concurrent SSE connections per user
+)
 
 func (s *Store) SubscribeUser(userID string) (<-chan model.UserStreamEvent, func()) {
 	ch := make(chan model.UserStreamEvent, userStreamBufferSize)
 
 	s.streamMu.Lock()
+
+	// Enforce max connections per user: if at limit, evict the oldest subscriber.
 	if s.userSubscribers[userID] == nil {
 		s.userSubscribers[userID] = make(map[chan model.UserStreamEvent]struct{})
 	}
+	if len(s.userSubscribers[userID]) >= maxSubscriptionsPerUser {
+		// Evict the oldest channel (map iteration is random, but this is acceptable
+		// since all channels are equivalent — the client will reconnect).
+		for oldest := range s.userSubscribers[userID] {
+			delete(s.userSubscribers[userID], oldest)
+			close(oldest)
+			if s.log != nil {
+				s.log.Info("sse connection evicted to enforce per-user limit",
+					zap.String("user_id", userID),
+					zap.Int("limit", maxSubscriptionsPerUser),
+				)
+			}
+			break
+		}
+	}
+
 	s.userSubscribers[userID][ch] = struct{}{}
 	s.streamMu.Unlock()
 

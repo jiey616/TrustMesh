@@ -82,6 +82,12 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
 
   return (
     <RealtimeStatusContext.Provider value={isAuthenticated ? status : 'idle'}>
+      {isAuthenticated && (status === 'reconnecting' || status === 'disconnected') && (
+        <div className="fixed top-0 left-0 right-0 z-[9999] flex items-center justify-center gap-2 bg-amber-500 px-4 py-1.5 text-sm font-medium text-white shadow-md dark:bg-amber-600">
+          <span className="inline-block size-2 animate-pulse rounded-full bg-white" />
+          {status === 'reconnecting' ? '连接断开，正在重连…' : '无法连接服务器，请检查网络'}
+        </div>
+      )}
       {children}
     </RealtimeStatusContext.Provider>
   )

@@ -279,6 +279,14 @@ export interface TaskListItem {
   updated_at: string
 }
 
+export interface TaskAttachedFile {
+  id: string
+  file_name: string
+  file_size: number
+  mime_type: string
+  source: ProjectFileSource
+}
+
 export interface TaskDetail {
   id: string
   project_id: string
@@ -290,6 +298,7 @@ export interface TaskDetail {
   messages?: TaskMessage[]
   todos: Todo[]
   artifacts: TaskArtifact[]
+  attached_files?: TaskAttachedFile[]
   result: TaskResult
   version: number
   canceled_at: string | null
@@ -711,6 +720,101 @@ export interface AssistantChatRequest {
 export interface AssistantSSEEvent {
   event: string
   data: Record<string, unknown>
+}
+
+// ─── 项目文件管理 ───
+
+export type ProjectFileSource = 'user_upload' | 'agent_artifact'
+
+export interface ProjectFile {
+  id: string
+  project_id: string
+  parent_id?: string
+  task_id?: string
+  agent_id?: string
+  agent_name?: string
+  file_name: string
+  file_size: number
+  mime_type: string
+  source: ProjectFileSource
+  is_folder: boolean
+  transfer_id?: string
+  uploaded_by: string
+  created_at: string
+}
+
+export interface ProjectFileTreeNode {
+  id: string
+  name: string
+  type: 'directory' | 'file'
+  files?: ProjectFile[]
+  children?: ProjectFileTreeNode[]
+}
+
+export interface ProjectFileTree {
+  uploads: ProjectFileTreeNode[]
+  tasks: ProjectFileTreeNode[]
+}
+
+export interface ListProjectFilesQuery {
+  source?: ProjectFileSource
+  task_id?: string
+  agent_id?: string
+}
+
+export interface CreateProjectFolderRequest {
+  name: string
+  parent_id?: string
+}
+
+export interface RenameProjectFileRequest {
+  name: string
+}
+
+export interface MoveProjectFileRequest {
+  parent_id?: string
+}
+
+export interface BatchDeleteProjectFilesRequest {
+  ids: string[]
+}
+
+export interface BatchDeleteResult {
+  deleted: number
+  failed: string[]
+}
+
+// ─── 文件浏览（v2） ───
+
+export interface BreadcrumbNode {
+  id: string
+  name: string
+}
+
+export interface VirtualFolder {
+  id: string
+  name: string
+  item_count?: number
+}
+
+export interface BrowseFilesResult {
+  parent_id: string
+  virtual_folders?: VirtualFolder[]
+  folders: ProjectFile[]
+  files: ProjectFile[]
+  breadcrumbs: BreadcrumbNode[]
+}
+
+export interface ArtifactAgentGroup {
+  agent_id: string
+  agent_name: string
+  files: ProjectFile[]
+}
+
+export interface ArtifactTaskGroup {
+  task_id: string
+  task_name: string
+  agents: ArtifactAgentGroup[]
 }
 
 // ─── 工作岗位市场 ───
