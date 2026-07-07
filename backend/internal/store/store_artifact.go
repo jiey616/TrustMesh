@@ -83,6 +83,17 @@ func (s *Store) SaveArtifact(artifact model.TaskArtifact) *transport.AppError {
 	}
 
 	s.publishTaskUnsafe(artifact.TaskID)
+
+	// Auto-create ProjectFile record for the artifact (best-effort).
+	// NOTE: Call Unsafe variant because we already hold s.mu.Lock.
+	if _, err := s.saveProjectFileFromArtifactUnsafe(artifact); err != nil {
+		if s.log != nil {
+			s.log.Warn("failed to auto-create project file from artifact",
+				zap.String("transfer_id", artifact.TransferID),
+				zap.Error(err))
+		}
+	}
+
 	return nil
 }
 

@@ -206,6 +206,12 @@ func (s *Store) DeleteAgent(userID, agentID string) *transport.AppError {
 	return nil
 }
 
+func (s *Store) GetAgentByNodeID(nodeID string) (*model.Agent, *transport.AppError) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.agentByNodeUnsafe(nodeID)
+}
+
 func (s *Store) agentByNodeUnsafe(nodeID string) (*model.Agent, *transport.AppError) {
 	agentID, ok := s.agentByNode[nodeID]
 	if !ok {

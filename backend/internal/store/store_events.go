@@ -56,12 +56,24 @@ func (s *Store) addEventUnsafe(userID, projectID, taskID, todoID, actorType, act
 	}
 	if taskID != "" {
 		s.taskEvents[taskID] = append(s.taskEvents[taskID], event)
+		// Upper-bound protection: truncate if too many events for a single task
+		if len(s.taskEvents[taskID]) > maxEventsPerTask {
+			s.taskEvents[taskID] = s.taskEvents[taskID][len(s.taskEvents[taskID])-truncatedKeepCount:]
+		}
 	}
 	if userID != "" {
 		s.userEvents[userID] = append(s.userEvents[userID], &event)
+		// Upper-bound protection: truncate if too many events for a single user
+		if len(s.userEvents[userID]) > maxEventsPerUser {
+			s.userEvents[userID] = s.userEvents[userID][len(s.userEvents[userID])-truncatedKeepCount:]
+		}
 	}
 	if actorType == "agent" && actorID != "" {
 		s.agentEvents[actorID] = append(s.agentEvents[actorID], &event)
+		// Upper-bound protection: truncate if too many events for a single agent
+		if len(s.agentEvents[actorID]) > maxEventsPerAgent {
+			s.agentEvents[actorID] = s.agentEvents[actorID][len(s.agentEvents[actorID])-truncatedKeepCount:]
+		}
 	}
 	s.maybeCreateNotificationUnsafe(&event)
 	if taskID != "" {

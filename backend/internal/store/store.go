@@ -50,6 +50,10 @@ type Store struct {
 	knowledgeDocs     map[string]*model.KnowledgeDocument
 	userKnowledgeDocs map[string][]string // userID → []docID
 
+	projectFiles      map[string]*model.ProjectFile // fileID → ProjectFile
+	projectFileIndex  map[string][]string            // projectID → []fileID
+	transferFileIndex map[string]string              // transferID → fileID
+
 	mongoEnabled           bool
 	mongoClient            *mongo.Client
 	mongoUsers             *mongo.Collection
@@ -65,6 +69,7 @@ type Store struct {
 	mongoArtifacts         *mongo.Collection
 	mongoKnowledgeDocs     *mongo.Collection
 	mongoKnowledgeChunks   *mongo.Collection
+	mongoProjectFiles      *mongo.Collection
 	mongoTimeout           time.Duration
 	log                    *zap.Logger
 
@@ -106,6 +111,9 @@ func New() *Store {
 		trustRequestIndex:  make(map[string]string),
 		knowledgeDocs:      make(map[string]*model.KnowledgeDocument),
 		userKnowledgeDocs:  make(map[string][]string),
+		projectFiles:       make(map[string]*model.ProjectFile),
+		projectFileIndex:   make(map[string][]string),
+		transferFileIndex:  make(map[string]string),
 		userSubscribers:    make(map[string]map[chan model.UserStreamEvent]struct{}),
 	}
 }
@@ -195,6 +203,10 @@ func copyTask(t *model.TaskDetail) *model.TaskDetail {
 		if clone.Todos[i].CanceledAt != nil {
 			at := *clone.Todos[i].CanceledAt
 			clone.Todos[i].CanceledAt = &at
+		}
+		if clone.Todos[i].AssignedAt != nil {
+			at := *clone.Todos[i].AssignedAt
+			clone.Todos[i].AssignedAt = &at
 		}
 		if clone.Todos[i].Error != nil {
 			errCopy := *clone.Todos[i].Error

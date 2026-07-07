@@ -21,6 +21,11 @@ type TaskPlanReadyInput struct {
 }
 
 func (s *Store) CreateTaskPlanning(userID, projectID, content string) (*model.TaskDetail, *transport.AppError) {
+	return s.CreateTaskPlanningWithFiles(userID, projectID, content, nil)
+}
+
+// CreateTaskPlanningWithFiles creates a planning-mode task with optional file attachments.
+func (s *Store) CreateTaskPlanningWithFiles(userID, projectID, content string, fileIDs []string) (*model.TaskDetail, *transport.AppError) {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return nil, transport.Validation("invalid content", map[string]any{"content": "required"})
@@ -59,6 +64,7 @@ func (s *Store) CreateTaskPlanning(userID, projectID, content string) (*model.Ta
 		PMAgent:   toPMSummary(pmAgent),
 		Messages:  []model.TaskMessage{msg},
 		Todos:     []model.Todo{},
+		AttachedFiles: s.resolveAttachedFilesUnsafe(fileIDs, project.ID),
 		Result: model.TaskResult{
 			Summary:     "",
 			FinalOutput: "",

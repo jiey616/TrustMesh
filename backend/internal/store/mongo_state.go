@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -23,7 +24,16 @@ func (s *Store) enableMongo(cfg config.Config, log *zap.Logger) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.MongoTimeout)
 	defer cancel()
 
-	client, err := mongo.Connect(options.Client().ApplyURI(cfg.MongoURI))
+	opts := options.Client().
+		ApplyURI(cfg.MongoURI).
+		SetMaxPoolSize(20).
+		SetMinPoolSize(2).
+		SetMaxConnIdleTime(30 * time.Second).
+		SetServerSelectionTimeout(5 * time.Second).
+		SetConnectTimeout(10 * time.Second).
+		SetTimeout(10 * time.Second)
+
+	client, err := mongo.Connect(opts)
 	if err != nil {
 		return err
 	}
@@ -48,6 +58,7 @@ func (s *Store) enableMongo(cfg config.Config, log *zap.Logger) error {
 	s.mongoArtifacts = db.Collection("artifacts")
 	s.mongoKnowledgeDocs = db.Collection("knowledge_documents")
 	s.mongoKnowledgeChunks = db.Collection("knowledge_chunks")
+	s.mongoProjectFiles = db.Collection("project_files")
 	s.mongoTimeout = cfg.MongoTimeout
 	if log != nil {
 		s.log = log
@@ -96,6 +107,7 @@ func (s *Store) clearMongoCollections() {
 	s.mongoArtifacts = nil
 	s.mongoKnowledgeDocs = nil
 	s.mongoKnowledgeChunks = nil
+	s.mongoProjectFiles = nil
 }
 
 func (s *Store) mongoContext() (context.Context, context.CancelFunc) {
@@ -157,6 +169,12 @@ func (s *Store) ensureMongoIndexes() error {
 		s.mongoKnowledgeChunks: {
 			{Keys: bson.D{{Key: "document_id", Value: 1}, {Key: "chunk_index", Value: 1}}},
 			{Keys: bson.D{{Key: "user_id", Value: 1}, {Key: "project_id", Value: 1}}},
+		},
+		s.mongoProjectFiles: {
+			{Keys: bson.D{{Key: "project_id", Value: 1}}},
+			{Keys: bson.D{{Key: "project_id", Value: 1}, {Key: "source", Value: 1}}},
+			{Keys: bson.D{{Key: "project_id", Value: 1}, {Key: "task_id", Value: 1}}},
+			{Keys: bson.D{{Key: "transfer_id", Value: 1}}, Options: options.Index().SetUnique(true).SetPartialFilterExpression(bson.M{"transfer_id": bson.M{"$exists": true}})},
 		},
 	}
 
@@ -229,6 +247,10 @@ func (s *Store) loadMongoState() error {
 	if err != nil {
 		return err
 	}
+	projectFiles, projectFileIndex, transferFileIndex, err := s.loadProjectFiles()
+	if err != nil {
+		return err
+	}
 	usersByMail := make(map[string]string, len(users))
 	for id, user := range users {
 		usersByMail[user.Email] = id
@@ -265,6 +287,9 @@ func (s *Store) loadMongoState() error {
 	s.userNotifications = userNotifications
 	s.knowledgeDocs = knowledgeDocs
 	s.userKnowledgeDocs = userKnowledgeDocs
+	s.projectFiles = projectFiles
+	s.projectFileIndex = projectFileIndex
+	s.transferFileIndex = transferFileIndex
 	return nil
 }
 
@@ -825,5 +850,55 @@ func (s *Store) persistArtifactUnsafe(artifact *model.TaskArtifact) error {
 	ctx, cancel := s.mongoContext()
 	defer cancel()
 	_, err := s.mongoArtifacts.ReplaceOne(ctx, bson.M{"_id": artifact.TransferID}, artifact, options.Replace().SetUpsert(true))
+	return err
+}
+
+func (s *Store) loadProjectFiles() (map[string]*model.ProjectFile, map[string][]string, map[string]string, error) {
+	files := make(map[string]*model.ProjectFile)
+	index := make(map[string][]string)
+	transferIndex := make(map[string]string)
+	if s.mongoProjectFiles == nil {
+		return files, index, transferIndex, nil
+	}
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+	cursor, err := s.mongoProjectFiles.Find(ctx, bson.D{}, options.Find().SetSort(bson.D{{Key: "created_at", Value: 1}}))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var projectFiles []model.ProjectFile
+	if err := cursor.All(ctx, &projectFiles); err != nil {
+		return nil, nil, nil, err
+	}
+	for i := range projectFiles {
+		pf := projectFiles[i]
+		files[pf.ID] = &pf
+		index[pf.ProjectID] = append(index[pf.ProjectID], pf.ID)
+		if pf.TransferID != "" {
+			transferIndex[pf.TransferID] = pf.ID
+		}
+	}
+	return files, index, transferIndex, nil
+}
+
+func (s *Store) persistProjectFileUnsafe(pf *model.ProjectFile) error {
+	if !s.mongoEnabled || s.mongoProjectFiles == nil || pf == nil {
+		return nil
+	}
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+	_, err := s.mongoProjectFiles.ReplaceOne(ctx, bson.M{"_id": pf.ID}, pf, options.Replace().SetUpsert(true))
+	return err
+}
+
+func (s *Store) deleteProjectFileUnsafe(fileID string) error {
+	if !s.mongoEnabled || s.mongoProjectFiles == nil || fileID == "" {
+		return nil
+	}
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+	_, err := s.mongoProjectFiles.DeleteOne(ctx, bson.M{"_id": fileID})
 	return err
 }
