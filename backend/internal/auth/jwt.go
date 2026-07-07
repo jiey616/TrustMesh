@@ -68,6 +68,10 @@ func (m *JWTManager) issueToken(userID, tokenType string, ttl time.Duration) (st
 	return token.SignedString(m.secret)
 }
 
+func (m *JWTManager) GetSecret() []byte {
+	return m.secret
+}
+
 func (m *JWTManager) ParseToken(raw string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(raw, &Claims{}, func(token *jwt.Token) (any, error) {
 		if token.Method != jwt.SigningMethodHS256 {

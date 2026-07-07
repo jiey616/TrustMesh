@@ -36,9 +36,11 @@ func main() {
 	}()
 
 	srv := &http.Server{
-		Addr:        ":" + cfg.Port,
-		Handler:     application.Engine,
-		ReadTimeout: cfg.ReadTimeout,
+		Addr:         ":" + cfg.Port,
+		Handler:      application.Engine,
+		ReadTimeout:  cfg.ReadTimeout,
+		WriteTimeout: cfg.WriteTimeout,
+		IdleTimeout:  cfg.IdleTimeout,
 	}
 
 	go func() {
