@@ -7,7 +7,7 @@ description: >
 compatibility: Requires clawsynapse CLI
 metadata:
   author: TrustMesh
-  version: "4.0"
+  version: "4.1"
 allowed-tools:
   - "Bash(clawsynapse:*)"
 ---
@@ -390,7 +390,101 @@ clawsynapse --json publish \
 - 不要发送协议中未定义的字段。
 - payload 较大时用 `jq -nc` 构建。
 
-## 六、常见错误码
+## 六、动态 TODO 管理（任务确认后）
+
+任务确认（`task.plan_ready`）后，你仍然可以通过 ClawSynapse 协议**动态添加、修改、删除或重排序 TODO**。
+
+### 6.1 task.todo_add — 添加 TODO
+
+在已有任务中追加一个新的 TODO。
+
+```bash
+TARGET_NODE="trustmesh-server"  # ← 替换为实际 from 值
+SESSION_KEY="task_123"         # ← 替换为 incoming header 中 session 的值
+
+payload="$(jq -nc \
+  --arg task_id "task_123" \
+  --arg title "补充单元测试" \
+  --arg description "为登录功能编写单元测试，覆盖正常流程和异常情况" \
+  --arg assignee_node_id "node-developer-001" \
+  '{
+    task_id: $task_id,
+    title: $title,
+    description: $description,
+    assignee_node_id: $assignee_node_id
+  }')"
+
+clawsynapse publish \
+  --target "$TARGET_NODE" \
+  --type task.todo_add \
+  --session-key "$SESSION_KEY" \
+  --message "$payload"
+```
+
+**参数说明：**
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `task_id` | ✅ | 目标任务的 ID |
+| `title` | ✅ | TODO 标题 |
+| `description` | ✅ | TODO 详细说明 |
+| `assignee_node_id` | ✅ | 执行 Agent 的 node_id |
+| `before_todo_id` | ❌ | 可选，插入到指定 TODO 之前（不填则追加到末尾） |
+
+**使用场景示例：**
+- 用户回复新增需求时，追加一个 TODO
+- 发现遗漏时补充 TODO
+
+### 6.2 task.todo_modify — 修改 TODO
+
+修改已有 TODO 的标题、描述或指派人。
+
+```bash
+TARGET_NODE="trustmesh-server"  # ← 替换为实际 from 值
+SESSION_KEY="task_123"         # ← 替换为 incoming header 中 session 的值
+
+payload="$(jq -nc \
+  --arg task_id "task_123" \
+  --arg todo_id "TD_02" \
+  --arg title "实现前端登录页（含记住我功能）" \
+  --arg description "在后端接口完成后，接入登录页、表单交互和记住我功能" \
+  --arg assignee_node_id "node-frontend-001" \
+  '{
+    task_id: $task_id,
+    todo_id: $todo_id,
+    title: $title,
+    description: $description,
+    assignee_node_id: $assignee_node_id
+  }')"
+
+clawsynapse publish \
+  --target "$TARGET_NODE" \
+  --type task.todo_modify \
+  --session-key "$SESSION_KEY" \
+  --message "$payload"
+```
+
+**参数说明：**
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `task_id` | ✅ | 目标任务的 ID |
+| `todo_id` | ✅ | 要修改的 TODO ID |
+| `title` | ❌ | 新标题（不传则不修改） |
+| `description` | ❌ | 新描述（不传则不修改） |
+| `assignee_node_id` | ❌ | 新的指派人（不传则不修改） |
+
+**使用场景示例：**
+- 需求变更后调整 TODO 的描述
+- 执行 Agent 离线时重新指派给其他 Agent
+- 调整 TODO 标题以更准确反映实际任务
+
+### 6.3 动态 TODO 管理规则
+
+1. **只能修改未开始（`pending`）状态的 TODO**。已派发或完成的不允许修改。
+2. **添加的 TODO 会自动派发**——如果添加时该 TODO 是当前待处理节点，TrustMesh 会自动向执行 Agent 发送 `todo.assigned`。
+3. **删除某个 TODO 时，下一个待处理的 TODO 会自动接上**并派发给对应的执行 Agent。
+4. `before_todo_id` 用于插入到指定位置；不填则追加到最后。
+
+## 七、常见错误码
 
 | 错误码 | 含义 |
 |--------|------|
