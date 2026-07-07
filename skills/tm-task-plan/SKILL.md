@@ -120,6 +120,54 @@ allowed-tools:
 - `user_content`：始终是用户原始输入，以此为准理解需求。
 - `candidate_agents`：仅首次消息携带，是你可以分派 Todo 的执行 Agent 列表
 
+### 附件文件（attached_files）
+
+当用户在任务中引用了项目文件时，`task.message` 会携带 `attached_files` 字段：
+
+```json
+{
+  "task_id": "task_123",
+  "attached_files": [
+    {
+      "id": "pf_abc123",
+      "file_name": "需求文档.pdf",
+      "file_size": 204800,
+      "mime_type": "application/pdf",
+      "source": "user_upload",
+      "download_url": "http://192.168.1.100:8080/api/v1/files/agent/pf_abc123?token=eyJhbGci..."
+    },
+    {
+      "id": "pf_def456",
+      "file_name": "接口规范.md",
+      "file_size": 15360,
+      "mime_type": "text/markdown",
+      "source": "user_upload",
+      "download_url": "http://192.168.1.100:8080/api/v1/files/agent/pf_def456?token=eyJhbGci..."
+    }
+  ]
+}
+```
+
+**如何获取文件内容：**
+
+`download_url` 是临时有效的 HTTP 下载链接（有效期约 10 分钟）。使用 `curl` 下载：
+
+```bash
+curl -s "<download_url>" -o /tmp/task-file.pdf
+```
+
+对于文本文件，可以直接读入变量：
+
+```bash
+FILE_CONTENT="$(curl -s "<download_url>")"
+```
+
+**重要规则：**
+- `download_url` 有时效性，收到消息后应尽快下载
+- 下载失败（过期或网络问题）时，仍应基于文件名和项目上下文继续工作，不要阻塞
+- 多个文件时，按顺序逐个下载
+- 下载完成后，在 task.reply 或后续 task.comment 中告诉用户已读取了哪些文件
+
 ## 三、发送消息
 
 ### 核心规则

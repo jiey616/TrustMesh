@@ -104,6 +104,46 @@ clawsynapse publish \
 
 TrustMesh 会回复 `task.context.result`，包含完整的任务快照（task_context + 所有已完成 Todo 的结果）。
 
+### 附件文件（attached_files）
+
+当用户在任务中引用了项目文件时，`todo.assigned` 的 `attached_files` 字段会包含文件引用：
+
+```json
+{
+  "task_id": "task_123",
+  "attached_files": [
+    {
+      "id": "pf_abc123",
+      "file_name": "需求文档.pdf",
+      "file_size": 204800,
+      "mime_type": "application/pdf",
+      "source": "user_upload",
+      "download_url": "http://192.168.1.100:8080/api/v1/files/agent/pf_abc123?token=eyJhbGci..."
+    }
+  ]
+}
+```
+
+**如何获取文件内容：**
+
+`download_url` 是临时有效的 HTTP 下载链接（有效期约 10 分钟）。使用 `curl` 下载：
+
+```bash
+curl -s "<download_url>" -o /tmp/task-file.pdf
+```
+
+对于文本文件，可以直接读入变量：
+
+```bash
+FILE_CONTENT="$(curl -s "<download_url>")"
+```
+
+**重要规则：**
+- `download_url` 有时效性，收到 `todo.assigned` 后应**立即下载**所有附件
+- 下载失败（过期或网络问题）时，仍应基于文件名和任务描述继续工作，在 `task.comment` 中说明"附件文件 <文件名> 下载失败：<原因>"
+- 多个文件时，按顺序逐个下载
+- 下载完成后，在 `task.comment` 中说明已读取的文件列表和简要内容概要
+
 ### todo.status_changed payload（状态通知）
 
 ```json
