@@ -2320,6 +2320,40 @@ func findTodo(task *model.TaskDetail, todoID string) *model.Todo {
 	return nil
 }
 
+// warnTransferRejected surfaces an upload that will not be filed. A rejected
+// transfer used to be completely invisible: the file stayed on the transfer
+// volume, the sending agent reported success, and the platform showed nothing
+// — the user only found out when a deliverable never appeared. Every rejection
+// path now writes a ⚠️ system comment on the owning task (best-effort, never
+// fatal), mirroring how task.plan_ready rejections are surfaced.
+func (h *WebhookHandler) warnTransferRejected(taskID, fromNode, transferID, fileName, reason string) {
+	if taskID == "" {
+		// No declared task: try to still find a home for the warning.
+		if owner, err := h.store.ResolveTransferOwner(fromNode); err == nil && owner != nil {
+			taskID = owner.TaskID
+		}
+	}
+	content := fmt.Sprintf("⚠️ 文件上传未入库：%s（%s）。文件已传输到平台但未写入文件列表，请让执行方用 `clawsynapse transfer send --metadata taskId=… todoId=…` 重新上传。",
+		strings.TrimSpace(fileName), reason)
+	if transferID != "" {
+		content += fmt.Sprintf(" transferId=%s", transferID)
+	}
+	if taskID == "" {
+		if h.log != nil {
+			h.log.Error("transfer rejected with no resolvable task",
+				zap.String("transfer_id", transferID),
+				zap.String("from_node", fromNode),
+				zap.String("file_name", fileName),
+				zap.String("reason", reason))
+		}
+		return
+	}
+	if _, cErr := h.store.AppendSystemTaskComment(taskID, content); cErr != nil && h.log != nil {
+		h.log.Warn("append transfer rejection system comment failed",
+			zap.String("task_id", taskID), zap.String("transfer_id", transferID), zap.Error(cErr))
+	}
+}
+
 func (h *WebhookHandler) handleTransferReceived(c *gin.Context, webhook protocol.WebhookPayload) {
 	var msg struct {
 		TransferID string `json:"transferId"`
@@ -2329,16 +2363,41 @@ func (h *WebhookHandler) handleTransferReceived(c *gin.Context, webhook protocol
 		MimeType   string `json:"mimeType"`
 	}
 	if err := decodeWebhookMessage(webhook.Message, &msg); err != nil || msg.TransferID == "" {
+		taskID, _ := webhook.Metadata["taskId"].(string)
+		h.warnTransferRejected(taskID, webhook.From, msg.TransferID, msg.FileName,
+			"消息体无法解析（BAD_PAYLOAD）")
 		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid transfer.received message"))
 		return
 	}
 
 	taskID, _ := webhook.Metadata["taskId"].(string)
+	todoID, _ := webhook.Metadata["todoId"].(string)
 	if taskID == "" {
+		// Platform-side safety net for uploads that forgot the task context
+		// (see 2026-09-02: the screenwriter node sent seven files with no
+		// metadata at all; every one of them was silently 422'd and the agent
+		// kept reporting success). Fall back to whatever the sending node is
+		// currently assigned to instead of dropping the file on the floor.
+		if owner, ownerErr := h.store.ResolveTransferOwner(webhook.From); ownerErr == nil && owner != nil {
+			taskID = owner.TaskID
+			if todoID == "" {
+				todoID = owner.TodoID
+			}
+			if h.log != nil {
+				h.log.Warn("transfer.received without taskId; owner inferred",
+					zap.String("transfer_id", msg.TransferID),
+					zap.String("from_node", webhook.From),
+					zap.String("task_id", taskID),
+					zap.String("todo_id", todoID))
+			}
+		}
+	}
+	if taskID == "" {
+		h.warnTransferRejected("", webhook.From, msg.TransferID, msg.FileName,
+			"缺少 metadata.taskId，且无法从该节点的在办任务推断归属")
 		transport.WriteError(c, transport.Validation("missing metadata", map[string]any{"taskId": "required"}))
 		return
 	}
-	todoID, _ := webhook.Metadata["todoId"].(string)
 	outputName, _ := webhook.Metadata["outputName"].(string)
 
 	artifact := model.TaskArtifact{
@@ -2363,6 +2422,8 @@ func (h *WebhookHandler) handleTransferReceived(c *gin.Context, webhook protocol
 	}
 
 	if appErr := h.store.SaveArtifact(artifact); appErr != nil {
+		h.warnTransferRejected(taskID, webhook.From, msg.TransferID, msg.FileName,
+			"入库被拒（"+appErr.Code+"："+appErr.Message+"）")
 		transport.WriteError(c, appErr)
 		return
 	}
