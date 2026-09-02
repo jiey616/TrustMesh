@@ -1,15 +1,12 @@
 FROM golang:1.25-alpine AS builder
 
-ARG CLAWSYNAPSE_REPO=https://github.com/yuanjun5681/clawsynapse.git
-ARG CLAWSYNAPSE_REF=main
-
 RUN apk add --no-cache git ca-certificates
 
 WORKDIR /src
 
-ARG CACHE_BUST
-RUN git clone --depth 1 --branch "${CLAWSYNAPSE_REF}" "${CLAWSYNAPSE_REPO}" .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/clawsynapsed ./cmd/clawsynapsed
+# 使用本地源码构建（context 指向 D:/AiWorkspace/clawsynapse），不使用远程 clone
+COPY . .
+RUN go env -w GOPROXY=https://goproxy.cn,direct && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/clawsynapsed ./cmd/clawsynapsed
 
 FROM alpine:3.22
 
@@ -24,7 +21,10 @@ RUN apk add --no-cache ca-certificates tzdata su-exec \
 WORKDIR /app
 
 COPY --from=builder /out/clawsynapsed /usr/local/bin/clawsynapsed
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+# entrypoint 必须用本目录（deploy/clawsynapse）的 sh 版脚本：
+# runtime 是 alpine（无 bash/python3/hermes），clawsynapse 仓库根的 bash 版不适用。
+# 构建时传 --build-context entry=<本目录>。
+COPY --from=entry docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 RUN chmod 755 /usr/local/bin/docker-entrypoint.sh
 

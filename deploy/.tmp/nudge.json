@@ -1,0 +1,3 @@
+{
+  "content": "你上一次提交的 task.plan_ready 被系统拒绝了（WORKFLOW_MISMATCH：缺少工作流步骤对应的 todo「资产提取」）。\n\n原因：该步骤的派发对象选错了。系统校验要求——每个步骤的 Todo，其 assignee_node_id 必须严格等于该 step 的 agent_id 所指向的那个 Agent 的 node_id，不看步骤名、也不看角色名、更不按名字字面相似去猜。本次工作流中「资产提取」这一步绑定的 agent_id 指向「导演智能体」，不是「资产制作师」。\n\n请按以下要求重新提交 task.plan_ready：\n1. 对照 task.message 中 workflow 的每个 step，用 step 的 agent_id 去 candidate_agents 里查出对应 Agent 的 node_id，填为该 Todo 的 assignee_node_id。\n2. 三个步骤「剧本创作」「分镜拆解」「资产提取」一个都不能少，顺序与 steps 保持一致。\n3. 需求已经确认完毕，不要再发起任何澄清，直接提交规划。已确认信息：单集短剧 / 从 0 开始创作 / 低成本策略=有限场景（单房间为主）/ 发布平台未定。"
+}

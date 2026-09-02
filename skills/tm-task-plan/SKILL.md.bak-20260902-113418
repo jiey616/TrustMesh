@@ -77,9 +77,9 @@ allowed-tools:
   "workflow": {
     "name": "剧本制作流水线",
     "steps": [
-      { "name": "编剧产出剧本", "role": "developer", "agent_id": "65f0aaaaaaaaaaaaaaaaaaaa", "need_review": true },
-      { "name": "导演拆解分镜", "role": "developer", "agent_id": "65f1bbbbbbbbbbbbbbbbbbbb" },
-      { "name": "测试质量验收", "role": "developer", "agent_id": "65f2cccccccccccccccccccc" }
+      { "name": "编剧产出剧本", "role": "编剧" },
+      { "name": "导演拆解分镜", "role": "导演", "need_review": true },
+      { "name": "测试质量验收", "role": "测试" }
     ]
   }
 }
@@ -89,16 +89,12 @@ allowed-tools:
 
 1. **骨架步骤全覆盖**：每个 step 至少要有一个对应 Todo，**一个都不能少**。
 2. **顺序一致**：步骤对应 Todo 的相对顺序必须与 `steps` 顺序一致，不得调换。
-3. **派发对象（最容易错的一条，错一次整份规划作废）**：每个步骤的 Todo，`assignee_node_id` 必须是**该步骤 `agent_id` 所指向的那个 Agent 的 `node_id`**：
-   - 做法：在 `candidate_agents` 里找 `id == step.agent_id` 的那一条，把它的 `node_id` 填进 `assignee_node_id`。
-   - **只有 `step.agent_id` 为空时**，才退回按 `role` 从 `candidate_agents` 里匹配。
-   - ⚠️ **严禁按步骤名或 Agent 名字的字面语义猜人。** 后端校验用的是 `step.agent_id` **精确匹配**，既不看步骤名也不看角色名。步骤名（如「资产提取」）和它绑定的 Agent 名（如「导演智能体」）**经常不一致**——名字对不上不代表派错，名字像也不代表派对。
-   - ⚠️ **多个 step 的 `role` 可能完全相同**（如上例三个 step 全是 `developer`）。此时 role 完全无法区分该派给谁，**只能**用 `agent_id` 定位；仅凭 role 或名字选人必然被拒。
+3. **角色匹配**：每个步骤的 Todo，`assignee_node_id` 必须是该步骤 `role` 对应的 Agent（从 `candidate_agents` 里按 `role` 匹配）。
 4. **可拆分可追加**：一个步骤可以拆成多个 Todo（如"导演拆解分镜"拆成 2 条）；也可以在骨架基础上追加额外 Todo（澄清产物、中间检查等）——但**不得漏步骤、不得调换骨架顺序**。
 5. **人工确认**：step 标注 `need_review: true` 时，对应 Todo 执行完成后**必须声明 `need_review: true`**（人工确认点）；未标注的步骤默认不需要确认。
 6. **无 workflow 时**：按自由规划（上文规则），不受此约束。
 
-**校验失败处理**：若 `task.plan_ready` 被拒绝（错误含 `WORKFLOW_MISMATCH` 和 `details` 说明），**按 details 修正后重新提交**——缺少步骤就按该 step 的 `agent_id` 补对应 Todo；顺序不对就调整顺序；派发对象不对就换成 `step.agent_id` 对应的那个 Agent（**不要拿名字相近的去替换**）。修正时**不要回到澄清流程**，需求已经确认过，直接重发 `task.plan_ready` 即可。修正后必须再次发送 `task.plan_ready`，不能放弃。**修正期间绝对禁止向用户声称「任务已创建/已派发」——被拒即代表规划未生效，任何此类表述都是虚假汇报。** 若修正两次仍被拒，向用户如实报告失败原因与 details 原文，等待人工介入。
+**校验失败处理**：若 `task.plan_ready` 被拒绝（错误含 `WORKFLOW_MISMATCH` 和 `details` 说明），**按 details 修正后重新提交**——缺少步骤就补对应角色 Todo；顺序不对就调整顺序；角色不匹配就换正确的 Agent。修正后必须再次发送 `task.plan_ready`，不能放弃。
 
 判断标准：
 - 如果 Todo B 需要 Todo A 的代码、接口、结论、交付物或决策结果，B 必须排在 A 后面。
@@ -363,24 +359,20 @@ clawsynapse publish \
 TARGET_NODE="trustmesh-server"  # ← 替换为实际 from 值
 SESSION_KEY="task_123"         # ← 替换为 incoming header 中 session 的值
 
-# ⚠️ shell 陷阱（实测踩坑）：单引号内的 $VAR 不会被展开！
-# assignee_node_id 必须写 candidate_agents 中的真实 node_id 字面量；
-# 确需用变量注入时，必须用双引号或 jq --arg assignee "$ASSIGNEE_NODE" 传入。
-# 发布前强制自检：echo "$payload" | grep '\$'   ← 命中即存在未展开变量，禁止发布
 todos='[
   {
     "id": "TD_01",
     "order": 1,
     "title": "实现后端登录接口",
     "description": "完成邮箱密码登录 API",
-    "assignee_node_id": "n1-real-agent-node-id-from-candidate-agents"
+    "assignee_node_id": "node-backend-001"
   },
   {
     "id": "TD_02",
     "order": 2,
     "title": "实现前端登录页",
     "description": "在后端接口完成后，接入登录页和表单交互",
-    "assignee_node_id": "n1-real-agent-node-id-from-candidate-agents"
+    "assignee_node_id": "node-frontend-001"
   }
 ]'
 

@@ -3,7 +3,7 @@ name: trustmesh
 services:
   mongo:
     image: mongodb/mongodb-community-server:7.0-ubuntu2204
-    container_name: trustmesh-mongo
+    container_name: mongo
     restart: unless-stopped
     command: ["--bind_ip_all"]
     ports:
@@ -41,8 +41,11 @@ services:
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
       KNOWLEDGE_STORAGE_PATH: ${KNOWLEDGE_STORAGE_PATH:-/var/lib/trustmesh-knowledge}
       FILES_STORAGE_PATH: ${FILES_STORAGE_PATH:-/var/lib/trustmesh-files}
-      TRUSTMESH_EXTERNAL_URL: ${TRUSTMESH_EXTERNAL_URL:-http://127.0.0.1:8080}
-      DOWNLOAD_TOKEN_TTL: ${DOWNLOAD_TOKEN_TTL:-10m}
+      # 默认值给 Docker Desktop 的宿主机网关（换环境也能用）；真实部署请在 .env 覆盖为
+      # agent 容器确实能访问到的地址。切勿写死某台机器的局域网 IP（历史上写死过
+      # 192.168.0.100，实际是 .101，导致 agent 下载全部 Connection refused）。
+      TRUSTMESH_EXTERNAL_URL: ${TRUSTMESH_EXTERNAL_URL:-http://host.docker.internal:8080}
+      DOWNLOAD_TOKEN_TTL: ${DOWNLOAD_TOKEN_TTL:-24h}
       WRITE_TIMEOUT: ${WRITE_TIMEOUT:-0}
       ASSISTANT_API_URL: ${ASSISTANT_API_URL:-https://api.openai.com/v1}
       PLATFORM_NAME: ${PLATFORM_NAME:-TrustMesh}
@@ -62,17 +65,14 @@ services:
       start_period: 10s
 
   clawsynapse:
-    build:
-      context: ./deploy/clawsynapse
-      args:
-        CLAWSYNAPSE_REF: ${CLAWSYNAPSE_REF:-main}
+    image: clawsynapse:local-rt4
     container_name: trustmesh-clawsynapse
     restart: unless-stopped
     depends_on:
       - backend
     environment:
       NODE_ID: ${CLAWSYNAPSE_NODE_ID:-trustmesh-server}
-      NATS_SERVERS: ${NATS_SERVERS:-nats://220.168.146.21:9414}
+      NATS_SERVERS: ${NATS_SERVERS:-nats://175.27.135.91:4222}
       LOCAL_API_ADDR: ${CLAWSYNAPSE_LOCAL_API_ADDR:-0.0.0.0:18080}
       TRUST_MODE: ${CLAWSYNAPSE_TRUST_MODE:-open}
       AGENT_ADAPTER: ${CLAWSYNAPSE_AGENT_ADAPTER:-webhook}
@@ -80,7 +80,7 @@ services:
       DATA_DIR: ${CLAWSYNAPSE_DATA_DIR:-/var/lib/clawsynapse}
       IDENTITY_KEY_PATH: ${CLAWSYNAPSE_IDENTITY_KEY_PATH:-/var/lib/clawsynapse/identity.key}
       IDENTITY_PUB_PATH: ${CLAWSYNAPSE_IDENTITY_PUB_PATH:-/var/lib/clawsynapse/identity.pub}
-      DELIVERABLE_PREFIXES: ${DELIVERABLE_PREFIXES:-chat,task,todo,conversation}
+      DELIVERABLE_PREFIXES: ${DELIVERABLE_PREFIXES:-chat,task,todo,conversation,knowledge}
       TRANSFER_DIR: ${TRANSFER_DIR:-/var/lib/trustmesh-transfers}
       TRANSFER_TTL: ${TRANSFER_TTL:-24h}
       LOG_LEVEL: ${CLAWSYNAPSE_LOG_LEVEL:-info}
@@ -90,6 +90,7 @@ services:
     volumes:
       - trustmesh-clawsynapse-data:/var/lib/clawsynapse
       - trustmesh-transfer-data:/var/lib/trustmesh-transfers
+      - ./skills:/skills
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:18080/v1/health >/dev/null || exit 1"]
       interval: 10s
@@ -107,7 +108,7 @@ services:
     volumes:
       - trustmesh-qdrant-data:/qdrant/storage
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:6333/healthz >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333' || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 6
@@ -122,6 +123,22 @@ services:
       - backend
     ports:
       - "3000:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+
+  frontend-v2:
+    build:
+      context: ./frontend-v2
+    container_name: trustmesh-frontend-v2
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5174:80"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
       interval: 10s
