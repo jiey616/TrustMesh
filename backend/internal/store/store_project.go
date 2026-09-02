@@ -13,6 +13,15 @@ type UpdateProjectInput struct {
 	Name        *string
 	Description *string
 	PMAgentID   *string
+	// Workflows replaces the project's workflow list when non-nil. Pass an
+	// empty slice to clear all workflows.
+	Workflows []model.Workflow
+	// PrimaryWorkflowIndex marks which workflow is the project's 总流程.
+	// nil keeps the current value; -1 clears it.
+	PrimaryWorkflowIndex *int
+	// PrimaryWorkflowID is the ID-based primary workflow reference (new
+	// style). When set together with PrimaryWorkflowIndex, it takes effect.
+	PrimaryWorkflowID *string
 }
 
 func (s *Store) buildProjectViewUnsafe(project *model.Project) *model.Project {
@@ -154,6 +163,58 @@ func (s *Store) UpdateProject(userID, projectID string, in UpdateProjectInput) (
 		}
 		p.Description = desc
 	}
+	if in.Workflows != nil {
+		cloned := make([]model.Workflow, 0, len(in.Workflows))
+		for _, wf := range in.Workflows {
+			if c := wf.Clone(); c != nil {
+				if c.ID == "" {
+					c.ID = "wf_" + newID() // 存量迁移：老工作流没有 ID，保存时补上
+				}
+				// 保护继承快照：前端保存时通常不带 template_snapshot/template_version，
+				// 若这是已存在的继承工作流，保留原有的快照与版本，避免三路合并 base 丢失。
+				if old := findWorkflowByID(p.Workflows, c.ID); old != nil &&
+					old.ParentTemplateID != "" && c.ParentTemplateID == old.ParentTemplateID {
+					if len(c.TemplateSnapshot) == 0 {
+						c.TemplateSnapshot = cloneSteps(old.TemplateSnapshot)
+					}
+					if c.TemplateVersion == 0 {
+						c.TemplateVersion = old.TemplateVersion
+					}
+				}
+				cloned = append(cloned, *c)
+			}
+		}
+		p.Workflows = cloned
+	}
+	if in.PrimaryWorkflowIndex != nil {
+		idx := *in.PrimaryWorkflowIndex
+		if idx < -1 || idx >= len(p.Workflows) {
+			return nil, transport.Validation("invalid primary_workflow_index", map[string]any{
+				"primary_workflow_index": idx,
+				"max":                    len(p.Workflows) - 1,
+			})
+		}
+		p.PrimaryWorkflowIndex = idx
+		if idx >= 0 && p.Workflows[idx].ID != "" {
+			p.PrimaryWorkflowID = p.Workflows[idx].ID
+		} else if idx < 0 {
+			p.PrimaryWorkflowID = ""
+		}
+	}
+	if in.PrimaryWorkflowID != nil {
+		id := strings.TrimSpace(*in.PrimaryWorkflowID)
+		if id == "" {
+			p.PrimaryWorkflowID = ""
+			p.PrimaryWorkflowIndex = -1
+		} else {
+			idx := findWorkflowIndexByID(p.Workflows, id)
+			if idx < 0 {
+				return nil, transport.Validation("invalid primary_workflow_id", map[string]any{"primary_workflow_id": id})
+			}
+			p.PrimaryWorkflowID = id
+			p.PrimaryWorkflowIndex = idx
+		}
+	}
 	if in.PMAgentID != nil {
 		agentID := strings.TrimSpace(*in.PMAgentID)
 		if agentID == "" {
@@ -165,6 +226,15 @@ func (s *Store) UpdateProject(userID, projectID string, in UpdateProjectInput) (
 		}
 		p.PMAgentID = agentID
 		p.PMAgent = toPMSummary(pm)
+	}
+
+	// 若主流程引用的工作流已被删除（或越界），自动清空 primary 标记，避免脏数据。
+	if p.PrimaryWorkflowID != "" && findWorkflowByID(p.Workflows, p.PrimaryWorkflowID) == nil {
+		p.PrimaryWorkflowID = ""
+		p.PrimaryWorkflowIndex = -1
+	} else if p.PrimaryWorkflowIndex < -1 || p.PrimaryWorkflowIndex >= len(p.Workflows) {
+		p.PrimaryWorkflowID = ""
+		p.PrimaryWorkflowIndex = -1
 	}
 	p.UpdatedAt = time.Now().UTC()
 	if err := s.persistProjectUnsafe(p); err != nil {

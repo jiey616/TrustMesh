@@ -63,6 +63,52 @@ func (s *Store) SaveProjectFile(userID, projectID string, pf *model.ProjectFile)
 	return pf, nil
 }
 
+// CreateMeetingMinutesFile creates a ProjectFile record for meeting minutes
+// (Source = "meeting_minutes"). It resolves the project owner internally so the
+// caller (the webhook handler, acting on behalf of the host agent) does not need
+// to know the owner user ID. The caller is responsible for writing the file
+// bytes to storage and then calling SetProjectFileLocalPath.
+func (s *Store) CreateMeetingMinutesFile(meetingID, fileName, content string) (*model.ProjectFile, *transport.AppError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	m, ok := s.meetings[meetingID]
+	if !ok {
+		return nil, transport.NotFound("meeting not found")
+	}
+	project, ok := s.projects[m.ProjectID]
+	if !ok {
+		return nil, transport.NotFound("project not found")
+	}
+	ownerID := project.UserID
+	if ownerID == "" {
+		ownerID = m.CreatorID
+	}
+
+	pf := &model.ProjectFile{
+		ID:         "pf_" + newID(),
+		ProjectID:  m.ProjectID,
+		FileName:   fileName,
+		FileSize:   int64(len([]byte(content))),
+		MimeType:   "text/markdown",
+		Source:     "meeting_minutes",
+		MeetingID:  meetingID,
+		UploadedBy: ownerID,
+		CreatedAt:  time.Now().UTC(),
+	}
+
+	s.projectFiles[pf.ID] = pf
+	s.projectFileIndex[m.ProjectID] = append(s.projectFileIndex[m.ProjectID], pf.ID)
+
+	if err := s.persistProjectFileUnsafe(pf); err != nil {
+		if s.log != nil {
+			s.log.Warn("failed to persist meeting minutes file", zap.String("id", pf.ID), zap.Error(err))
+		}
+	}
+
+	return pf, nil
+}
+
 // CreateFolder creates a new folder record in the project file space.
 func (s *Store) CreateFolder(userID, projectID, name, parentID string) (*model.ProjectFile, *transport.AppError) {
 	s.mu.Lock()
@@ -331,6 +377,49 @@ func (s *Store) saveProjectFileFromArtifactUnsafe(artifact model.TaskArtifact) (
 	if artifact.TransferID != "" {
 		if existingID, exists := s.transferFileIndex[artifact.TransferID]; exists {
 			if existing, ok := s.projectFiles[existingID]; ok {
+				// Refresh the file-nature classification if it changed (e.g. the
+				// artifact was re-registered with an outputName binding after the
+				// project file was first created as a process file).
+				if existing.Kind != artifact.Kind || existing.OutputName != artifact.OutputName {
+					existing.Kind = artifact.Kind
+					existing.OutputName = artifact.OutputName
+					s.projectFiles[existing.ID] = existing
+					if err := s.persistProjectFileUnsafe(existing); err != nil && s.log != nil {
+						s.log.Warn("failed to persist refreshed project file kind", zap.String("id", existing.ID), zap.Error(err))
+					}
+				}
+				return existing, nil
+			}
+		}
+	}
+
+	// Deduplicate by (task, agent, file name): an agent re-uploading the same
+	// deliverable under a new transfer id overwrites the previous project file
+	// instead of piling up duplicates in the project file list.
+	if artifact.FromAgentID != "" {
+		for _, id := range s.projectFileIndex[task.ProjectID] {
+			existing, ok := s.projectFiles[id]
+			if !ok || existing.TaskID != artifact.TaskID || existing.AgentID != artifact.FromAgentID {
+				continue
+			}
+			if existing.FileName == artifact.FileName {
+				// Update in place: keep the original id/created_at, refresh the
+				// payload so the latest transfer content wins.
+				existing.FileSize = artifact.FileSize
+				existing.MimeType = artifact.MimeType
+				existing.LocalPath = artifact.LocalPath
+				existing.TransferID = artifact.TransferID
+				existing.Kind = artifact.Kind
+				existing.OutputName = artifact.OutputName
+				s.projectFiles[existing.ID] = existing
+				if existing.TransferID != "" {
+					s.transferFileIndex[existing.TransferID] = existing.ID
+				}
+				if err := s.persistProjectFileUnsafe(existing); err != nil {
+					if s.log != nil {
+						s.log.Warn("failed to persist overwritten project file from artifact", zap.String("id", existing.ID), zap.Error(err))
+					}
+				}
 				return existing, nil
 			}
 		}
@@ -348,6 +437,8 @@ func (s *Store) saveProjectFileFromArtifactUnsafe(artifact model.TaskArtifact) (
 		LocalPath:  artifact.LocalPath, // temp path from transfer volume
 		Source:     "agent_artifact",
 		TransferID: artifact.TransferID,
+		Kind:       artifact.Kind,
+		OutputName: artifact.OutputName,
 		UploadedBy: task.UserID,
 		CreatedAt:  time.Now().UTC(),
 	}
@@ -552,8 +643,9 @@ func (s *Store) GetProjectFileTree(userID, projectID string) *model.ProjectFileT
 		Tasks:   []model.ProjectFileTreeNode{},
 	}
 
-	var uploadEntries []model.ProjectFile    // files + folders with source "user_upload"
+	var uploadEntries []model.ProjectFile                // files + folders with source "user_upload"
 	taskFilesMap := make(map[string][]model.ProjectFile) // agent_artifact
+	var minutesEntries []model.ProjectFile               // meeting_minutes
 
 	fileIDs := s.projectFileIndex[projectID]
 	for _, id := range fileIDs {
@@ -568,6 +660,8 @@ func (s *Store) GetProjectFileTree(userID, projectID string) *model.ProjectFileT
 			if pf.TaskID != "" {
 				taskFilesMap[pf.TaskID] = append(taskFilesMap[pf.TaskID], *pf)
 			}
+		case "meeting_minutes":
+			minutesEntries = append(minutesEntries, *pf)
 		}
 	}
 
@@ -640,13 +734,26 @@ func (s *Store) GetProjectFileTree(userID, projectID string) *model.ProjectFileT
 		return taskNodes[i].Name < taskNodes[j].Name
 	})
 
-	// Merge artifact tree into uploads tree under "智能体产物" virtual root.
+	// Merge artifact tree into uploads tree under "数字员工产物" virtual root.
 	if len(taskNodes) > 0 {
 		tree.Uploads = append(tree.Uploads, model.ProjectFileTreeNode{
 			ID:       "__artifacts__",
-			Name:     "智能体产物",
+			Name:     "数字员工产物",
 			Type:     "directory",
 			Children: taskNodes,
+		})
+	}
+
+	// Merge meeting minutes under "会议纪要" virtual root.
+	if len(minutesEntries) > 0 {
+		sort.Slice(minutesEntries, func(i, j int) bool {
+			return minutesEntries[i].CreatedAt.After(minutesEntries[j].CreatedAt)
+		})
+		tree.Uploads = append(tree.Uploads, model.ProjectFileTreeNode{
+			ID:    "__minutes__",
+			Name:  "会议纪要",
+			Type:  "directory",
+			Files: minutesEntries,
 		})
 	}
 
@@ -690,13 +797,13 @@ func buildFileTree(entries []model.ProjectFile) []model.ProjectFileTreeNode {
 	for _, f := range rootFolders {
 		nodes = append(nodes, buildFolderNode(f.ID, f.FileName, folderMap, childrenMap))
 	}
-	// Root files.
-	if len(rootFiles) > 0 {
+	// Root files — show directly in root, no "用户上传" wrapper.
+	for _, f := range rootFiles {
 		nodes = append(nodes, model.ProjectFileTreeNode{
-			ID:    "",
-			Name:  "用户上传",
-			Type:  "directory",
-			Files: rootFiles,
+			ID:    f.ID,
+			Name:  f.FileName,
+			Type:  "file",
+			Files: []model.ProjectFile{f},
 		})
 	}
 
@@ -787,10 +894,14 @@ func (s *Store) BrowseProjectFiles(userID, projectID, parentID string) (*model.B
 			return s.browseArtifactFiles(projectID, parts[0], parts[1])
 		}
 	}
+	if parentID == "__minutes__" {
+		return s.browseMeetingMinutes(projectID)
+	}
 
 	// ---- Normal user-upload folder browsing ----
 	var folders, files []model.ProjectFile
 	hasArtifacts := false
+	hasMinutes := false
 	fileIDs := s.projectFileIndex[projectID]
 	for _, fid := range fileIDs {
 		pf, ok := s.projectFiles[fid]
@@ -799,6 +910,10 @@ func (s *Store) BrowseProjectFiles(userID, projectID, parentID string) (*model.B
 		}
 		if pf.Source == "agent_artifact" && !pf.IsFolder {
 			hasArtifacts = true
+			continue
+		}
+		if pf.Source == "meeting_minutes" && !pf.IsFolder {
+			hasMinutes = true
 			continue
 		}
 		if pf.Source != "user_upload" {
@@ -828,18 +943,24 @@ func (s *Store) BrowseProjectFiles(userID, projectID, parentID string) (*model.B
 	if parentID == "" && hasArtifacts {
 		count := s.countArtifactsUnsafe(projectID)
 		virtualFolders = append(virtualFolders, model.VirtualFolder{
-			ID: "__artifacts__", Name: "智能体产物", ItemCount: count,
+			ID: "__artifacts__", Name: "数字员工产物", ItemCount: count,
+		})
+	}
+	if parentID == "" && hasMinutes {
+		count := s.countMinutesUnsafe(projectID)
+		virtualFolders = append(virtualFolders, model.VirtualFolder{
+			ID: "__minutes__", Name: "会议纪要", ItemCount: count,
 		})
 	}
 
 	breadcrumbs := buildBreadcrumbs(s.projectFiles, parentID)
 
 	return &model.BrowseFilesResult{
-		ParentID:      parentID,
+		ParentID:       parentID,
 		VirtualFolders: virtualFolders,
-		Folders:       folders,
-		Files:         files,
-		Breadcrumbs:   breadcrumbs,
+		Folders:        folders,
+		Files:          files,
+		Breadcrumbs:    breadcrumbs,
 	}, nil
 }
 
@@ -853,6 +974,40 @@ func (s *Store) countArtifactsUnsafe(projectID string) int {
 		}
 	}
 	return count
+}
+
+func (s *Store) countMinutesUnsafe(projectID string) int {
+	count := 0
+	for _, fid := range s.projectFileIndex[projectID] {
+		if pf, ok := s.projectFiles[fid]; ok && pf.Source == "meeting_minutes" && !pf.IsFolder {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *Store) browseMeetingMinutes(projectID string) (*model.BrowseFilesResult, *transport.AppError) {
+	var files []model.ProjectFile
+	for _, fid := range s.projectFileIndex[projectID] {
+		pf, ok := s.projectFiles[fid]
+		if !ok || pf.Source != "meeting_minutes" || pf.IsFolder {
+			continue
+		}
+		files = append(files, *pf)
+	}
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].CreatedAt.After(files[j].CreatedAt)
+	})
+	if files == nil {
+		files = []model.ProjectFile{}
+	}
+
+	return &model.BrowseFilesResult{
+		ParentID:    "__minutes__",
+		Folders:     []model.ProjectFile{},
+		Files:       files,
+		Breadcrumbs: []model.BreadcrumbNode{{ID: "__minutes__", Name: "会议纪要"}},
+	}, nil
 }
 
 func (s *Store) browseArtifactTasks(projectID string) (*model.BrowseFilesResult, *transport.AppError) {
@@ -883,11 +1038,11 @@ func (s *Store) browseArtifactTasks(projectID string) (*model.BrowseFilesResult,
 	}
 
 	return &model.BrowseFilesResult{
-		ParentID:      "__artifacts__",
+		ParentID:       "__artifacts__",
 		VirtualFolders: vf,
-		Folders:       []model.ProjectFile{},
-		Files:         []model.ProjectFile{},
-		Breadcrumbs:   []model.BreadcrumbNode{{ID: "__artifacts__", Name: "智能体产物"}},
+		Folders:        []model.ProjectFile{},
+		Files:          []model.ProjectFile{},
+		Breadcrumbs:    []model.BreadcrumbNode{{ID: "__artifacts__", Name: "数字员工产物"}},
 	}, nil
 }
 
@@ -897,7 +1052,7 @@ func (s *Store) browseArtifactAgents(projectID, taskID string) (*model.BrowseFil
 		taskName = t.Title
 	}
 
-	agentMap := make(map[string]int)  // agentID → count
+	agentMap := make(map[string]int) // agentID → count
 	agentNameMap := make(map[string]string)
 	for _, fid := range s.projectFileIndex[projectID] {
 		pf, ok := s.projectFiles[fid]
@@ -931,12 +1086,12 @@ func (s *Store) browseArtifactAgents(projectID, taskID string) (*model.BrowseFil
 	}
 
 	return &model.BrowseFilesResult{
-		ParentID:      "__task__" + taskID,
+		ParentID:       "__task__" + taskID,
 		VirtualFolders: vf,
-		Folders:       []model.ProjectFile{},
-		Files:         []model.ProjectFile{},
+		Folders:        []model.ProjectFile{},
+		Files:          []model.ProjectFile{},
 		Breadcrumbs: []model.BreadcrumbNode{
-			{ID: "__artifacts__", Name: "智能体产物"},
+			{ID: "__artifacts__", Name: "数字员工产物"},
 			{ID: "__task__" + taskID, Name: taskName},
 		},
 	}, nil
@@ -980,7 +1135,7 @@ func (s *Store) browseArtifactFiles(projectID, taskID, agentID string) (*model.B
 		Folders:  []model.ProjectFile{},
 		Files:    files,
 		Breadcrumbs: []model.BreadcrumbNode{
-			{ID: "__artifacts__", Name: "智能体产物"},
+			{ID: "__artifacts__", Name: "数字员工产物"},
 			{ID: "__task__" + taskID, Name: taskName},
 			{ID: "__agent__" + taskID + "__" + agentID, Name: agentName},
 		},

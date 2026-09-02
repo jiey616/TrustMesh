@@ -84,6 +84,7 @@ func (s *Store) CreateAgent(userID, nodeID, name, role, description string, capa
 		Role:         role,
 		Capabilities: normalizeCapabilities(capabilities),
 		NodeID:       nodeID,
+		Product:      defaultProduct(""), // 手动创建默认平台原生 "trustmesh"；hermes/opc 走 JoinRequest 审批同步
 		Status:       "offline",
 		LastSeenAt:   nil,
 		CreatedAt:    now,
@@ -222,6 +223,17 @@ func (s *Store) agentByNodeUnsafe(nodeID string) (*model.Agent, *transport.AppEr
 		return nil, transport.NotFound("agent not found")
 	}
 	return agent, nil
+}
+
+// GetAgentByIDUnsafe returns any non-archived agent by ID without userID filtering.
+func (s *Store) GetAgentByIDUnsafe(agentID string) (*model.Agent, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	a, ok := s.agents[agentID]
+	if !ok || a.Archived {
+		return nil, false
+	}
+	return a, true
 }
 
 func (s *Store) agentUsageUnsafe(agentID string) model.AgentUsage {
@@ -533,6 +545,20 @@ func (s *Store) buildAgentInsightsUnsafe(role string, items []agentInsightItem, 
 	insights.ResponseP90Ms = agentInsightPercentile(responseTimes, 90)
 	insights.CompletionP50Ms = agentInsightPercentile(completionTimes, 50)
 	insights.CompletionP90Ms = agentInsightPercentile(completionTimes, 90)
+
+	// 保证数组字段始终为 []，避免前端对 null 数组字段直接访问崩溃
+	if insights.PriorityBreakdown == nil {
+		insights.PriorityBreakdown = []model.AgentPriorityBreakdown{}
+	}
+	if insights.ProjectContribution == nil {
+		insights.ProjectContribution = []model.AgentProjectContribution{}
+	}
+	if insights.Aging == nil {
+		insights.Aging = []model.AgentAgingBucket{}
+	}
+	if insights.RiskItems == nil {
+		insights.RiskItems = []model.AgentRiskItem{}
+	}
 
 	return insights
 }

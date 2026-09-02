@@ -44,6 +44,19 @@ func (s *Store) GetTask(userID, taskID string) (*model.TaskDetail, *transport.Ap
 	return s.copyTaskWithArtifactsUnsafe(task), nil
 }
 
+// GetTaskInternal returns a task by ID without user authorization checks.
+// Used by internal dispatch hooks (e.g. timeout redispatch) that already hold
+// the task id from an in-memory scan.
+func (s *Store) GetTaskInternal(taskID string) *model.TaskDetail {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	task, ok := s.tasks[taskID]
+	if !ok {
+		return nil
+	}
+	return s.copyTaskWithArtifactsUnsafe(task)
+}
+
 // GetTaskByNodeID returns a task if the requesting agent (identified by nodeID)
 // is a participant: either the PM agent or a todo assignee.
 func (s *Store) GetTaskByNodeID(nodeID, taskID string) (*model.TaskDetail, *transport.AppError) {

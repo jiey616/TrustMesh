@@ -24,6 +24,7 @@ type Notification struct {
 	ProjectID string     `json:"project_id" bson:"project_id"`
 	TaskID    string     `json:"task_id,omitempty" bson:"task_id,omitempty"`
 	ActorType string     `json:"actor_type" bson:"actor_type"`
+	ActorID   string     `json:"actor_id,omitempty" bson:"actor_id,omitempty"`
 	ActorName string     `json:"actor_name" bson:"actor_name"`
 	Title     string     `json:"title" bson:"title"`
 	Body      string     `json:"body" bson:"body"`

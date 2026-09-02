@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -317,7 +318,7 @@ func (h *KnowledgeHandler) Search(c *gin.Context) {
 
 func (h *KnowledgeHandler) vectorSearch(c *gin.Context, userID string, req searchRequest) ([]searchResultItem, error) {
 	if h.embedder == nil || h.qdrant == nil {
-		return nil, nil
+		return nil, errors.New("vector search unavailable: embedding not configured")
 	}
 
 	embeddings, err := h.embedder.Embed(c.Request.Context(), []string{req.Query})

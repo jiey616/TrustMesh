@@ -21,11 +21,14 @@ type TaskPlanReadyInput struct {
 }
 
 func (s *Store) CreateTaskPlanning(userID, projectID, content string) (*model.TaskDetail, *transport.AppError) {
-	return s.CreateTaskPlanningWithFiles(userID, projectID, content, nil)
+	return s.CreateTaskPlanningWithFiles(userID, projectID, content, nil, nil, nil, 0, 0)
 }
 
 // CreateTaskPlanningWithFiles creates a planning-mode task with optional file attachments.
-func (s *Store) CreateTaskPlanningWithFiles(userID, projectID, content string, fileIDs []string) (*model.TaskDetail, *transport.AppError) {
+// When workflowIndex points at a project workflow, the snapshot is trimmed to the
+// requested step range (stepFrom..stepTo) and a WorkflowRef is recorded, mirroring
+// CreateTaskByUser. Otherwise the explicitly chosen (or default) workflow is used as-is.
+func (s *Store) CreateTaskPlanningWithFiles(userID, projectID, content string, fileIDs []string, workflow *model.Workflow, workflowIndex *int, stepFrom, stepTo int) (*model.TaskDetail, *transport.AppError) {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return nil, transport.Validation("invalid content", map[string]any{"content": "required"})
@@ -51,6 +54,39 @@ func (s *Store) CreateTaskPlanningWithFiles(userID, projectID, content string, f
 	}
 
 	now := time.Now().UTC()
+
+	// Trim the workflow snapshot to the chosen step range when the task is created
+	// against a slice of the project's primary workflow, so the PM only plans the
+	// requested steps. Mirrors the trimming logic in CreateTaskByUser.
+	var wfSnapshot *model.Workflow
+	var wfRef *model.WorkflowRef
+	if workflowIndex != nil && *workflowIndex >= 0 && *workflowIndex < len(project.Workflows) {
+		pw := project.Workflows[*workflowIndex]
+		from := stepFrom
+		to := stepTo
+		if from < 0 {
+			from = 0
+		}
+		if to >= len(pw.Steps) {
+			to = len(pw.Steps) - 1
+		}
+		if from > to {
+			from, to = 0, len(pw.Steps)-1
+		}
+		wfSnapshot = &model.Workflow{
+			Name:  pw.Name,
+			Steps: append([]model.WorkflowStep(nil), pw.Steps[from:to+1]...),
+		}
+		wfRef = &model.WorkflowRef{
+			WorkflowIndex: *workflowIndex,
+			WorkflowName:  pw.Name,
+			StepFrom:      from,
+			StepTo:        to,
+		}
+	} else {
+		wfSnapshot = workflowSnapshot(workflow)
+	}
+
 	msg := model.TaskMessage{ID: uuid.NewString(), Role: "user", Content: content, CreatedAt: now}
 
 	task := &model.TaskDetail{
@@ -60,10 +96,14 @@ func (s *Store) CreateTaskPlanningWithFiles(userID, projectID, content string, f
 		Title:     content,
 		Status:    "planning",
 		Priority:  "medium",
-		PMAgentID: pmAgent.ID,
-		PMAgent:   toPMSummary(pmAgent),
-		Messages:  []model.TaskMessage{msg},
-		Todos:     []model.Todo{},
+		// Workflow snapshot trimmed to the requested step range (or the
+		// explicitly chosen workflow as-is), plus its WorkflowRef when bound.
+		Workflow:    wfSnapshot,
+		WorkflowRef: wfRef,
+		PMAgentID:     pmAgent.ID,
+		PMAgent:       toPMSummary(pmAgent),
+		Messages:      []model.TaskMessage{msg},
+		Todos:         []model.Todo{},
 		AttachedFiles: s.resolveAttachedFilesUnsafe(fileIDs, project.ID),
 		Result: model.TaskResult{
 			Summary:     "",
@@ -136,6 +176,14 @@ func (s *Store) AppendTaskMessage(userID, taskID, content string, uiResponse *mo
 func (s *Store) AppendPMTaskReply(nodeID, taskID, content string, uiBlocks []model.UIBlock) (*model.TaskDetail, *transport.AppError) {
 	taskID = strings.TrimSpace(taskID)
 	content = strings.TrimSpace(content)
+	// 剥离 PM 运行时尾部样板（"WAITING" 等）：这类纯协议噪音残留在消息尾部
+	// 会原样展示给用户（"已发送澄清请求…\n\nWAITING"）。
+	content = strings.TrimRight(content, " \t\n")
+	for _, tail := range []string{"WAITING", "waiting"} {
+		if strings.HasSuffix(content, tail) {
+			content = strings.TrimSpace(strings.TrimSuffix(content, tail))
+		}
+	}
 	if taskID == "" || content == "" {
 		return nil, transport.Validation("invalid task.reply payload", map[string]any{"task_id": "required", "content": "required"})
 	}
@@ -175,7 +223,8 @@ func (s *Store) AppendPMTaskReply(nodeID, taskID, content string, uiBlocks []mod
 	task.Version++
 
 	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, "", "agent", pmAgent.ID, pmAgent.Name, "planning_reply", &content, map[string]any{
-		"task_id": task.ID,
+		"task_id":   task.ID,
+		"ui_blocks": uiBlocks,
 	}, now)
 
 	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
@@ -250,6 +299,7 @@ func (s *Store) FinalizePlanByPMNode(nodeID, messageID string, in TaskPlanReadyI
 	// Build todos
 	seenTodoIDs := make(map[string]struct{}, len(normalizedTodos))
 	todos := make([]model.Todo, 0, len(normalizedTodos))
+	todoRoles := make([]string, 0, len(normalizedTodos)) // assignee role per todo
 	for i, todoIn := range normalizedTodos {
 		title := strings.TrimSpace(todoIn.Title)
 		desc := strings.TrimSpace(todoIn.Description)
@@ -293,6 +343,13 @@ func (s *Store) FinalizePlanByPMNode(nodeID, messageID string, in TaskPlanReadyI
 			},
 			CreatedAt: now,
 		})
+		todoRoles = append(todoRoles, assigneeAgent.Role)
+	}
+
+	// System-level review gates: inherit step.need_review from the workflow so
+	// the plan is not dependent on the PM declaring need_review on each todo.
+	if wf := task.Workflow; wf != nil {
+		applyWorkflowReviewFlags(wf.Steps, &todos, todoRoles)
 	}
 
 	// Update task: planning → review (awaiting user approval)

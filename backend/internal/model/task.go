@@ -2,6 +2,24 @@ package model
 
 import "time"
 
+// Todo review gate statuses (Todo.ReviewStatus).
+const (
+	ReviewNone     = ""                 // no review required
+	ReviewPending  = "pending_approval" // completed, waiting for human/PM review
+	ReviewApproved = "approved"         // review passed; pipeline continues
+	ReviewRejected = "rejected"         // review failed; rework triggered
+)
+
+// Task-level statuses. "awaiting_review" is aggregated when any todo in the
+// task is blocked on human/PM review.
+const (
+	TaskStatusAwaitingReview = "awaiting_review"
+	TaskStatusWaitingUser    = "waiting_user"
+)
+
+// Todo-level status for a todo parked on a human input request (todo.ask).
+const TodoStatusWaitingUser = "waiting_user"
+
 type TaskSummary struct {
 	ID                 string    `json:"id" bson:"id"`
 	Title              string    `json:"title" bson:"title"`
@@ -23,6 +41,30 @@ type TodoResult struct {
 	Summary  string         `json:"summary" bson:"summary"`
 	Output   string         `json:"output" bson:"output"`
 	Metadata map[string]any `json:"metadata" bson:"metadata"`
+	// ActionItems are structured follow-up items declared by the executing
+	// agent. They can be converted into new tasks by the PM (auto) or the user
+	// (project "待办" tab). Per-report cap: 5 (agent should consolidate).
+	ActionItems []ActionItem `json:"action_items,omitempty" bson:"action_items,omitempty"`
+}
+
+// ActionItem statuses.
+const (
+	ActionItemPending              = "pending"               // ready to convert
+	ActionItemAwaitingConfirmation = "awaiting_confirmation" // PM unsure; user decides
+	ActionItemConverted            = "converted"             // already turned into a task
+)
+
+// ActionItem is a structured follow-up item produced by an executing agent
+// that may be turned into a new task assigned to a specific agent.
+type ActionItem struct {
+	Title           string    `json:"title" bson:"title"`
+	Description     string    `json:"description,omitempty" bson:"description,omitempty"`
+	AssigneeNodeID  string    `json:"assignee_node_id,omitempty" bson:"assignee_node_id,omitempty"`
+	AssigneeRole    string    `json:"assignee_role,omitempty" bson:"assignee_role,omitempty"`
+	Status          string    `json:"status" bson:"status"`
+	ConvertedTaskID string    `json:"converted_task_id,omitempty" bson:"converted_task_id,omitempty"`
+	ConfirmedBy     string    `json:"confirmed_by,omitempty" bson:"confirmed_by,omitempty"`
+	CreatedAt       time.Time `json:"created_at" bson:"created_at"`
 }
 
 type Todo struct {
@@ -41,8 +83,75 @@ type Todo struct {
 	Result       TodoResult   `json:"result" bson:"result"`
 	CreatedAt    time.Time    `json:"created_at" bson:"created_at"`
 	AssignedAt   *time.Time   `json:"assigned_at,omitempty" bson:"assigned_at,omitempty"`
-	RetryCount   int          `json:"retry_count" bson:"retry_count"`
-	MaxRetries   int          `json:"max_retries" bson:"max_retries"`
+	// LastActivityAt is the most recent time the assignee reported progress on
+	// this todo (todo.progress / todo.complete / todo.fail). The timeout
+	// monitor uses it instead of AssignedAt so long-running tasks that keep
+	// reporting progress are never spuriously retried.
+	LastActivityAt *time.Time `json:"last_activity_at,omitempty" bson:"last_activity_at,omitempty"`
+	RetryCount     int        `json:"retry_count" bson:"retry_count"`
+	MaxRetries     int        `json:"max_retries" bson:"max_retries"`
+
+	// RemindCount tracks how many timeout reminders have been sent to the
+	// assignee without any response. When it reaches maxReminders the todo is
+	// marked failed instead of being auto-redispatched (which caused duplicate
+	// executions). Any agent activity (progress/complete/fail/ask) resets it.
+	RemindCount int        `json:"remind_count" bson:"remind_count"`
+	RemindAt    *time.Time `json:"remind_at,omitempty" bson:"remind_at,omitempty"`
+
+	// ReviewStatus tracks the human/PM review gate for a completed todo.
+	// Values: "" (no review needed), "pending_approval" (waiting for review),
+	// "approved" (review passed), "rejected" (review rejected; rework triggered).
+	// While pending_approval the sequential dispatch is blocked until the
+	// reviewer approves.
+	ReviewStatus string `json:"review_status,omitempty" bson:"review_status,omitempty"`
+	// NeedReview marks the todo as requiring human/PM review after completion.
+	// Inherited from the workflow step (step.need_review) when the PM finalizes
+	// a plan against a workflow; an executor may also declare it on todo.complete.
+	NeedReview bool `json:"need_review,omitempty" bson:"need_review,omitempty"`
+	// ReviewReason records the rejection reason when a todo is sent back for
+	// rework (from the human reviewer or the PM agent).
+	ReviewReason *string `json:"review_reason,omitempty" bson:"review_reason,omitempty"`
+	// ReworkCount counts how many times this todo has been sent back for
+	// rework via a review rejection. Independent from RetryCount (timeout
+	// retries). Default max is 3; exceeding it fails the todo.
+	ReworkCount int `json:"rework_count,omitempty" bson:"rework_count,omitempty"`
+	// MaxReworks is the upper bound for ReworkCount (defaults to 3 when 0).
+	MaxReworks int `json:"max_reworks,omitempty" bson:"max_reworks,omitempty"`
+	// Questions are human input requests made by the assignee while executing
+	// (todo.ask). While an unanswered required question exists the todo is
+	// parked in waiting_user; answers are appended in place so the full
+	// question/answer history is preserved for review and audit.
+	Questions []TodoQuestion `json:"questions,omitempty" bson:"questions,omitempty"`
+
+	// Outputs records the actual files produced by this todo, bound to the
+	// workflow step's declared StepOutput by name. Populated when an agent
+	// uploads an artifact with `--metadata outputName=<name>`. Downstream
+	// steps resolve their StepInput.Source against these entries to fetch the
+	// "上一个流程的输出文件".
+	Outputs []TodoOutput `json:"outputs,omitempty" bson:"outputs,omitempty"`
+}
+
+// TodoOutput binds a produced artifact to a workflow step's declared output.
+type TodoOutput struct {
+	OutputName string `json:"output_name" bson:"output_name"` // 匹配 StepOutput.Name
+	ArtifactID string `json:"artifact_id,omitempty" bson:"artifact_id,omitempty"`
+	FileRef    string `json:"file_ref,omitempty" bson:"file_ref,omitempty"` // ProjectFile ID
+}
+
+// TodoQuestion is a single human-input request recorded on a todo.
+type TodoQuestion struct {
+	ID       string   `json:"id" bson:"id"`
+	Question string   `json:"question" bson:"question"`
+	Options  []string `json:"options,omitempty" bson:"options,omitempty"`
+	Required bool     `json:"required" bson:"required"`
+	// AskedAt is when the agent posted the question (todo.ask received).
+	AskedAt time.Time `json:"asked_at" bson:"asked_at"`
+	// Answer is empty while pending; set once the user answers or the
+	// required=false timeout fires (Answer == "__timeout__").
+	Answer     string     `json:"answer,omitempty" bson:"answer,omitempty"`
+	AnsweredBy string     `json:"answered_by,omitempty" bson:"answered_by,omitempty"`
+	AnsweredAt *time.Time `json:"answered_at,omitempty" bson:"answered_at,omitempty"`
+	TimedOut   bool       `json:"timed_out,omitempty" bson:"timed_out,omitempty"`
 }
 
 type ActorRef struct {
@@ -50,6 +159,16 @@ type ActorRef struct {
 	ActorID   string `json:"actor_id" bson:"actor_id"`
 	ActorName string `json:"actor_name" bson:"actor_name"`
 }
+
+// Artifact file-nature kinds.
+const (
+	// ArtifactKindDeliverable marks a declared final deliverable bound to a
+	// workflow step output (upload carried metadata outputName).
+	ArtifactKindDeliverable = "deliverable"
+	// ArtifactKindProcess marks intermediate/process files. They stay visible
+	// in the file tree but never participate in step-input resolution.
+	ArtifactKindProcess = "process"
+)
 
 type TaskArtifact struct {
 	TransferID    string    `json:"transfer_id" bson:"_id"`
@@ -63,6 +182,19 @@ type TaskArtifact struct {
 	FromAgentID   string    `json:"from_agent_id" bson:"from_agent_id"`
 	FromAgentName string    `json:"from_agent_name" bson:"from_agent_name"`
 	CreatedAt     time.Time `json:"created_at" bson:"created_at"`
+	// ProjectFileID links this artifact to the auto-created ProjectFile so the
+	// pipeline progress panel can resolve it for preview/download even when the
+	// agent did not declare an output name.
+	ProjectFileID string `json:"project_file_id,omitempty" bson:"project_file_id,omitempty"`
+	// Kind classifies the file nature: "deliverable" (declared an outputName
+	// and bound to a workflow step output) or "process" (everything else).
+	// Only deliverables participate in downstream step-input resolution;
+	// process files stay visible in the file tree but never feed dispatch.
+	Kind string `json:"kind,omitempty" bson:"kind,omitempty"`
+	// OutputName is the binding to a workflow StepOutput.Name. Set from
+	// transfer metadata outputName; a non-empty value marks the artifact as a
+	// deliverable and populates the owning todo's Outputs.
+	OutputName string `json:"output_name,omitempty" bson:"output_name,omitempty"`
 }
 
 type TaskResult struct {
@@ -87,26 +219,38 @@ type TaskListItem struct {
 }
 
 type TaskDetail struct {
-	ID           string             `json:"id" bson:"_id"`
-	UserID       string             `json:"-" bson:"user_id"`
-	ProjectID    string             `json:"project_id" bson:"project_id"`
-	Title        string             `json:"title" bson:"title"`
-	Description  string             `json:"description" bson:"description"`
-	Status       string             `json:"status" bson:"status"`
-	Priority     string             `json:"priority" bson:"priority"`
-	PMAgentID    string             `json:"-" bson:"pm_agent_id"`
-	PMAgent      PMAgentSummary     `json:"pm_agent" bson:"pm_agent"`
-	Messages     []TaskMessage      `json:"messages,omitempty" bson:"messages,omitempty"`
-	Todos        []Todo             `json:"todos" bson:"todos"`
-	Artifacts    []TaskArtifact     `json:"artifacts" bson:"-"`
+	ID          string `json:"id" bson:"_id"`
+	UserID      string `json:"-" bson:"user_id"`
+	ProjectID   string `json:"project_id" bson:"project_id"`
+	Title       string `json:"title" bson:"title"`
+	Description string `json:"description" bson:"description"`
+	Status      string `json:"status" bson:"status"`
+	Priority    string `json:"priority" bson:"priority"`
+	// SourceTaskID links this task back to the task whose action item created
+	// it (action-items → tasks conversion).
+	SourceTaskID string `json:"source_task_id,omitempty" bson:"source_task_id,omitempty"`
+	// Workflow is the workflow snapshot this task plans against. Copied from
+	// the project default at creation time (or overridden by the request).
+	// The PM must honor it when producing task.plan_ready.
+	Workflow *Workflow `json:"workflow,omitempty" bson:"workflow,omitempty"`
+	// WorkflowRef records where this task sits in the project's overall
+	// pipeline (the primary workflow): which workflow it belongs to and the
+	// contiguous step range (by index into the workflow's Steps) this task
+	// owns. Empty when the task is not part of a project pipeline.
+	WorkflowRef   *WorkflowRef       `json:"workflow_ref,omitempty" bson:"workflow_ref,omitempty"`
+	PMAgentID     string             `json:"-" bson:"pm_agent_id"`
+	PMAgent       PMAgentSummary     `json:"pm_agent" bson:"pm_agent"`
+	Messages      []TaskMessage      `json:"messages,omitempty" bson:"messages,omitempty"`
+	Todos         []Todo             `json:"todos" bson:"todos"`
+	Artifacts     []TaskArtifact     `json:"artifacts" bson:"-"`
 	AttachedFiles []TaskAttachedFile `json:"attached_files" bson:"attached_files"`
-	Result       TaskResult         `json:"result" bson:"result"`
-	Version      int                `json:"version" bson:"version"`
-	CanceledAt   *time.Time         `json:"canceled_at" bson:"canceled_at"`
-	CanceledBy   *ActorRef          `json:"canceled_by" bson:"canceled_by"`
-	CancelReason *string            `json:"cancel_reason" bson:"cancel_reason"`
-	CreatedAt    time.Time          `json:"created_at" bson:"created_at"`
-	UpdatedAt    time.Time          `json:"updated_at" bson:"updated_at"`
+	Result        TaskResult         `json:"result" bson:"result"`
+	Version       int                `json:"version" bson:"version"`
+	CanceledAt    *time.Time         `json:"canceled_at" bson:"canceled_at"`
+	CanceledBy    *ActorRef          `json:"canceled_by" bson:"canceled_by"`
+	CancelReason  *string            `json:"cancel_reason" bson:"cancel_reason"`
+	CreatedAt     time.Time          `json:"created_at" bson:"created_at"`
+	UpdatedAt     time.Time          `json:"updated_at" bson:"updated_at"`
 }
 
 // TaskAttachedFile is a lightweight reference to a project file attached to a task.
@@ -126,6 +270,11 @@ func (t *TaskDetail) NextDispatchableTodo() *Todo {
 		todo := &t.Todos[i]
 		switch todo.Status {
 		case "done":
+			// A completed todo awaiting human/PM review blocks the sequential
+			// pipeline: later todos must not dispatch until approval.
+			if todo.ReviewStatus == ReviewPending {
+				return nil
+			}
 			continue
 		case "pending":
 			return todo

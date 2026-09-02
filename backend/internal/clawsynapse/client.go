@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -14,6 +17,9 @@ import (
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
+	// writeClient 用于写回类请求：skill/model 写回会重启目标 gateway（契约语义），
+	// 超过默认的 3s 全局超时，需独立的长超时客户端。
+	writeClient *http.Client
 }
 
 type PublishResult struct {
@@ -155,6 +161,108 @@ type healthResponse struct {
 	TS      int64      `json:"ts"`
 }
 
+// --- 节点能力查询（capability.* 契约） ---
+
+type CapabilitySkill struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Category    string `json:"category"`
+}
+
+type CapabilityModel struct {
+	ID        string `json:"id"`
+	Provider  string `json:"provider"`
+	Model     string `json:"model"`
+	IsDefault bool   `json:"isDefault"`
+}
+
+// ExecutionInfo 是 cron 定时任务的一次执行记录（ClawSynapse 适配器直读 gateway executions.db）。
+type ExecutionInfo struct {
+	ExecutionID   string `json:"executionId"`
+	JobID         string `json:"jobId"`
+	Status        string `json:"status"` // running | completed | failed | unknown
+	StartedAtMs   int64  `json:"startedAtMs"`
+	FinishedAtMs  int64  `json:"finishedAtMs"` // 运行中为 0
+	DurationMs    int64  `json:"durationMs"`
+	Error         string `json:"error"`
+	OutputFile    string `json:"outputFile"`
+	OutputPreview string `json:"outputPreview"`
+}
+
+type CapabilityJob struct {
+	ID         string          `json:"id"`
+	Name       string          `json:"name"`
+	Schedule   string          `json:"schedule"`
+	Enabled    bool            `json:"enabled"`
+	Prompt     string          `json:"prompt"`
+	Skills     []string        `json:"skills,omitempty"`
+	NextRun    string          `json:"nextRun,omitempty"`
+	Executions []ExecutionInfo `json:"executions,omitempty"`
+}
+
+type CapabilityInfo struct {
+	Product   string            `json:"product"`
+	Available bool              `json:"available"`
+	Skills    []CapabilitySkill `json:"skills"`
+	Models    []CapabilityModel `json:"models"`
+	Jobs      []CapabilityJob   `json:"jobs"`
+	Reason    string            `json:"reason"`
+	TS        int64             `json:"ts"`
+}
+
+type capabilityResponse struct {
+	OK      bool           `json:"ok"`
+	Code    string         `json:"code"`
+	Message string         `json:"message"`
+	Data    CapabilityInfo `json:"data"`
+	TS      int64          `json:"ts"`
+}
+
+// --- 节点能力写回（capability.* 契约） ---
+
+// ProviderConfig 是 model 写回时的 provider 配置（api_key 仅在写回时携带，读响应不回显）。
+// 注：hermes 适配器要求 model add 必须带 name（provider 标识）。
+type ProviderConfig struct {
+	Name         string `json:"name,omitempty"`
+	APIMode      string `json:"api_mode,omitempty"`
+	Transport    string `json:"transport,omitempty"`
+	Model        string `json:"model,omitempty"`
+	DefaultModel string `json:"default_model,omitempty"`
+	APIKey       string `json:"api_key,omitempty"`
+}
+
+// SetCapabilityRequest 是 capability.set 的 payload。
+type SetCapabilityRequest struct {
+	Target   string          `json:"target"` // skill | model | cron
+	Action   string          `json:"action"` // 见契约 §2.2 动作映射
+	Skill    string          `json:"skill,omitempty"`
+	FileIds  []string        `json:"fileIds,omitempty"`
+	Model    string          `json:"model,omitempty"`
+	Provider *ProviderConfig `json:"provider,omitempty"`
+	Job      map[string]any  `json:"job,omitempty"`
+	JobID    string          `json:"jobId,omitempty"`
+}
+
+// SetCapabilityResult 是 capability.set_response 的映射。
+type SetCapabilityResult struct {
+	OK            bool   `json:"ok"`
+	Target        string `json:"target"`
+	Action        string `json:"action"`
+	Skill         string `json:"skill,omitempty"`
+	Model         string `json:"model,omitempty"`
+	JobID         string `json:"jobId,omitempty"`
+	RestartStatus string `json:"restartStatus"` // none | restarted | restart_failed
+	Error         string `json:"error,omitempty"`
+}
+
+type setCapabilityResponse struct {
+	OK      bool                `json:"ok"`
+	Code    string              `json:"code"`
+	Message string              `json:"message"`
+	Data    SetCapabilityResult `json:"data"`
+	TS      int64               `json:"ts"`
+}
+
 func NewClient(baseURL string, timeout time.Duration) *Client {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
@@ -163,9 +271,15 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 	if timeout <= 0 {
 		timeout = 3 * time.Second
 	}
+	writeTimeout := timeout
+	if writeTimeout < 30*time.Second {
+		// skill/model 写回需重启 gateway（数秒窗口），默认 3s 不够
+		writeTimeout = 30 * time.Second
+	}
 	return &Client{
-		baseURL:    baseURL,
-		httpClient: &http.Client{Timeout: timeout},
+		baseURL:     baseURL,
+		httpClient:  &http.Client{Timeout: timeout},
+		writeClient: &http.Client{Timeout: writeTimeout},
 	}
 }
 
@@ -327,6 +441,241 @@ func (c *Client) GetSelfNodeID(ctx context.Context) (string, error) {
 	}
 
 	return nodeID, nil
+}
+
+// GetCapabilities 查询目标节点的能力（技能/模型/cron）。
+// 走旁挂 daemon 的 GET /v1/peers/{nodeId}/capabilities，daemon 内部经 NATS capability.query
+// 穿透到目标节点并同步等待 response。按契约约定：超时/拒绝/离线时 HTTP 仍 200，
+// body 内 available=false + reason 表达真实状态，前端据此降级显示。
+func (c *Client) GetCapabilities(ctx context.Context, nodeID string) (*CapabilityInfo, error) {
+	if c == nil {
+		return nil, fmt.Errorf("clawsynapse client is disabled")
+	}
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		return nil, fmt.Errorf("nodeId is required")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/peers/"+url.PathEscape(nodeID)+"/capabilities", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("get capabilities request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 契约：HTTP 恒 200，状态在 body 里表达；但 5xx 仍按错误处理
+	if resp.StatusCode >= 500 {
+		return nil, fmt.Errorf("get capabilities returned status %d", resp.StatusCode)
+	}
+
+	var out capabilityResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode capabilities response: %w", err)
+	}
+	if !out.OK {
+		// daemon 侧拒绝（如未实现端点），降级为不可用
+		return &CapabilityInfo{Available: false, Reason: out.Code}, nil
+	}
+	if out.Data.Skills == nil {
+		out.Data.Skills = []CapabilitySkill{}
+	}
+	if out.Data.Models == nil {
+		out.Data.Models = []CapabilityModel{}
+	}
+	if out.Data.Jobs == nil {
+		out.Data.Jobs = []CapabilityJob{}
+	}
+	return &out.Data, nil
+}
+
+// CronExecutionsResult 是 cron 执行历史查询的返回（含降级 error 字段）。
+type CronExecutionsResult struct {
+	Executions []ExecutionInfo `json:"executions"`
+	Error      string          `json:"error,omitempty"`
+}
+
+type cronExecutionsResponse struct {
+	OK      bool                 `json:"ok"`
+	Code    string               `json:"code"`
+	Message string               `json:"message"`
+	Data    CronExecutionsResult `json:"data"`
+	TS      int64                `json:"ts"`
+}
+
+// GetCronExecutions 查询目标节点定时任务的执行历史（capability.executions 契约）。
+// 走旁挂 daemon 的 GET /v1/peers/{nodeId}/cron/executions，daemon 内部经 NATS capability.executions
+// 穿透到目标节点并同步等待。按契约约定：超时/节点不支持时 HTTP 仍 200，
+// body 内 executions 为空数组 + error 表达真实状态。
+func (c *Client) GetCronExecutions(ctx context.Context, nodeID, jobID string, limit int) (*CronExecutionsResult, error) {
+	if c == nil {
+		return nil, fmt.Errorf("clawsynapse client is disabled")
+	}
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		return nil, fmt.Errorf("nodeId is required")
+	}
+
+	u := c.baseURL + "/v1/peers/" + url.PathEscape(nodeID) + "/cron/executions"
+	q := url.Values{}
+	if jobID = strings.TrimSpace(jobID); jobID != "" {
+		q.Set("jobId", jobID)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if len(q) > 0 {
+		u += "?" + q.Encode()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("get cron executions request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 非 2xx（404/405/5xx）：daemon 未实现端点或异常，按降级处理（不 decode，避免解析纯文本报错）
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &CronExecutionsResult{Executions: []ExecutionInfo{}, Error: fmt.Sprintf("daemon returned status %d", resp.StatusCode)}, nil
+	}
+
+	var out cronExecutionsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode cron executions response: %w", err)
+	}
+	if !out.OK {
+		// daemon 侧拒绝（如未实现端点），降级为空列表 + code
+		return &CronExecutionsResult{Executions: []ExecutionInfo{}, Error: out.Code}, nil
+	}
+	if out.Data.Executions == nil {
+		out.Data.Executions = []ExecutionInfo{}
+	}
+	return &out.Data, nil
+}
+
+// SetCapabilities 写回目标节点的能力（技能/模型/cron）。
+// 走旁挂 daemon 的 POST /v1/peers/{nodeId}/capabilities，daemon 内部经 NATS capability.set
+// 穿透到目标节点并同步等待 set_response。按契约约定：超时/拒绝/离线时 HTTP 仍 200，
+// body 内 ok=false + error 表达真实状态，前端据此提示。
+func (c *Client) SetCapabilities(ctx context.Context, nodeID string, req *SetCapabilityRequest) (*SetCapabilityResult, error) {
+	if c == nil {
+		return nil, fmt.Errorf("clawsynapse client is disabled")
+	}
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		return nil, fmt.Errorf("nodeId is required")
+	}
+	if req == nil || req.Target == "" || req.Action == "" {
+		return nil, fmt.Errorf("target and action are required")
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal set capabilities request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/peers/"+url.PathEscape(nodeID)+"/capabilities", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.writeClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("set capabilities request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 500 {
+		return nil, fmt.Errorf("set capabilities returned status %d", resp.StatusCode)
+	}
+
+	var out setCapabilityResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode set capabilities response: %w", err)
+	}
+	if !out.OK {
+		// daemon 侧拒绝（如未实现端点），降级为失败结果
+		return &SetCapabilityResult{OK: false, Error: out.Code}, nil
+	}
+	return &out.Data, nil
+}
+
+// UploadSkillFile 上传技能文件包到目标节点，返回 fileId 供后续 capability.set 的 fileIds 引用。
+// 走旁挂 daemon 的 POST /v1/peers/{nodeId}/skills（multipart/form-data, 字段 file）。
+// daemon 将文件落盘到 transfer 目录并登记到 transfer store，返回 fileId；
+// 随后 capability.set（skill add/update）携带该 fileId，capability service 解析为本地路径
+// 交给 hermes adapter 安装到 managed skill 目录。
+func (c *Client) UploadSkillFile(ctx context.Context, nodeID, filename string, file io.Reader) (string, error) {
+	if c == nil {
+		return "", fmt.Errorf("clawsynapse client is disabled")
+	}
+	nodeID = strings.TrimSpace(nodeID)
+	filename = strings.TrimSpace(filename)
+	if nodeID == "" {
+		return "", fmt.Errorf("nodeId is required")
+	}
+	if filename == "" {
+		return "", fmt.Errorf("filename is required")
+	}
+
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	fw, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		return "", fmt.Errorf("create multipart form file: %w", err)
+	}
+	if _, err := io.Copy(fw, file); err != nil {
+		return "", fmt.Errorf("copy file into multipart: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return "", fmt.Errorf("close multipart writer: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/peers/"+url.PathEscape(nodeID)+"/skills", &buf)
+	if err != nil {
+		return "", err
+	}
+	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := c.writeClient.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("upload skill file request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 非 2xx（404/405/5xx）：daemon 未实现该端点或异常，返回明确错误而非解析纯文本
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("upload skill file returned status %d (daemon may not support skill upload)", resp.StatusCode)
+	}
+
+	var out struct {
+		OK      bool   `json:"ok"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			FileID string `json:"fileId"`
+		} `json:"data"`
+		TS int64 `json:"ts"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", fmt.Errorf("decode upload skill file response: %w", err)
+	}
+	if !out.OK {
+		return "", fmt.Errorf("upload skill file rejected: %s", out.Code)
+	}
+	if out.Data.FileID == "" {
+		return "", fmt.Errorf("upload skill file missing fileId")
+	}
+	return out.Data.FileID, nil
 }
 
 func (c *Client) ListTransfers(ctx context.Context) ([]map[string]any, error) {

@@ -214,7 +214,7 @@ func TestTodoCompleteIdempotencyByMessageID(t *testing.T) {
 		Output:   "implemented",
 		Metadata: map[string]any{"duration_ms": 100},
 	}
-	task1, appErr := s.CompleteTodoByNodeWithMessageID(developer.NodeID, "msg-todo-complete-1", TodoCompleteInput{
+	task1, _, appErr := s.CompleteTodoByNodeWithMessageID(developer.NodeID, "msg-todo-complete-1", TodoCompleteInput{
 		TaskID: task.ID,
 		TodoID: "todo-1",
 		Result: result,
@@ -222,7 +222,7 @@ func TestTodoCompleteIdempotencyByMessageID(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("first todo.complete: %v", appErr)
 	}
-	task2, appErr := s.CompleteTodoByNodeWithMessageID(developer.NodeID, "msg-todo-complete-1", TodoCompleteInput{
+	task2, _, appErr := s.CompleteTodoByNodeWithMessageID(developer.NodeID, "msg-todo-complete-1", TodoCompleteInput{
 		TaskID: task.ID,
 		TodoID: "todo-1",
 		Result: result,
@@ -274,7 +274,7 @@ func TestTaskResultAggregationFromCompletedTodos(t *testing.T) {
 		t.Fatalf("create task: %v", appErr)
 	}
 
-	task, appErr = s.CompleteTodoByNode(developer.NodeID, TodoCompleteInput{
+	task, _, appErr = s.CompleteTodoByNode(developer.NodeID, TodoCompleteInput{
 		TaskID: task.ID,
 		TodoID: "todo-1",
 		Result: model.TodoResult{
@@ -297,7 +297,7 @@ func TestTaskResultAggregationFromCompletedTodos(t *testing.T) {
 		t.Fatalf("expected pending_todo_count=1, got %#v", task.Result.Metadata["pending_todo_count"])
 	}
 
-	task, appErr = s.CompleteTodoByNode(developer.NodeID, TodoCompleteInput{
+	task, _, appErr = s.CompleteTodoByNode(developer.NodeID, TodoCompleteInput{
 		TaskID: task.ID,
 		TodoID: "todo-2",
 		Result: model.TodoResult{
@@ -387,6 +387,89 @@ func TestSaveArtifactAndFillOnTaskQuery(t *testing.T) {
 	}
 	if fetched2.Artifacts[0].FileSize != 4096 {
 		t.Fatalf("expected updated file_size=4096, got %d", fetched2.Artifacts[0].FileSize)
+	}
+}
+
+func TestSaveArtifactBindsTodoOutput(t *testing.T) {
+	s, _, pm, developer, project := seedWorkflowState(t)
+
+	task, appErr := s.CreateTaskByPMNode(pm.NodeID, TaskCreateInput{
+		ProjectID:   project.ID,
+		Title:       "Bind output report",
+		Description: "Upload final report with outputName",
+		Todos: []TaskCreateTodoInput{
+			{
+				ID:             "todo-1",
+				Title:          "Upload report",
+				Description:    "Send report PDF",
+				AssigneeNodeID: developer.NodeID,
+			},
+		},
+	})
+	if appErr != nil {
+		t.Fatalf("create task: %v", appErr)
+	}
+
+	// Save an artifact carrying an outputName binding hint.
+	artifact := model.TaskArtifact{
+		TransferID: "tf_bound_1",
+		TaskID:     task.ID,
+		TodoID:     "todo-1",
+		FileName:   "report.pdf",
+		FileSize:   2048,
+		LocalPath:  "/tmp/report.pdf",
+		MimeType:   "application/pdf",
+		FromNodeID: developer.NodeID,
+		CreatedAt:  time.Now(),
+		OutputName: "剧本正文",
+	}
+	if appErr := s.SaveArtifact(artifact); appErr != nil {
+		t.Fatalf("save artifact: %v", appErr)
+	}
+
+	fetched, appErr := s.GetTask(task.UserID, task.ID)
+	if appErr != nil {
+		t.Fatalf("get task: %v", appErr)
+	}
+	var todo *model.Todo
+	for i := range fetched.Todos {
+		if fetched.Todos[i].ID == "todo-1" {
+			todo = &fetched.Todos[i]
+		}
+	}
+	if todo == nil {
+		t.Fatalf("todo-1 not found")
+	}
+	if len(todo.Outputs) != 1 {
+		t.Fatalf("expected 1 todo output, got %d", len(todo.Outputs))
+	}
+	if todo.Outputs[0].OutputName != "剧本正文" {
+		t.Fatalf("unexpected output name: %s", todo.Outputs[0].OutputName)
+	}
+	if todo.Outputs[0].ArtifactID != "tf_bound_1" {
+		t.Fatalf("unexpected artifact id: %s", todo.Outputs[0].ArtifactID)
+	}
+	if todo.Outputs[0].FileRef == "" {
+		t.Fatalf("expected non-empty FileRef (ProjectFile id)")
+	}
+
+	// Re-uploading the same outputName should overwrite, not duplicate.
+	artifact.TransferID = "tf_bound_2"
+	artifact.FileSize = 4096
+	if appErr := s.SaveArtifact(artifact); appErr != nil {
+		t.Fatalf("re-save artifact: %v", appErr)
+	}
+	fetched2, _ := s.GetTask(task.UserID, task.ID)
+	for i := range fetched2.Todos {
+		if fetched2.Todos[i].ID == "todo-1" {
+			todo = &fetched2.Todos[i]
+		}
+	}
+	if len(todo.Outputs) != 1 {
+		t.Fatalf("expected 1 todo output after re-save, got %d", len(todo.Outputs))
+	}
+	if todo.Outputs[0].ArtifactID != "tf_bound_2" {
+		t.Fatalf("expected updated artifact id tf_bound_2, got %s", todo.Outputs[0].ArtifactID)
 	}
 }
 
@@ -522,7 +605,7 @@ func TestTaskTodoOrderAndSequentialExecutionGuards(t *testing.T) {
 		t.Fatalf("expected TODO_BLOCKED_BY_PREVIOUS for out-of-order progress, got %#v", appErr)
 	}
 
-	task, appErr = s.CompleteTodoByNode(developer.NodeID, TodoCompleteInput{
+	task, _, appErr = s.CompleteTodoByNode(developer.NodeID, TodoCompleteInput{
 		TaskID: task.ID,
 		TodoID: "todo-1",
 		Result: model.TodoResult{
@@ -535,7 +618,7 @@ func TestTaskTodoOrderAndSequentialExecutionGuards(t *testing.T) {
 		t.Fatalf("complete first todo: %v", appErr)
 	}
 
-	task, appErr = s.CompleteTodoByNode(developer.NodeID, TodoCompleteInput{
+	task, _, appErr = s.CompleteTodoByNode(developer.NodeID, TodoCompleteInput{
 		TaskID: task.ID,
 		TodoID: "todo-2",
 		Result: model.TodoResult{
@@ -619,7 +702,7 @@ func TestCancelTaskStopsFurtherTodoUpdates(t *testing.T) {
 		t.Fatalf("expected TASK_CANCELED for progress after cancel, got %#v", appErr)
 	}
 
-	_, appErr = s.CompleteTodoByNode(developer.NodeID, TodoCompleteInput{
+	_, _, appErr = s.CompleteTodoByNode(developer.NodeID, TodoCompleteInput{
 		TaskID: task.ID,
 		TodoID: "todo-1",
 		Result: model.TodoResult{Summary: "late", Output: "late"},
@@ -758,7 +841,7 @@ func TestCreateTaskByUserTodoWorkflow(t *testing.T) {
 	}
 
 	// Complete the todo
-	task, appErr = s.CompleteTodoByNode(developer.NodeID, TodoCompleteInput{
+	task, _, appErr = s.CompleteTodoByNode(developer.NodeID, TodoCompleteInput{
 		TaskID: task.ID,
 		TodoID: task.Todos[0].ID,
 		Result: model.TodoResult{Summary: "done"},
@@ -805,4 +888,526 @@ type stringAgent struct {
 
 type projectRef struct {
 	ID string
+}
+
+func TestProjectWorkflowRefAndProgress(t *testing.T) {
+	s, userID, _, developer, project := seedWorkflowState(t)
+
+	// 设置项目总流程（3 步）
+	wfs := []model.Workflow{{
+		Name: "总流程",
+		Steps: []model.WorkflowStep{
+			{Name: "剧本创作", Role: "developer"},
+			{Name: "导演拆解", Role: "developer"},
+			{Name: "质量验收", Role: "developer"},
+		},
+	}}
+	idx := 0
+	if _, appErr := s.UpdateProject(userID, project.ID, UpdateProjectInput{
+		Workflows:            wfs,
+		PrimaryWorkflowIndex: &idx,
+	}); appErr != nil {
+		t.Fatalf("set primary workflow: %v", appErr)
+	}
+
+	// 任务 A 负责步骤 0-1（快照应裁剪为 2 步）
+	taskA, appErr := s.CreateTaskByUser(userID, UserTaskCreateInput{
+		ProjectID:       project.ID,
+		Title:           "前段",
+		Description:     "前段任务",
+		Priority:        "medium",
+		AssigneeAgentID: developer.ID,
+		WorkflowIndex:   wfIdxPtr(0),
+		StepFrom:        0,
+		StepTo:          1,
+	})
+	if appErr != nil {
+		t.Fatalf("create task A: %v", appErr)
+	}
+	if taskA.WorkflowRef == nil || taskA.WorkflowRef.WorkflowIndex != 0 || taskA.WorkflowRef.StepFrom != 0 || taskA.WorkflowRef.StepTo != 1 {
+		t.Fatalf("unexpected workflow_ref: %+v", taskA.WorkflowRef)
+	}
+	if taskA.Workflow == nil || len(taskA.Workflow.Steps) != 2 || taskA.Workflow.Steps[0].Name != "剧本创作" {
+		t.Fatalf("snapshot should be trimmed to owned steps, got %+v", taskA.Workflow)
+	}
+
+	// 任务 B 负责步骤 2（快照应裁剪为 1 步）
+	taskB, appErr := s.CreateTaskByUser(userID, UserTaskCreateInput{
+		ProjectID:       project.ID,
+		Title:           "后段",
+		Description:     "后段任务",
+		Priority:        "medium",
+		AssigneeAgentID: developer.ID,
+		WorkflowIndex:   wfIdxPtr(0),
+		StepFrom:        2,
+		StepTo:          2,
+	})
+	if appErr != nil {
+		t.Fatalf("create task B: %v", appErr)
+	}
+	if taskB.WorkflowRef == nil || taskB.WorkflowRef.StepFrom != 2 || taskB.WorkflowRef.StepTo != 2 {
+		t.Fatalf("unexpected workflow_ref B: %+v", taskB.WorkflowRef)
+	}
+	if taskB.Workflow == nil || len(taskB.Workflow.Steps) != 1 {
+		t.Fatalf("snapshot B should be 1 step, got %+v", taskB.Workflow)
+	}
+
+	// 进度聚合：步骤 0/1 归任务 A，步骤 2 归任务 B
+	progress, appErr := s.GetProjectWorkflowProgress(userID, project.ID)
+	if appErr != nil {
+		t.Fatalf("get progress: %v", appErr)
+	}
+	if progress.WorkflowName != "总流程" || len(progress.Steps) != 3 {
+		t.Fatalf("unexpected progress: %+v", progress)
+	}
+	if progress.Steps[0].TaskID != taskA.ID || progress.Steps[1].TaskID != taskA.ID {
+		t.Fatalf("steps 0/1 should belong to task A: %+v", progress.Steps)
+	}
+	if progress.Steps[2].TaskID != taskB.ID {
+		t.Fatalf("step 2 should belong to task B: %+v", progress.Steps[2])
+	}
+	if progress.Steps[0].Status != "pending" {
+		t.Fatalf("step 0 should be pending (no todo yet), got %q", progress.Steps[0].Status)
+	}
+
+	// 跨任务查找：步骤 0（剧本创作）应由任务 A 负责，且能匹配到其 todo
+	srcTask, srcTodos, ok := s.FindTaskForWorkflowStep(userID, project.ID, "总流程", "剧本创作")
+	if !ok {
+		t.Fatalf("cross-task step lookup failed")
+	}
+	if srcTask.ID != taskA.ID {
+		t.Fatalf("source task should be A, got %s", srcTask.ID)
+	}
+	if len(srcTodos) == 0 || srcTodos[0] == nil || srcTodos[0].ID == "" {
+		t.Fatalf("source todo should be matched")
+	}
+	// 不存在的步骤名返回 false
+	if _, _, ok := s.FindTaskForWorkflowStep(userID, project.ID, "总流程", "不存在的步骤"); ok {
+		t.Fatalf("lookup of unknown step should fail")
+	}
+}
+
+func TestCreateTaskInvalidStepRange(t *testing.T) {
+	s, userID, _, developer, project := seedWorkflowState(t)
+
+	wfs := []model.Workflow{{Name: "总流程", Steps: []model.WorkflowStep{{Name: "一步", Role: "writer"}}}}
+	idx := 0
+	if _, appErr := s.UpdateProject(userID, project.ID, UpdateProjectInput{Workflows: wfs, PrimaryWorkflowIndex: &idx}); appErr != nil {
+		t.Fatalf("set primary workflow: %v", appErr)
+	}
+	// 越界 step_to
+	if _, appErr := s.CreateTaskByUser(userID, UserTaskCreateInput{
+		ProjectID:       project.ID,
+		Title:           "坏任务",
+		Description:     "bad",
+		Priority:        "medium",
+		AssigneeAgentID: developer.ID,
+		WorkflowIndex:   wfIdxPtr(0),
+		StepFrom:        0,
+		StepTo:          5,
+	}); appErr == nil {
+		t.Fatalf("out-of-range step_to should fail")
+	}
+	// 不存在的工作流 index
+	if _, appErr := s.CreateTaskByUser(userID, UserTaskCreateInput{
+		ProjectID:       project.ID,
+		Title:           "坏任务2",
+		Description:     "bad",
+		Priority:        "medium",
+		AssigneeAgentID: developer.ID,
+		WorkflowIndex:   wfIdxPtr(9),
+		StepFrom:        0,
+		StepTo:          0,
+	}); appErr == nil {
+		t.Fatalf("invalid workflow_index should fail")
+	}
+}
+
+func wfIdxPtr(i int) *int { return &i }
+
+// TestFindTaskForWorkflowStepSkipsCanceled verifies that the cross-task step
+// resolver ignores canceled tasks and prefers the most recently updated active
+// task when several tasks cover the same workflow step. This prevents a
+// terminated test run from supplying a downstream step's inputs.
+func TestFindTaskForWorkflowStepSkipsCanceled(t *testing.T) {
+	s, userID, _, developer, project := seedWorkflowState(t)
+	projectID := project.ID
+
+	s.projects[projectID].Workflows = []model.Workflow{
+		{Name: "画宗AIGC无人工厂产线工作流", Steps: []model.WorkflowStep{{Name: "剧本创作", Role: "developer"}}},
+	}
+	s.projects[projectID].PrimaryWorkflowIndex = 0
+
+	canceled := &model.TaskDetail{
+		ID:        "task-canceled",
+		UserID:    userID,
+		ProjectID: projectID,
+		Status:    "canceled",
+		Workflow:  &model.Workflow{Name: "画宗AIGC无人工厂产线工作流", Steps: []model.WorkflowStep{{Name: "剧本创作", Role: "developer"}}},
+		WorkflowRef: &model.WorkflowRef{
+			WorkflowIndex: 0,
+			WorkflowName: "画宗AIGC无人工厂产线工作流",
+			StepFrom:      0,
+			StepTo:        0,
+		},
+		Todos: []model.Todo{{
+			ID: "tc", Order: 1, Title: "剧本创作", Status: "done",
+			Assignee: model.TodoAssignee{AgentID: developer.ID, Name: "developer", NodeID: developer.NodeID},
+		}},
+		UpdatedAt: time.Now().UTC().Add(-time.Hour),
+	}
+	active := &model.TaskDetail{
+		ID:        "task-active",
+		UserID:    userID,
+		ProjectID: projectID,
+		Status:    "done",
+		Workflow:  &model.Workflow{Name: "画宗AIGC无人工厂产线工作流", Steps: []model.WorkflowStep{{Name: "剧本创作", Role: "developer"}}},
+		WorkflowRef: &model.WorkflowRef{
+			WorkflowIndex: 0,
+			WorkflowName: "画宗AIGC无人工厂产线工作流",
+			StepFrom:      0,
+			StepTo:        0,
+		},
+		Todos: []model.Todo{{
+			ID: "ta", Order: 1, Title: "剧本创作", Status: "done",
+			Assignee: model.TodoAssignee{AgentID: developer.ID, Name: "developer", NodeID: developer.NodeID},
+		}},
+		UpdatedAt: time.Now().UTC(),
+	}
+	s.tasks[canceled.ID] = canceled
+	s.tasks[active.ID] = active
+	s.projectTasks[projectID] = append(s.projectTasks[projectID], canceled.ID, active.ID)
+
+	// Mistyped workflow name must not match anything.
+	if _, _, ok := s.FindTaskForWorkflowStep(userID, projectID, "画宗AIGC无人工厂产线工作线工作流", "剧本创作"); ok {
+		t.Fatal("did not expect a match for a mistyped workflow name")
+	}
+
+	task, todos, ok := s.FindTaskForWorkflowStep(userID, projectID, "画宗AIGC无人工厂产线工作流", "剧本创作")
+	if !ok {
+		t.Fatal("expected to find an active task for the step")
+	}
+	if task.ID != active.ID {
+		t.Fatalf("expected active (non-canceled) task %q, got %q", active.ID, task.ID)
+	}
+	if len(todos) != 1 || todos[0].ID != "ta" {
+		t.Fatalf("expected todo %q, got %v", "ta", todoIDs(todos))
+	}
+}
+
+// TestFindTaskForWorkflowStepReturnsAllTodosForStep verifies that a single
+// workflow step split into several same-agent todos (preflight + deliverable)
+// returns ALL matched todos — the produced artifact may be linked to any of
+// them, and the previous "first todo only" behavior silently dropped the
+// step's real output, leaving downstream inputs Resolved=false.
+func TestFindTaskForWorkflowStepReturnsAllTodosForStep(t *testing.T) {
+	s, userID, _, developer, project := seedWorkflowState(t)
+	projectID := project.ID
+
+	s.projects[projectID].Workflows = []model.Workflow{
+		{Name: "画宗AIGC无人工厂产线工作流", Steps: []model.WorkflowStep{
+			{Name: "剧本创作", Role: "developer"},
+			{Name: "分镜拆解", Role: "developer"},
+		}},
+	}
+	s.projects[projectID].PrimaryWorkflowIndex = 0
+
+	task := &model.TaskDetail{
+		ID:        "task-storyboard",
+		UserID:    userID,
+		ProjectID: projectID,
+		Status:    "done",
+		Workflow:  &model.Workflow{Name: "画宗AIGC无人工厂产线工作流", Steps: []model.WorkflowStep{{Name: "分镜拆解", Role: "developer"}}},
+		WorkflowRef: &model.WorkflowRef{
+			WorkflowIndex: 0,
+			WorkflowName:  "画宗AIGC无人工厂产线工作流",
+			StepFrom:      1,
+			StepTo:        1,
+		},
+		Todos: []model.Todo{
+			{ID: "TD_01", Order: 1, Title: "核对分镜", Status: "done",
+				Assignee: model.TodoAssignee{AgentID: developer.ID, Name: "developer", NodeID: developer.NodeID}},
+			{ID: "TD_02", Order: 2, Title: "产出分镜表", Status: "done",
+				Assignee: model.TodoAssignee{AgentID: developer.ID, Name: "developer", NodeID: developer.NodeID}},
+		},
+		UpdatedAt: time.Now().UTC(),
+	}
+	s.tasks[task.ID] = task
+	s.projectTasks[projectID] = append(s.projectTasks[projectID], task.ID)
+
+	_, todos, ok := s.FindTaskForWorkflowStep(userID, projectID, "画宗AIGC无人工厂产线工作流", "分镜拆解")
+	if !ok {
+		t.Fatal("expected to find the storyboard task for the step")
+	}
+	if len(todos) != 2 {
+		t.Fatalf("expected 2 matched todos, got %v", todoIDs(todos))
+	}
+	got := map[string]bool{}
+	for _, td := range todos {
+		got[td.ID] = true
+	}
+	if !got["TD_01"] || !got["TD_02"] {
+		t.Fatalf("expected both TD_01 and TD_02, got %v", todoIDs(todos))
+	}
+}
+
+func todoIDs(todos []*model.Todo) []string {
+	out := make([]string, 0, len(todos))
+	for _, td := range todos {
+		if td == nil {
+			out = append(out, "<nil>")
+			continue
+		}
+		out = append(out, td.ID)
+	}
+	return out
+}
+
+// TestPrimaryStepAggregatesMultipleTodos verifies that when a single pipeline
+// step is split into several same-agent todos (e.g. a preflight check plus the
+// real deliverable), the progress node aggregates both the status and the
+// outputs of all of them instead of only the first matched todo.
+func TestPrimaryStepAggregatesMultipleTodos(t *testing.T) {
+	s, userID, _, developer, project := seedWorkflowState(t)
+	projectID := project.ID
+
+	s.projects[projectID].Workflows = []model.Workflow{
+		{Name: "测试流程", Steps: []model.WorkflowStep{{Name: "分镜拆解", Role: "developer"}}},
+	}
+	s.projects[projectID].PrimaryWorkflowIndex = 0
+
+	task := &model.TaskDetail{
+		ID:        "task-multi",
+		UserID:    userID,
+		ProjectID: projectID,
+		Status:    "done",
+		Workflow:  &model.Workflow{Name: "测试流程", Steps: []model.WorkflowStep{{Name: "分镜拆解", Role: "developer"}}},
+		WorkflowRef: &model.WorkflowRef{
+			WorkflowIndex: 0,
+			WorkflowName: "测试流程",
+			StepFrom:      0,
+			StepTo:        0,
+		},
+		Todos: []model.Todo{
+			{ID: "t1", Order: 1, Title: "前置检查", Status: "done",
+				Assignee: model.TodoAssignee{AgentID: developer.ID, Name: "developer", NodeID: developer.NodeID}},
+			{ID: "t2", Order: 2, Title: "分镜拆解执行", Status: "done",
+				Assignee: model.TodoAssignee{AgentID: developer.ID, Name: "developer", NodeID: developer.NodeID}},
+		},
+		UpdatedAt: time.Now().UTC(),
+	}
+	s.tasks[task.ID] = task
+	s.taskArtifacts[task.ID] = []model.TaskArtifact{
+		{TransferID: "tr1", TodoID: "t1", ProjectFileID: "pf1", FileName: "check.md", FileSize: 10, Kind: model.ArtifactKindDeliverable},
+		{TransferID: "tr2", TodoID: "t2", ProjectFileID: "pf2", FileName: "storyboard.md", FileSize: 20, Kind: model.ArtifactKindDeliverable},
+	}
+	s.projectTasks[projectID] = append(s.projectTasks[projectID], task.ID)
+
+	prog, appErr := s.GetProjectWorkflowProgress(userID, projectID)
+	if appErr != nil {
+		t.Fatalf("progress: %v", appErr)
+	}
+	if len(prog.Steps) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(prog.Steps))
+	}
+	step := prog.Steps[0]
+	if step.Status != "done" {
+		t.Fatalf("expected done, got %s", step.Status)
+	}
+	if len(step.Outputs) != 2 {
+		t.Fatalf("expected 2 aggregated outputs, got %d: %+v", len(step.Outputs), step.Outputs)
+	}
+
+	// An in-progress sub-todo must make the whole step in_progress.
+	task.Todos[1].Status = "in_progress"
+	prog, _ = s.GetProjectWorkflowProgress(userID, projectID)
+	if prog.Steps[0].Status != "in_progress" {
+		t.Fatalf("expected in_progress, got %s", prog.Steps[0].Status)
+	}
+
+	// A failed sub-todo dominates the aggregated status.
+	task.Todos[1].Status = "failed"
+	prog, _ = s.GetProjectWorkflowProgress(userID, projectID)
+	if prog.Steps[0].Status != "failed" {
+		t.Fatalf("expected failed, got %s", prog.Steps[0].Status)
+	}
+
+	// Restored to done: all outputs remain aggregated.
+	task.Todos[1].Status = "done"
+	prog, _ = s.GetProjectWorkflowProgress(userID, projectID)
+	if len(prog.Steps[0].Outputs) != 2 {
+		t.Fatalf("expected 2 outputs after restore, got %d", len(prog.Steps[0].Outputs))
+	}
+}
+
+// TestPipelineExcludesProcessArtifacts verifies that workflow progress nodes
+// bind only FINAL deliverables: process artifacts (中间稿) and legacy records
+// without an explicit kind must never surface as step outputs.
+func TestPipelineExcludesProcessArtifacts(t *testing.T) {
+	s, userID, _, developer, project := seedWorkflowState(t)
+	projectID := project.ID
+
+	s.projects[projectID].Workflows = []model.Workflow{
+		{Name: "测试流程", Steps: []model.WorkflowStep{{Name: "剧本创作", Role: "developer"}}},
+	}
+	s.projects[projectID].PrimaryWorkflowIndex = 0
+
+	task := &model.TaskDetail{
+		ID:        "task-kind",
+		UserID:    userID,
+		ProjectID: projectID,
+		Status:    "done",
+		Workflow:  &model.Workflow{Name: "测试流程", Steps: []model.WorkflowStep{{Name: "剧本创作", Role: "developer"}}},
+		WorkflowRef: &model.WorkflowRef{
+			WorkflowIndex: 0,
+			WorkflowName:  "测试流程",
+			StepFrom:      0,
+			StepTo:        0,
+		},
+		Todos: []model.Todo{
+			{ID: "k1", Order: 1, Title: "剧本创作执行", Status: "done",
+				Assignee: model.TodoAssignee{AgentID: developer.ID, Name: "developer", NodeID: developer.NodeID}},
+		},
+		UpdatedAt: time.Now().UTC(),
+	}
+	s.tasks[task.ID] = task
+	s.taskArtifacts[task.ID] = []model.TaskArtifact{
+		// process 中间稿：必须被排除。
+		{TransferID: "tr-p", TodoID: "k1", ProjectFileID: "pf-p", FileName: "01-intake.md", FileSize: 5, Kind: model.ArtifactKindProcess},
+		// 遗留记录（kind 为空）：同样不上工作流。
+		{TransferID: "tr-l", TodoID: "k1", ProjectFileID: "pf-l", FileName: "legacy-draft.md", FileSize: 6},
+		// 真正的交付文件：唯一可见。
+		{TransferID: "tr-d", TodoID: "k1", ProjectFileID: "pf-d", FileName: "final-script.md", FileSize: 99, Kind: model.ArtifactKindDeliverable},
+	}
+	s.projectTasks[projectID] = append(s.projectTasks[projectID], task.ID)
+
+	prog, appErr := s.GetProjectWorkflowProgress(userID, projectID)
+	if appErr != nil {
+		t.Fatalf("progress: %v", appErr)
+	}
+	step := prog.Steps[0]
+	if len(step.Outputs) != 1 {
+		t.Fatalf("expected 1 deliverable output, got %d: %+v", len(step.Outputs), step.Outputs)
+	}
+	if step.Outputs[0].FileName != "final-script.md" {
+		t.Fatalf("unexpected output file: %s", step.Outputs[0].FileName)
+	}
+}
+
+// TestCancelledTaskKeepsCompletedSteps verifies that cancelling a task does
+// NOT wipe the pipeline history of its finished steps: without an active
+// owner, a cancelled task remains the fallback owner — done todos stay done,
+// a cancelled todo shows as cancelled. A newly dispatched active task takes
+// the step back over.
+func TestCancelledTaskKeepsCompletedSteps(t *testing.T) {
+	s, userID, _, developer, project := seedWorkflowState(t)
+	projectID := project.ID
+
+	s.projects[projectID].Workflows = []model.Workflow{
+		{Name: "测试流程", Steps: []model.WorkflowStep{{Name: "步骤A", Role: "developer"}}},
+	}
+	s.projects[projectID].PrimaryWorkflowIndex = 0
+
+	task := &model.TaskDetail{
+		ID:        "task-cancel",
+		UserID:    userID,
+		ProjectID: projectID,
+		Status:    "canceled",
+		Workflow:  &model.Workflow{Name: "测试流程", Steps: []model.WorkflowStep{{Name: "步骤A", Role: "developer"}}},
+		WorkflowRef: &model.WorkflowRef{
+			WorkflowIndex: 0,
+			WorkflowName:  "测试流程",
+			StepFrom:      0,
+			StepTo:        0,
+		},
+		Todos: []model.Todo{
+			{ID: "c1", Order: 1, Title: "步骤A执行", Status: "done",
+				Assignee: model.TodoAssignee{AgentID: developer.ID, Name: "developer", NodeID: developer.NodeID}},
+		},
+		UpdatedAt: time.Now().UTC(),
+	}
+	s.tasks[task.ID] = task
+	s.projectTasks[projectID] = append(s.projectTasks[projectID], task.ID)
+
+	// Cancelled owner, done todo: step must stay done (history preserved).
+	prog, appErr := s.GetProjectWorkflowProgress(userID, projectID)
+	if appErr != nil {
+		t.Fatalf("progress: %v", appErr)
+	}
+	if prog.Steps[0].Status != "done" {
+		t.Fatalf("expected done after cancel, got %s", prog.Steps[0].Status)
+	}
+	if prog.Steps[0].TaskID != task.ID {
+		t.Fatalf("cancelled task should still own the step, got %+v", prog.Steps[0])
+	}
+
+	// Cancelled owner, cancelled todo: step shows cancelled.
+	task.Todos[0].Status = "canceled"
+	prog, _ = s.GetProjectWorkflowProgress(userID, projectID)
+	if prog.Steps[0].Status != "canceled" {
+		t.Fatalf("expected cancelled step, got %s", prog.Steps[0].Status)
+	}
+
+	// Cancelled owner with NO todo at all: node falls back to unassigned.
+	task.Todos = nil
+	prog, _ = s.GetProjectWorkflowProgress(userID, projectID)
+	if prog.Steps[0].Status != "unassigned" {
+		t.Fatalf("expected unassigned, got %s", prog.Steps[0].Status)
+	}
+	task.Todos = []model.Todo{
+		{ID: "c1", Order: 1, Title: "步骤A执行", Status: "done",
+			Assignee: model.TodoAssignee{AgentID: developer.ID, Name: "developer", NodeID: developer.NodeID}},
+	}
+
+	// A just-planned active task WITHOUT todos must NOT blanket-hide the
+	// cancelled task's completed history.
+	planning := &model.TaskDetail{
+		ID:        "task-planning",
+		UserID:    userID,
+		ProjectID: projectID,
+		Status:    "planning",
+		Workflow:  &model.Workflow{Name: "测试流程", Steps: []model.WorkflowStep{{Name: "步骤A", Role: "developer"}}},
+		WorkflowRef: &model.WorkflowRef{
+			WorkflowIndex: 0,
+			WorkflowName:  "测试流程",
+			StepFrom:      0,
+			StepTo:        0,
+		},
+		UpdatedAt: time.Now().UTC(),
+	}
+	s.tasks[planning.ID] = planning
+	s.projectTasks[projectID] = append(s.projectTasks[projectID], planning.ID)
+	prog, _ = s.GetProjectWorkflowProgress(userID, projectID)
+	if prog.Steps[0].Status != "done" || prog.Steps[0].TaskID != task.ID {
+		t.Fatalf("cancelled history must survive a planning task: status=%s task=%s", prog.Steps[0].Status, prog.Steps[0].TaskID)
+	}
+
+	// An active task WITH todos claiming the same step overrides everything.
+	active := &model.TaskDetail{
+		ID:        "task-active",
+		UserID:    userID,
+		ProjectID: projectID,
+		Status:    "in_progress",
+		Workflow:  &model.Workflow{Name: "测试流程", Steps: []model.WorkflowStep{{Name: "步骤A", Role: "developer"}}},
+		WorkflowRef: &model.WorkflowRef{
+			WorkflowIndex: 0,
+			WorkflowName:  "测试流程",
+			StepFrom:      0,
+			StepTo:        0,
+		},
+		Todos: []model.Todo{
+			{ID: "a1", Order: 1, Title: "步骤A执行", Status: "in_progress",
+				Assignee: model.TodoAssignee{AgentID: developer.ID, Name: "developer", NodeID: developer.NodeID}},
+		},
+		UpdatedAt: time.Now().UTC(),
+	}
+	s.tasks[active.ID] = active
+	s.projectTasks[projectID] = append(s.projectTasks[projectID], active.ID)
+	prog, _ = s.GetProjectWorkflowProgress(userID, projectID)
+	if prog.Steps[0].TaskID != active.ID {
+		t.Fatalf("active task should override cancelled owner, got task %s", prog.Steps[0].TaskID)
+	}
+	if prog.Steps[0].Status != "in_progress" {
+		t.Fatalf("expected in_progress, got %s", prog.Steps[0].Status)
+	}
 }

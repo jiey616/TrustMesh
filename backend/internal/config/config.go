@@ -48,6 +48,14 @@ type Config struct {
 	// Download token TTL for agent file access
 	DownloadTokenTTL time.Duration
 
+	// QuestionTimeout is how long a non-required todo.ask waits for a user
+	// answer before the todo auto-resumes (answer = "__timeout__").
+	QuestionTimeout time.Duration
+
+	// ExternalAppTokenTTL is the lifetime of SSO tokens issued to external
+	// platforms when launching them from TrustMesh (SSO connect feature).
+	ExternalAppTokenTTL time.Duration
+
 	// Market
 	MarketDataPath string
 
@@ -87,6 +95,9 @@ func Load() Config {
 
 		ExternalURL:      getEnv("TRUSTMESH_EXTERNAL_URL", "http://127.0.0.1:8080"),
 		DownloadTokenTTL: getEnvDuration("DOWNLOAD_TOKEN_TTL", 10*time.Minute),
+		QuestionTimeout:  getEnvDuration("QUESTION_TIMEOUT", 15*time.Minute),
+
+		ExternalAppTokenTTL: getEnvDuration("EXTERNAL_APP_TOKEN_TTL", 5*time.Minute),
 
 		AssistantAPIURL: getEnv("ASSISTANT_API_URL", "https://api.openai.com/v1"),
 		AssistantAPIKey: getEnv("ASSISTANT_API_KEY", ""),
@@ -94,7 +105,7 @@ func Load() Config {
 
 		MarketDataPath: getEnv("MARKET_DATA_PATH", "data/roles_index.json"),
 
-		PlatformName: getEnv("PLATFORM_NAME", "TrustMesh"),
+		PlatformName: getEnv("PLATFORM_NAME", "画宗AIGC无人工厂"),
 	}
 }
 

@@ -17,6 +17,7 @@ type Agent struct {
 	Role         string     `json:"role" bson:"role"`
 	Capabilities []string   `json:"capabilities" bson:"capabilities"`
 	NodeID       string     `json:"node_id" bson:"node_id"`
+	Product      string     `json:"product" bson:"product"` // 产品标识：trustmesh(默认)/hermes/opc，来自 JoinRequest.AgentProduct 审批同步
 	Status       string     `json:"status" bson:"status"`
 	Archived     bool       `json:"archived" bson:"archived"`
 	LastSeenAt   *time.Time `json:"last_seen_at" bson:"last_seen_at"`

@@ -28,6 +28,16 @@ type JoinRequestOverrides struct {
 	Capabilities []string `json:"capabilities,omitempty"`
 }
 
+// defaultProduct 归一化产品标识：空值回落为平台原生 "trustmesh"。
+// 产品标识来源为 JoinRequest.AgentProduct（审批时同步），不预设白名单。
+func defaultProduct(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return "trustmesh"
+	}
+	return p
+}
+
 // HasTrustRequest checks if a trust request ID has already been processed (lock-free read).
 func (s *Store) HasTrustRequest(trustRequestID string) bool {
 	s.mu.RLock()
@@ -120,7 +130,7 @@ func (s *Store) CreateJoinRequest(in CreateJoinRequestInput) (*model.JoinRequest
 		}
 	}
 	for _, uid := range notifyUsers {
-		content := "Agent「" + jr.Name + "」申请加入平台"
+		content := "数字员工「" + jr.Name + "」申请加入平台"
 		event := &model.Event{
 			ID:        newID(),
 			UserID:    uid,
@@ -217,6 +227,8 @@ func (s *Store) ApproveJoinRequest(userID, requestID string, overrides JoinReque
 			a.Description = description
 			a.Role = role
 			a.Capabilities = capabilities
+			a.Product = defaultProduct(jr.AgentProduct) // 恢复时同步产品标识
+			a.UserID = userID                         // 恢复时归属审批用户（旧用户可能已删除/变更）
 			a.Archived = false
 			a.Status = "offline"
 			a.UpdatedAt = now
@@ -235,6 +247,7 @@ func (s *Store) ApproveJoinRequest(userID, requestID string, overrides JoinReque
 			Role:         role,
 			Capabilities: capabilities,
 			NodeID:       jr.NodeID,
+			Product:      defaultProduct(jr.AgentProduct), // 审批时同步 JoinRequest.AgentProduct
 			Status:       "offline",
 			CreatedAt:    now,
 			UpdatedAt:    now,

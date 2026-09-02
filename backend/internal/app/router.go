@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -45,6 +46,10 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	jwtManager := auth.NewJWTManager(cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
 	clawClient := clawsynapse.NewClient(cfg.ClawSynapseAPIURL, cfg.ClawSynapseTimeout)
 	webhookHandler := clawsynapse.NewWebhookHandler(s, clawClient, log)
+	// Timeout retries must actually re-dispatch the todo to its assignee.
+	s.SetDispatchHook(webhookHandler.RedispatchTodo)
+	// Timeout reminders nudge the assignee without re-dispatching the todo.
+	s.SetRemindHook(webhookHandler.RemindTodo)
 	peerSyncer := clawsynapse.NewPeerSyncer(clawClient, s, cfg.ClawSynapsePeerSync, log)
 	if peerSyncer != nil {
 		peerSyncer.Start()
@@ -60,6 +65,7 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	projectHandler := handler.NewProjectHandler(s)
 
 	taskHandler := handler.NewTaskHandler(s, clawClient, webhookHandler, cfg.ExternalURL, []byte(cfg.JWTSecret), cfg.DownloadTokenTTL, log)
+	actionItemsHandler := handler.NewActionItemsHandler(s, log)
 	transferHandler := handler.NewTransferHandler(s)
 	dashboardHandler := handler.NewDashboardHandler(s)
 	clawSynapseHandler := handler.NewClawSynapseHandler(clawClient)
@@ -67,6 +73,8 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	joinRequestHandler := handler.NewJoinRequestHandler(s, clawClient, cfg)
 	realtimeHandler := handler.NewRealtimeHandler(s)
 	platformHandler := handler.NewPlatformHandler(cfg.PlatformName)
+	externalAppHandler := handler.NewExternalAppHandler(s, auth.ExternalTokenIssuer, cfg.ExternalAppTokenTTL)
+	workflowTemplateHandler := handler.NewWorkflowTemplateHandler(s)
 
 	// Knowledge base components (optional - requires EMBEDDING_API_KEY)
 	var knowledgeHandler *handler.KnowledgeHandler
@@ -87,16 +95,16 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 		}
 	}
 
+	// Knowledge base components. Processor is created regardless of embedding
+	// availability: without an embedding key documents are still chunked and
+	// stored, so text search works; vector search activates once a key is set.
 	var processor *knowledge.Processor
-	if embeddingClient != nil && qdrantClient != nil {
-		processor = knowledge.NewProcessor(fileStorage, embeddingClient, qdrantClient, s, log)
-	}
+	processor = knowledge.NewProcessor(fileStorage, embeddingClient, qdrantClient, s, log)
 	knowledgeHandler = handler.NewKnowledgeHandler(s, fileStorage, processor, embeddingClient, qdrantClient, log)
 
-	// Inject knowledge components into webhook handler for knowledge.query support
-	if embeddingClient != nil && qdrantClient != nil {
-		webhookHandler.SetKnowledgeComponents(embeddingClient, qdrantClient)
-	}
+	// Inject knowledge components into webhook handler for knowledge.query
+	// support (embedder/qdrant may be nil → text-only search).
+	webhookHandler.SetKnowledgeComponents(embeddingClient, qdrantClient)
 
 	engine.GET("/healthz", handler.Health)
 	engine.GET("/webhook/clawsynapse", func(c *gin.Context) { c.Status(200) })
@@ -133,6 +141,10 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	authed.GET("/agents/:id/stats", agentHandler.Stats)
 	authed.GET("/agents/:id/insights", agentHandler.Insights)
 	authed.GET("/agents/:id/tasks", agentHandler.Tasks)
+	authed.GET("/agents/:id/capabilities", agentHandler.GetCapabilities)
+	authed.POST("/agents/:id/capabilities", agentHandler.SetCapabilities)
+	authed.GET("/agents/:id/cron/executions", agentHandler.ListCronExecutions)
+	authed.POST("/agents/:id/skills/upload", agentHandler.UploadSkillFile)
 	authed.GET("/agents/:id/chat", agentChatHandler.Get)
 	authed.GET("/agents/:id/chat/sessions", agentChatHandler.ListSessions)
 	authed.GET("/agents/:id/chat/sessions/:sessionId", agentChatHandler.GetSession)
@@ -142,11 +154,25 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	authed.POST("/projects", projectHandler.Create)
 	authed.GET("/projects", projectHandler.List)
 	authed.GET("/projects/:projectId", projectHandler.Get)
+	authed.GET("/projects/:projectId/workflow-progress", projectHandler.WorkflowProgress)
 	authed.PATCH("/projects/:projectId", projectHandler.Update)
 	authed.DELETE("/projects/:projectId", projectHandler.Archive)
 
+	// Global workflow templates (user-scoped) + project inherit/sync.
+	authed.POST("/workflow-templates", workflowTemplateHandler.Create)
+	authed.GET("/workflow-templates", workflowTemplateHandler.List)
+	authed.GET("/workflow-templates/:templateId", workflowTemplateHandler.Get)
+	authed.PATCH("/workflow-templates/:templateId", workflowTemplateHandler.Update)
+	authed.POST("/workflow-templates/:templateId/copy", workflowTemplateHandler.Copy)
+	authed.DELETE("/workflow-templates/:templateId", workflowTemplateHandler.Delete)
+	authed.POST("/projects/:projectId/workflows/inherit", workflowTemplateHandler.Inherit)
+	authed.GET("/projects/:projectId/workflows/:workflowId/sync-diff", workflowTemplateHandler.SyncDiff)
+	authed.POST("/projects/:projectId/workflows/:workflowId/sync", workflowTemplateHandler.ApplySync)
+	authed.POST("/projects/:projectId/workflows/:workflowId/detach", workflowTemplateHandler.Detach)
+
 	// Project files
 	projectFileStorage := project.NewLocalFileStorage(cfg.FilesStoragePath)
+	s.SetFileStorage(projectFileStorage) // used by timeout monitor to auto-generate meeting minutes
 	projectFileHandler := handler.NewProjectFileHandler(s, projectFileStorage, log)
 	webhookHandler.SetProjectFileStorage(projectFileStorage)
 	webhookHandler.SetAgentFileConfig(cfg.ExternalURL, []byte(cfg.JWTSecret), cfg.DownloadTokenTTL)
@@ -159,6 +185,13 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	v1.GET("/files/agent/:fileId", agentFileHandler.Download)
 	v1.GET("/debug/gen-token/:fileId", agentFileHandler.DebugGenToken)
 
+	meetingHandler := handler.NewMeetingHandler(s, clawClient, projectFileStorage, cfg.ExternalURL, []byte(cfg.JWTSecret), cfg.DownloadTokenTTL)
+	webhookHandler.SetMeetingActivityNotifier(meetingHandler.OnMeetingActivity)
+
+	// Resume the inactivity watchdog for any meeting left in_progress by a
+	// previous backend instance (timers are in-memory only).
+	go meetingHandler.RecoverTimeouts(context.Background())
+
 	authed.POST("/projects/:projectId/files", projectFileHandler.Upload)
 	authed.POST("/projects/:projectId/folders", projectFileHandler.CreateFolder)
 	authed.GET("/projects/:projectId/files/browse", projectFileHandler.Browse)
@@ -170,6 +203,16 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	authed.PATCH("/projects/:projectId/files/:fileId/rename", projectFileHandler.Rename)
 	authed.PATCH("/projects/:projectId/files/:fileId/move", projectFileHandler.Move)
 	authed.POST("/projects/:projectId/files/batch-delete", projectFileHandler.BatchDelete)
+
+	// Meeting Room routes
+	authed.POST("/projects/:projectId/meetings", meetingHandler.Create)
+	authed.GET("/projects/:projectId/meetings", meetingHandler.List)
+	authed.GET("/meetings/:id", meetingHandler.Get)
+	authed.POST("/meetings/:id/messages", meetingHandler.SendMessage)
+	authed.GET("/meetings/:id/messages", meetingHandler.ListMessages)
+	authed.POST("/meetings/:id/start", meetingHandler.Start)
+	authed.POST("/meetings/:id/end", meetingHandler.End)
+	authed.POST("/meetings/:id/todos", meetingHandler.AddTodo)
 
 	authed.POST("/projects/:projectId/tasks", taskHandler.Create)
 	authed.POST("/projects/:projectId/tasks/planning", taskHandler.CreatePlanning)
@@ -187,8 +230,12 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	authed.DELETE("/tasks/:id/todos/:todoId", taskHandler.RemoveTodo)
 	authed.PUT("/tasks/:id/todos/reorder", taskHandler.ReorderTodos)
 	authed.POST("/tasks/:id/todos/:todoId/dispatch", taskHandler.DispatchTodo)
+	authed.POST("/tasks/:id/todos/:todoId/review", taskHandler.ReviewTodo)
+	authed.POST("/tasks/:id/todos/:todoId/answer", taskHandler.AnswerTodo)
 	authed.GET("/tasks/:id/comments", taskHandler.ListComments)
 	authed.POST("/tasks/:id/comments", taskHandler.AddComment)
+	authed.GET("/action-items", actionItemsHandler.List)
+	authed.POST("/action-items/convert", actionItemsHandler.Convert)
 	authed.GET("/tasks/:id/artifacts/:artifactId/content", transferHandler.GetTaskArtifactContent)
 
 	authed.GET("/dashboard/stats", dashboardHandler.Stats)
@@ -203,6 +250,15 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	authed.PATCH("/notifications/:id/read", notificationHandler.MarkRead)
 	authed.POST("/notifications/mark-all-read", notificationHandler.MarkAllRead)
 	authed.GET("/events/stream", realtimeHandler.Stream)
+
+	// External platform SSO "connect" registry + launch.
+	ext := authed.Group("/external-apps")
+	ext.POST("", externalAppHandler.Create)
+	ext.GET("", externalAppHandler.List)
+	ext.GET("/:id", externalAppHandler.Get)
+	ext.PATCH("/:id", externalAppHandler.Update)
+	ext.DELETE("/:id", externalAppHandler.Delete)
+	ext.POST("/:id/launch", externalAppHandler.Launch)
 
 	kb := authed.Group("/knowledge")
 	kb.POST("/documents", knowledgeHandler.Upload)
@@ -236,7 +292,41 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 		log.Info("assistant enabled", zap.String("model", cfg.AssistantModel))
 	}
 
+	// Question timeout supervisor: periodically auto-resumes waiting_user todos
+	// whose non-required question went unanswered past the timeout.
+	go superviseQuestionTimeouts(s, taskHandler, cfg.QuestionTimeout, log)
+
 	return &App{Engine: engine, Store: s, PeerSyncer: peerSyncer, TrustRequestSyncer: trustRequestSyncer}, nil
+}
+
+// superviseQuestionTimeouts scans for timed-out non-required todo.ask
+// questions and auto-resumes them, forwarding todo.answer (__timeout__) so the
+// assignee agent can proceed on its own judgement.
+func superviseQuestionTimeouts(s *store.Store, taskHandler *handler.TaskHandler, timeout time.Duration, log *zap.Logger) {
+	if s == nil || taskHandler == nil || timeout <= 0 {
+		return
+	}
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		now := time.Now().UTC()
+		for _, it := range s.ListTimedOutQuestions(now, timeout) {
+			task, q, appErr := s.AnswerTodo(it.UserID, it.TaskID, it.TodoID, it.QuestionID, "__timeout__", "system", true)
+			if appErr != nil {
+				if log != nil {
+					log.Warn("question timeout auto-answer failed",
+						zap.String("task_id", it.TaskID), zap.String("todo_id", it.TodoID),
+						zap.String("question_id", it.QuestionID), zap.Error(appErr))
+				}
+				continue
+			}
+			taskHandler.PublishTodoAnswer(context.Background(), task, it.TodoID, q)
+			if log != nil {
+				log.Info("question timed out, todo auto-resumed",
+					zap.String("task_id", it.TaskID), zap.String("todo_id", it.TodoID), zap.String("question_id", it.QuestionID))
+			}
+		}
+	}
 }
 
 func (a *App) Close() error {

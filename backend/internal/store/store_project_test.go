@@ -68,7 +68,7 @@ func TestProjectTaskSummaryReflectsTaskState(t *testing.T) {
 		t.Fatalf("unexpected running summary: %#v", projectState.TaskSummary)
 	}
 
-	_, appErr = s.CompleteTodoByNode(developer.NodeID, TodoCompleteInput{
+	_, _, appErr = s.CompleteTodoByNode(developer.NodeID, TodoCompleteInput{
 		TaskID: task.ID,
 		TodoID: "todo-1",
 	})
@@ -232,7 +232,7 @@ func TestArchiveProjectResetsInProgressWorkToPending(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("create done task: %v", appErr)
 	}
-	if _, appErr := s.CompleteTodoByNode(developer.NodeID, TodoCompleteInput{
+	if _, _, appErr := s.CompleteTodoByNode(developer.NodeID, TodoCompleteInput{
 		TaskID: doneTask.ID,
 		TodoID: "todo-2",
 		Result: model.TodoResult{
@@ -358,7 +358,7 @@ func TestArchiveProjectBlocksTaskExecutionMutations(t *testing.T) {
 	})
 	assertArchivedError("todo progress", appErr)
 
-	_, appErr = s.CompleteTodoByNode(developer.NodeID, TodoCompleteInput{
+	_, _, appErr = s.CompleteTodoByNode(developer.NodeID, TodoCompleteInput{
 		TaskID: task.ID,
 		TodoID: "todo-1",
 	})

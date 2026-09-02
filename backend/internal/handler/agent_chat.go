@@ -90,7 +90,7 @@ func (h *AgentChatHandler) SendMessage(c *gin.Context) {
 		if markErr == nil {
 			detail = updated
 		}
-		transport.WriteError(c, transport.NewError(http.StatusServiceUnavailable, "CLAWSYNAPSE_UNAVAILABLE", "暂时无法发送消息到远程 Agent"))
+		transport.WriteError(c, transport.NewError(http.StatusServiceUnavailable, "CLAWSYNAPSE_UNAVAILABLE", "暂时无法发送消息到远程数字员工"))
 		return
 	}
 

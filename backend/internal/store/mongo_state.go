@@ -56,9 +56,13 @@ func (s *Store) enableMongo(cfg config.Config, log *zap.Logger) error {
 	s.mongoProcessedMessages = db.Collection("processed_messages")
 	s.mongoNotifications = db.Collection("notifications")
 	s.mongoArtifacts = db.Collection("artifacts")
+	s.mongoExternalApps = db.Collection("external_apps")
 	s.mongoKnowledgeDocs = db.Collection("knowledge_documents")
 	s.mongoKnowledgeChunks = db.Collection("knowledge_chunks")
 	s.mongoProjectFiles = db.Collection("project_files")
+	s.mongoMeetings = db.Collection("meetings")
+	s.mongoMeetingMessages = db.Collection("meeting_messages")
+	s.mongoWorkflowTemplates = db.Collection("workflow_templates")
 	s.mongoTimeout = cfg.MongoTimeout
 	if log != nil {
 		s.log = log
@@ -105,9 +109,13 @@ func (s *Store) clearMongoCollections() {
 	s.mongoProcessedMessages = nil
 	s.mongoNotifications = nil
 	s.mongoArtifacts = nil
+	s.mongoExternalApps = nil
 	s.mongoKnowledgeDocs = nil
 	s.mongoKnowledgeChunks = nil
 	s.mongoProjectFiles = nil
+	s.mongoMeetings = nil
+	s.mongoMeetingMessages = nil
+	s.mongoWorkflowTemplates = nil
 }
 
 func (s *Store) mongoContext() (context.Context, context.CancelFunc) {
@@ -176,6 +184,15 @@ func (s *Store) ensureMongoIndexes() error {
 			{Keys: bson.D{{Key: "project_id", Value: 1}, {Key: "task_id", Value: 1}}},
 			{Keys: bson.D{{Key: "transfer_id", Value: 1}}, Options: options.Index().SetUnique(true).SetPartialFilterExpression(bson.M{"transfer_id": bson.M{"$exists": true}})},
 		},
+		s.mongoMeetings: {
+			{Keys: bson.D{{Key: "project_id", Value: 1}}},
+		},
+		s.mongoMeetingMessages: {
+			{Keys: bson.D{{Key: "meeting_id", Value: 1}}},
+		},
+		s.mongoWorkflowTemplates: {
+			{Keys: bson.D{{Key: "user_id", Value: 1}}},
+		},
 	}
 
 	if s.mongoTasks != nil {
@@ -235,6 +252,10 @@ func (s *Store) loadMongoState() error {
 	if err != nil {
 		return err
 	}
+	externalApps, err := s.loadExternalApps()
+	if err != nil {
+		return err
+	}
 	processedMessages, err := s.loadProcessedMessages()
 	if err != nil {
 		return err
@@ -248,6 +269,18 @@ func (s *Store) loadMongoState() error {
 		return err
 	}
 	projectFiles, projectFileIndex, transferFileIndex, err := s.loadProjectFiles()
+	if err != nil {
+		return err
+	}
+	meetings, projectMeetings, err := s.loadMeetings()
+	if err != nil {
+		return err
+	}
+	meetingMessages, meetingMessageIndex, err := s.loadMeetingMessages()
+	if err != nil {
+		return err
+	}
+	workflowTemplates, userWorkflowTemplates, err := s.loadWorkflowTemplates()
 	if err != nil {
 		return err
 	}
@@ -282,6 +315,7 @@ func (s *Store) loadMongoState() error {
 	s.agentEvents = agentEvents
 	s.taskComments = taskComments
 	s.taskArtifacts = taskArtifacts
+	s.externalApps = externalApps
 	s.processedMessages = processedMessages
 	s.notifications = notifications
 	s.userNotifications = userNotifications
@@ -290,6 +324,12 @@ func (s *Store) loadMongoState() error {
 	s.projectFiles = projectFiles
 	s.projectFileIndex = projectFileIndex
 	s.transferFileIndex = transferFileIndex
+	s.meetings = meetings
+	s.projectMeetings = projectMeetings
+	s.meetingMessages = meetingMessages
+	s.meetingMessageIndex = meetingMessageIndex
+	s.workflowTemplates = workflowTemplates
+	s.userWorkflowTemplates = userWorkflowTemplates
 	return nil
 }
 
@@ -794,6 +834,104 @@ func (s *Store) deleteKnowledgeDocUnsafe(docID string) error {
 	defer cancel()
 	_, err := s.mongoKnowledgeDocs.DeleteOne(ctx, bson.M{"_id": docID})
 	return err
+}
+
+func (s *Store) loadWorkflowTemplates() (map[string]*model.WorkflowTemplate, map[string][]string, error) {
+	items := make(map[string]*model.WorkflowTemplate)
+	userTemplates := make(map[string][]string)
+	if s.mongoWorkflowTemplates == nil {
+		return items, userTemplates, nil
+	}
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+	cursor, err := s.mongoWorkflowTemplates.Find(ctx, bson.D{}, options.Find().SetSort(bson.D{{Key: "created_at", Value: 1}}))
+	if err != nil {
+		return nil, nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var docs []model.WorkflowTemplate
+	if err := cursor.All(ctx, &docs); err != nil {
+		return nil, nil, err
+	}
+	for i := range docs {
+		doc := docs[i]
+		items[doc.ID] = &doc
+		userTemplates[doc.UserID] = append(userTemplates[doc.UserID], doc.ID)
+	}
+	return items, userTemplates, nil
+}
+
+func (s *Store) persistWorkflowTemplateUnsafe(doc *model.WorkflowTemplate) error {
+	if !s.mongoEnabled || s.mongoWorkflowTemplates == nil || doc == nil {
+		return nil
+	}
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+	_, err := s.mongoWorkflowTemplates.ReplaceOne(ctx, bson.M{"_id": doc.ID}, doc, options.Replace().SetUpsert(true))
+	return err
+}
+
+func (s *Store) deleteWorkflowTemplateUnsafe(templateID string) error {
+	if !s.mongoEnabled || s.mongoWorkflowTemplates == nil || templateID == "" {
+		return nil
+	}
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+	_, err := s.mongoWorkflowTemplates.DeleteOne(ctx, bson.M{"_id": templateID})
+	return err
+}
+
+func (s *Store) loadMeetings() (map[string]*model.Meeting, map[string][]string, error) {
+	items := make(map[string]*model.Meeting)
+	projectIdx := make(map[string][]string)
+	if s.mongoMeetings == nil {
+		return items, projectIdx, nil
+	}
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+	cursor, err := s.mongoMeetings.Find(ctx, bson.D{})
+	if err != nil {
+		return nil, nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var meetings []model.Meeting
+	if err := cursor.All(ctx, &meetings); err != nil {
+		return nil, nil, err
+	}
+	for i := range meetings {
+		m := &meetings[i]
+		items[m.ID] = m
+		projectIdx[m.ProjectID] = append(projectIdx[m.ProjectID], m.ID)
+	}
+	return items, projectIdx, nil
+}
+
+func (s *Store) loadMeetingMessages() (map[string]*model.MeetingMessage, map[string][]string, error) {
+	items := make(map[string]*model.MeetingMessage)
+	meetingIdx := make(map[string][]string)
+	if s.mongoMeetingMessages == nil {
+		return items, meetingIdx, nil
+	}
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+	cursor, err := s.mongoMeetingMessages.Find(ctx, bson.D{})
+	if err != nil {
+		return nil, nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var msgs []model.MeetingMessage
+	if err := cursor.All(ctx, &msgs); err != nil {
+		return nil, nil, err
+	}
+	for i := range msgs {
+		msg := &msgs[i]
+		items[msg.ID] = msg
+		meetingIdx[msg.MeetingID] = append(meetingIdx[msg.MeetingID], msg.ID)
+	}
+	return items, meetingIdx, nil
 }
 
 func (s *Store) deleteKnowledgeChunksUnsafe(docID string) error {

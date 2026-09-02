@@ -54,7 +54,7 @@ func (s *Store) SyncAgentPresence(items []AgentPresence, now time.Time) int {
 			s.rebuildTaskPMSummariesUnsafe(agent.ID)
 			changed = true
 
-			msg := fmt.Sprintf("Agent %s: %s -> %s", agent.Name, prevStatus, nextStatus)
+			msg := fmt.Sprintf("数字员工 %s: %s -> %s", agent.Name, prevStatus, nextStatus)
 			s.addEventUnsafe(agent.UserID, "", "", "", "system", agent.ID, agent.Name, "agent_status_changed", &msg, map[string]any{
 				"prev_status": prevStatus,
 				"new_status":  nextStatus,

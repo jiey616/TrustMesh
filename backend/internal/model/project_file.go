@@ -16,11 +16,17 @@ type ProjectFile struct {
 	FileSize    int64     `json:"file_size" bson:"file_size"`
 	MimeType    string    `json:"mime_type" bson:"mime_type"`
 	LocalPath   string    `json:"-" bson:"local_path"`
-	Source      string    `json:"source" bson:"source"`           // "user_upload" | "agent_artifact"
+	Source      string    `json:"source" bson:"source"`           // "user_upload" | "agent_artifact" | "meeting_minutes"
 	IsFolder    bool      `json:"is_folder" bson:"is_folder"`
 	TransferID  string    `json:"transfer_id,omitempty" bson:"transfer_id,omitempty"`
-	UploadedBy  string    `json:"uploaded_by" bson:"uploaded_by"`
-	CreatedAt   time.Time `json:"created_at" bson:"created_at"`
+	MeetingID   string    `json:"meeting_id,omitempty" bson:"meeting_id,omitempty"`
+	// Kind carries the artifact file-nature for agent_artifact uploads:
+	// "deliverable" (declared outputName, bound to a workflow step output)
+	// or "process". Empty for user uploads / legacy records.
+	Kind       string    `json:"kind,omitempty" bson:"kind,omitempty"`
+	OutputName string    `json:"output_name,omitempty" bson:"output_name,omitempty"`
+	UploadedBy string    `json:"uploaded_by" bson:"uploaded_by"`
+	CreatedAt  time.Time `json:"created_at" bson:"created_at"`
 }
 
 // ProjectFileTreeNode represents a node in the project file tree.

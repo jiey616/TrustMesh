@@ -18,7 +18,7 @@ type AgentCandidate struct {
 // TaskIntentResult is the structured output from ParseTaskIntent.
 // Mode mirrors the task workspace modes: "planning" or "building".
 type TaskIntentResult struct {
-	// Mode is "planning" (needs PM Agent to plan) or "building" (direct assignment).
+	// Mode is "planning" (needs PM 数字员工 to plan) or "building" (direct assignment).
 	Mode        string `json:"mode"`
 	AgentID     string `json:"agent_id"`    // non-empty only when Mode == "building"
 	Title       string `json:"title"`
@@ -62,7 +62,7 @@ func (c *LLMClient) ParseTaskIntent(ctx context.Context, userInput string, agent
 func buildIntentSystemPrompt(agents []AgentCandidate) string {
 	var agentList string
 	if len(agents) == 0 {
-		agentList = "（当前无可用执行 Agent）"
+		agentList = "（当前无可用执行 数字员工）"
 	} else {
 		var sb strings.Builder
 		for _, a := range agents {
@@ -73,12 +73,12 @@ func buildIntentSystemPrompt(agents []AgentCandidate) string {
 
 	return fmt.Sprintf(`你是任务意图解析器。分析用户输入，提取任务信息并判断任务模式。
 
-可用执行 Agent：
+可用执行 数字员工：
 %s
 
 判断规则：
-1. 如果用户明确提及了某个 Agent 的名字（如"让 Alice 做"、"@Bob"、"交给 Carol 处理"等），则 mode=building，填写对应 agent_id
-2. 否则 mode=planning（由 PM Agent 负责规划和拆解）
+1. 如果用户明确提及了某个 数字员工 的名字（如"让 Alice 做"、"@Bob"、"交给 Carol 处理"等），则 mode=building，填写对应 agent_id
+2. 否则 mode=planning（由 PM 数字员工 负责规划和拆解）
 3. title：提炼简洁的任务标题，不超过 20 字
 4. description：保留用户输入的完整意图
 5. priority：含"紧急/ASAP/尽快/马上" → urgent；含"重要/高优/优先" → high；否则默认 medium

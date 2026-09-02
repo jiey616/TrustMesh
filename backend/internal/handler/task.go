@@ -52,11 +52,15 @@ func (h *TaskHandler) Create(c *gin.Context) {
 	}
 
 	var body struct {
-		Title           string   `json:"title"`
-		Description     string   `json:"description"`
-		Priority        string   `json:"priority"`
-		AssigneeAgentID string   `json:"assignee_agent_id"`
-		FileIDs         []string `json:"file_ids"`
+		Title           string          `json:"title"`
+		Description     string          `json:"description"`
+		Priority        string          `json:"priority"`
+		AssigneeAgentID string          `json:"assignee_agent_id"`
+		FileIDs         []string        `json:"file_ids"`
+		Workflow        *model.Workflow `json:"workflow,omitempty"`
+		WorkflowIndex   *int            `json:"workflow_index"`
+		StepFrom        int             `json:"step_from"`
+		StepTo          int             `json:"step_to"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid request body"))
@@ -70,6 +74,10 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		Priority:        body.Priority,
 		AssigneeAgentID: body.AssigneeAgentID,
 		FileIDs:         body.FileIDs,
+		Workflow:        body.Workflow,
+		WorkflowIndex:   body.WorkflowIndex,
+		StepFrom:        body.StepFrom,
+		StepTo:          body.StepTo,
 	})
 	if appErr != nil {
 		transport.WriteError(c, appErr)
@@ -90,9 +98,13 @@ func (h *TaskHandler) CreateFromText(c *gin.Context) {
 	}
 
 	var body struct {
-		Content string   `json:"content"`
-		AgentID string   `json:"agent_id"`
-		FileIDs []string `json:"file_ids"`
+		Content       string          `json:"content"`
+		AgentID       string          `json:"agent_id"`
+		FileIDs       []string        `json:"file_ids"`
+		Workflow      *model.Workflow `json:"workflow,omitempty"`
+		WorkflowIndex *int            `json:"workflow_index"`
+		StepFrom      int             `json:"step_from"`
+		StepTo        int             `json:"step_to"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Content) == "" {
 		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "content is required"))
@@ -109,6 +121,10 @@ func (h *TaskHandler) CreateFromText(c *gin.Context) {
 			Priority:        "medium",
 			AssigneeAgentID: body.AgentID,
 			FileIDs:         body.FileIDs,
+			Workflow:        body.Workflow,
+			WorkflowIndex:   body.WorkflowIndex,
+			StepFrom:        body.StepFrom,
+			StepTo:          body.StepTo,
 		})
 		if appErr != nil {
 			transport.WriteError(c, appErr)
@@ -119,7 +135,7 @@ func (h *TaskHandler) CreateFromText(c *gin.Context) {
 		return
 	}
 
-	h.createPlanningTask(c, userID, projectID, body.Content, body.FileIDs)
+	h.createPlanningTask(c, userID, projectID, body.Content, body.FileIDs, body.Workflow, body.WorkflowIndex, body.StepFrom, body.StepTo)
 }
 
 // deriveTitle extracts a short title from free-form content.
@@ -155,8 +171,8 @@ func truncateTitle(s string, max int) string {
 }
 
 // createPlanningTask creates a planning-mode task and notifies the PM agent.
-func (h *TaskHandler) createPlanningTask(c *gin.Context, userID, projectID, content string, fileIDs []string) {
-	task, appErr := h.store.CreateTaskPlanningWithFiles(userID, projectID, content, fileIDs)
+func (h *TaskHandler) createPlanningTask(c *gin.Context, userID, projectID, content string, fileIDs []string, workflow *model.Workflow, workflowIndex *int, stepFrom, stepTo int) {
+	task, appErr := h.store.CreateTaskPlanningWithFiles(userID, projectID, content, fileIDs, workflow, workflowIndex, stepFrom, stepTo)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -183,6 +199,7 @@ func (h *TaskHandler) autoDispatchFirstTodo(ctx context.Context, userID string, 
 			MustUseSkill: "tm-task-exec",
 		},
 		AttachedFiles: h.enrichAttachedFiles(task.AttachedFiles),
+		Inputs:        h.webhookHandler.BuildTodoInputs(task, todo),
 	}
 	if _, err := h.publisher.Publish(ctx, todo.Assignee.NodeID, "todo.assigned", payload, task.ID, map[string]any{"source": "user_created"}); err != nil {
 		if h.log != nil {
@@ -285,6 +302,7 @@ func (h *TaskHandler) DispatchTodo(c *gin.Context) {
 			MustUseSkill: "tm-task-exec",
 		},
 		AttachedFiles: h.enrichAttachedFiles(task.AttachedFiles),
+		Inputs:        h.webhookHandler.BuildTodoInputs(task, todo),
 	}
 	if _, err := h.publisher.Publish(context.Background(), todo.Assignee.NodeID, "todo.assigned", payload, task.ID, map[string]any{"source": "manual_dispatch"}); err != nil {
 		if h.log != nil {
@@ -300,6 +318,176 @@ func (h *TaskHandler) DispatchTodo(c *gin.Context) {
 		return
 	}
 	transport.WriteData(c, http.StatusOK, task)
+}
+
+// ReviewTodo handles a human reviewer approving or rejecting a completed todo
+// that is awaiting review. approve unblocks the pipeline (next todo dispatched);
+// reject cascade-resets and re-dispatches the audited predecessor for rework.
+func (h *TaskHandler) ReviewTodo(c *gin.Context) {
+	userID, ok := currentUserID(c)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Action string `json:"action"`
+		Reason string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid request body"))
+		return
+	}
+
+	task, reworked, appErr := h.store.ReviewTodo(userID, "", c.Param("id"), c.Param("todoId"), body.Action, body.Reason)
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
+	if h.publisher != nil {
+		if body.Action == "approve" {
+			// Approved review unblocks the sequential pipeline: dispatch the next
+			// ready todo.
+			task = h.dispatchNextTodo(c.Request.Context(), userID, task)
+		} else if reworked != nil {
+			// Rejected review triggered a rework: the audited predecessor was
+			// reset and must be re-dispatched to its assignee immediately.
+			h.publishReworkDispatch(c.Request.Context(), userID, task, reworked, body.Reason)
+		}
+	}
+	transport.WriteData(c, http.StatusOK, task)
+}
+
+// AnswerTodo answers a question the assignee agent asked via todo.ask: the
+// todo resumes to in_progress and todo.answer is forwarded to the agent so it
+// keeps executing in the same context.
+func (h *TaskHandler) AnswerTodo(c *gin.Context) {
+	userID, ok := currentUserID(c)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		QuestionID string `json:"question_id"`
+		Answer     string `json:"answer"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid request body"))
+		return
+	}
+	if strings.TrimSpace(body.QuestionID) == "" || strings.TrimSpace(body.Answer) == "" {
+		transport.WriteError(c, transport.Validation("missing fields", map[string]any{"question_id": "required", "answer": "required"}))
+		return
+	}
+
+	task, question, appErr := h.store.AnswerTodo(userID, c.Param("id"), c.Param("todoId"), body.QuestionID, body.Answer, userID, false)
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
+
+	h.PublishTodoAnswer(c.Request.Context(), task, c.Param("todoId"), question)
+	transport.WriteData(c, http.StatusOK, gin.H{"status": "ok", "question_id": question.ID})
+}
+
+// PublishTodoAnswer forwards the user's answer to the assignee agent so its
+// session resumes after the todo.ask pause.
+func (h *TaskHandler) PublishTodoAnswer(ctx context.Context, task *model.TaskDetail, todoID string, question *model.TodoQuestion) {
+	if h.publisher == nil || task == nil || question == nil {
+		return
+	}
+	var todo *model.Todo
+	for i := range task.Todos {
+		if task.Todos[i].ID == todoID {
+			todo = &task.Todos[i]
+			break
+		}
+	}
+	if todo == nil || todo.Assignee.NodeID == "" {
+		return
+	}
+	answeredAt := time.Now().UTC()
+	if question.AnsweredAt != nil {
+		answeredAt = *question.AnsweredAt
+	}
+	payload := protocol.TodoAnswerPayload{
+		TaskID:     task.ID,
+		TodoID:     todo.ID,
+		QuestionID: question.ID,
+		Question:   question.Question,
+		Answer:     question.Answer,
+		AnsweredBy: question.AnsweredBy,
+		AnsweredAt: answeredAt,
+		TimedOut:   question.TimedOut,
+	}
+	if _, err := h.publisher.Publish(ctx, todo.Assignee.NodeID, "todo.answer", payload, task.ID, nil); err != nil && h.log != nil {
+		h.log.Warn("todo.answer publish failed", zap.String("task_id", task.ID), zap.String("todo_id", todo.ID), zap.String("target_node", todo.Assignee.NodeID), zap.Error(err))
+	}
+}
+
+// publishReworkDispatch publishes a todo.assigned message for a todo that was
+// sent back for rework (review rejection), telling the assignee to redo it.
+func (h *TaskHandler) publishReworkDispatch(ctx context.Context, userID string, task *model.TaskDetail, todo *model.Todo, reason string) {
+	if h.publisher == nil || task == nil || todo == nil {
+		return
+	}
+	payload := protocol.TodoAssignedPayload{
+		TaskID:      task.ID,
+		TodoID:      todo.ID,
+		Title:       todo.Title,
+		Description: todo.Description,
+		Content:     "该 Todo 的产出未通过审核，已被退回重做。请重新执行并按要求回报进度和结果。退回原因：" + reason,
+		ExecBrief: &protocol.TodoExecBrief{
+			Objective:    "重做被退回的 Todo；重新提交产出直至通过审核。",
+			MustUseSkill: "tm-task-exec",
+		},
+		AttachedFiles: h.enrichAttachedFiles(task.AttachedFiles),
+		Inputs:        h.webhookHandler.BuildTodoInputs(task, todo),
+	}
+	if _, err := h.publisher.Publish(ctx, todo.Assignee.NodeID, "todo.assigned", payload, task.ID, map[string]any{"source": "rework", "reason": reason}); err != nil {
+		if h.log != nil {
+			h.log.Warn("rework todo dispatch failed", zap.String("task_id", task.ID), zap.String("todo_id", todo.ID), zap.String("target_node", todo.Assignee.NodeID), zap.Error(err))
+		}
+	}
+}
+
+// dispatchNextTodo publishes todo.assigned for the next dispatchable todo (if
+// any) and records the dispatch, mirroring autoDispatchFirstTodo for later
+// positions in the chain.
+func (h *TaskHandler) dispatchNextTodo(ctx context.Context, userID string, task *model.TaskDetail) *model.TaskDetail {
+	if h.publisher == nil {
+		return task
+	}
+	todo := task.NextDispatchableTodo()
+	if todo == nil {
+		return task
+	}
+	payload := protocol.TodoAssignedPayload{
+		TaskID:      task.ID,
+		TodoID:      todo.ID,
+		Title:       todo.Title,
+		Description: todo.Description,
+		Content:     "你收到了一个新的 Todo 任务。请使用 /tm-task-exec skill 执行此任务，按要求回报进度和结果。",
+		ExecBrief: &protocol.TodoExecBrief{
+			Objective:    "执行分派的 Todo 任务；及时回报进度；完成后提交结果，失败时说明原因。",
+			MustUseSkill: "tm-task-exec",
+		},
+		AttachedFiles: h.enrichAttachedFiles(task.AttachedFiles),
+		Inputs:        h.webhookHandler.BuildTodoInputs(task, todo),
+	}
+	if _, err := h.publisher.Publish(ctx, todo.Assignee.NodeID, "todo.assigned", payload, task.ID, map[string]any{"source": "review_approved"}); err != nil {
+		if h.log != nil {
+			h.log.Warn("dispatch next todo after review failed", zap.String("task_id", task.ID), zap.String("todo_id", todo.ID), zap.String("target_node", todo.Assignee.NodeID), zap.Error(err))
+		}
+		return task
+	}
+	dispatched, dispatchErr := h.store.RecordTodoDispatch(userID, task.ID, todo.ID)
+	if dispatchErr != nil {
+		if h.log != nil {
+			h.log.Warn("record next todo dispatch failed", zap.String("task_id", task.ID), zap.String("todo_id", todo.ID), zap.Error(dispatchErr))
+		}
+		return task
+	}
+	return dispatched
 }
 
 func (h *TaskHandler) AddComment(c *gin.Context) {
@@ -528,8 +716,12 @@ func (h *TaskHandler) CreatePlanning(c *gin.Context) {
 	}
 
 	var body struct {
-		Content string   `json:"content"`
-		FileIDs []string `json:"file_ids"`
+		Content       string          `json:"content"`
+		FileIDs       []string        `json:"file_ids"`
+		Workflow      *model.Workflow `json:"workflow,omitempty"`
+		WorkflowIndex *int            `json:"workflow_index"`
+		StepFrom      int             `json:"step_from"`
+		StepTo        int             `json:"step_to"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid request body"))
@@ -537,7 +729,7 @@ func (h *TaskHandler) CreatePlanning(c *gin.Context) {
 	}
 
 	projectID := c.Param("projectId")
-	task, appErr := h.store.CreateTaskPlanningWithFiles(userID, projectID, body.Content, body.FileIDs)
+	task, appErr := h.store.CreateTaskPlanningWithFiles(userID, projectID, body.Content, body.FileIDs, body.Workflow, body.WorkflowIndex, body.StepFrom, body.StepTo)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -606,6 +798,10 @@ func (h *TaskHandler) buildPMTaskMessage(userID, projectID, taskID, userContent 
 	task, err := h.store.GetTask(userID, taskID)
 	if err == nil && task != nil {
 		payload.AttachedFiles = h.enrichAttachedFiles(task.AttachedFiles)
+		// Carry the workflow snapshot so the PM can plan against it.
+		if task.Workflow != nil {
+			payload.Workflow = task.Workflow
+		}
 		if h.log != nil && len(payload.AttachedFiles) > 0 {
 			h.log.Info("enriched attached files for PM message",
 				zap.String("task_id", taskID),

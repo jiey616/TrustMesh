@@ -20,11 +20,11 @@ type ChunkStore interface {
 
 // Processor handles async document processing: parse → chunk → embed → store.
 type Processor struct {
-	storage   FileStorage
-	embedder  embedding.Client
-	qdrant    *QdrantClient
-	store     ChunkStore
-	log       *zap.Logger
+	storage  FileStorage
+	embedder embedding.Client
+	qdrant   *QdrantClient
+	store    ChunkStore
+	log      *zap.Logger
 }
 
 func NewProcessor(storage FileStorage, embedder embedding.Client, qdrant *QdrantClient, store ChunkStore, log *zap.Logger) *Processor {
@@ -98,20 +98,24 @@ func (p *Processor) processDocument(ctx context.Context, doc *model.KnowledgeDoc
 		texts[i] = cr.Content
 	}
 
-	// 4. Generate embeddings in batches
-	const batchSize = 20
-	allEmbeddings := make([][]float32, len(texts))
-	for i := 0; i < len(texts); i += batchSize {
-		end := i + batchSize
-		if end > len(texts) {
-			end = len(texts)
+	// 4. Generate embeddings in batches (skipped when no embedding client is
+	// configured — document still gets chunked for text search).
+	var allEmbeddings [][]float32
+	if p.embedder != nil {
+		allEmbeddings = make([][]float32, len(texts))
+		const batchSize = 20
+		for i := 0; i < len(texts); i += batchSize {
+			end := i + batchSize
+			if end > len(texts) {
+				end = len(texts)
+			}
+			batch := texts[i:end]
+			embeddings, err := p.embedder.Embed(ctx, batch)
+			if err != nil {
+				return fmt.Errorf("embed batch %d: %w", i/batchSize, err)
+			}
+			copy(allEmbeddings[i:end], embeddings)
 		}
-		batch := texts[i:end]
-		embeddings, err := p.embedder.Embed(ctx, batch)
-		if err != nil {
-			return fmt.Errorf("embed batch %d: %w", i/batchSize, err)
-		}
-		copy(allEmbeddings[i:end], embeddings)
 	}
 
 	// 5. Save chunks to MongoDB
@@ -119,25 +123,28 @@ func (p *Processor) processDocument(ctx context.Context, doc *model.KnowledgeDoc
 		return fmt.Errorf("save chunks: %w", err)
 	}
 
-	// 6. Upsert vectors to Qdrant (Qdrant requires UUID or integer IDs)
-	points := make([]QdrantPoint, len(chunks))
-	for i, chunk := range chunks {
-		payload := map[string]any{
-			"chunk_id":    chunk.ID,
-			"document_id": doc.ID,
-			"user_id":     doc.UserID,
+	// 6. Upsert vectors to Qdrant (Qdrant requires UUID or integer IDs).
+	// Skipped when embedding/qdrant is not configured (text-only mode).
+	if p.embedder != nil && p.qdrant != nil {
+		points := make([]QdrantPoint, len(chunks))
+		for i, chunk := range chunks {
+			payload := map[string]any{
+				"chunk_id":    chunk.ID,
+				"document_id": doc.ID,
+				"user_id":     doc.UserID,
+			}
+			if doc.ProjectID != nil {
+				payload["project_id"] = *doc.ProjectID
+			}
+			points[i] = QdrantPoint{
+				ID:      uuid.New().String(),
+				Vector:  allEmbeddings[i],
+				Payload: payload,
+			}
 		}
-		if doc.ProjectID != nil {
-			payload["project_id"] = *doc.ProjectID
+		if err := p.qdrant.UpsertPoints(ctx, points); err != nil {
+			return fmt.Errorf("upsert vectors: %w", err)
 		}
-		points[i] = QdrantPoint{
-			ID:      uuid.New().String(),
-			Vector:  allEmbeddings[i],
-			Payload: payload,
-		}
-	}
-	if err := p.qdrant.UpsertPoints(ctx, points); err != nil {
-		return fmt.Errorf("upsert vectors: %w", err)
 	}
 
 	// 7. Update document status

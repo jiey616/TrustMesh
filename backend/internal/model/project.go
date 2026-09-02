@@ -22,6 +22,17 @@ type Project struct {
 	TaskSummary ProjectTaskSummary `json:"task_summary" bson:"task_summary"`
 	PMAgentID   string             `json:"-" bson:"pm_agent_id"`
 	PMAgent     PMAgentSummary     `json:"pm_agent" bson:"pm_agent"`
-	CreatedAt   time.Time          `json:"created_at" bson:"created_at"`
-	UpdatedAt   time.Time          `json:"updated_at" bson:"updated_at"`
+	// Workflows is the project's list of predefined workflows. A task may be
+	// created with a workflow snapshot chosen from this list (or none).
+	Workflows []Workflow `json:"workflows,omitempty" bson:"workflows,omitempty"`
+	// PrimaryWorkflowIndex marks which entry in Workflows is the project's
+	// overall pipeline ("项目总流程"). A task created against it must declare
+	// the step range it owns (WorkflowRef.StepFrom/StepTo). -1 (default)
+	// means no primary workflow is set.
+	PrimaryWorkflowIndex int `json:"primary_workflow_index" bson:"primary_workflow_index"`
+	// PrimaryWorkflowID is the ID-based reference to the primary workflow
+	// (new style, preferred over PrimaryWorkflowIndex).
+	PrimaryWorkflowID string `json:"primary_workflow_id,omitempty" bson:"primary_workflow_id,omitempty"`
+	CreatedAt         time.Time `json:"created_at" bson:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at" bson:"updated_at"`
 }

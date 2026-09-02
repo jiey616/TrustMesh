@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"os"
@@ -207,11 +208,20 @@ func (h *ProjectFileHandler) GetContent(c *gin.Context) {
 	file, err := os.Open(pf.LocalPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			transport.WriteError(c, transport.NotFound("file not found"))
+			// Lazy recovery: meeting minutes content is persisted on the meeting
+			// record, so a missing on-disk file can be rebuilt on demand. This
+			// keeps minutes downloadable/previewable even after a storage reset.
+			if h.tryRecoverMeetingMinutesFile(userID, pf) {
+				file, err = os.Open(pf.LocalPath)
+			}
+			if err != nil {
+				transport.WriteError(c, transport.NotFound("file not found"))
+				return
+			}
+		} else {
+			transport.WriteError(c, transport.NewError(http.StatusBadGateway, "FILE_READ_FAILED", "failed to read file"))
 			return
 		}
-		transport.WriteError(c, transport.NewError(http.StatusBadGateway, "FILE_READ_FAILED", "failed to read file"))
-		return
 	}
 	defer file.Close()
 
@@ -240,6 +250,38 @@ func (h *ProjectFileHandler) GetContent(c *gin.Context) {
 	}
 	c.Header("Content-Disposition", contentDisposition("inline", fileName))
 	http.ServeContent(c.Writer, c.Request, fileName, info.ModTime(), file)
+}
+
+// tryRecoverMeetingMinutesFile rebuilds a missing meeting-minutes file from the
+// persisted meeting.Minutes content. It returns true when the file was
+// successfully re-created and pf.LocalPath updated in memory. Used as a lazy
+// recovery path inside GetContent so minutes remain downloadable even if the
+// underlying storage (the project-files volume) was reset and lost the bytes.
+func (h *ProjectFileHandler) tryRecoverMeetingMinutesFile(userID string, pf *model.ProjectFile) bool {
+	if pf.Source != "meeting_minutes" || pf.MeetingID == "" || h.storage == nil {
+		return false
+	}
+	meeting, appErr := h.store.GetMeeting("", pf.MeetingID)
+	if appErr != nil || meeting == nil || strings.TrimSpace(meeting.Minutes) == "" {
+		return false
+	}
+	localPath, err := h.storage.Save(context.Background(), pf.ProjectID, pf.ID, pf.FileName, strings.NewReader(meeting.Minutes))
+	if err != nil {
+		if h.log != nil {
+			h.log.Warn("failed to recover missing meeting minutes file", zap.String("file_id", pf.ID), zap.Error(err))
+		}
+		return false
+	}
+	if appErr := h.store.SetProjectFileLocalPath(pf.ID, localPath); appErr != nil {
+		if h.log != nil {
+			h.log.Warn("failed to persist recovered minutes local path", zap.String("file_id", pf.ID), zap.Error(appErr))
+		}
+	}
+	if h.log != nil {
+		h.log.Info("recovered missing meeting minutes file from meeting record",
+			zap.String("file_id", pf.ID), zap.String("meeting_id", pf.MeetingID))
+	}
+	return true
 }
 
 // Delete handles DELETE /api/v1/projects/:projectId/files/:fileId

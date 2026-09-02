@@ -22,8 +22,8 @@ var validRoutes = []routeEntry{
 	{pattern: "/inbox", label: "收件箱"},
 	{pattern: "/projects", label: "项目列表"},
 	{pattern: "/projects/[a-f0-9]+", label: "项目详情", dynamic: true},
-	{pattern: "/agents", label: "Agent 管理"},
-	{pattern: "/agents/[a-f0-9]+", label: "Agent 详情", dynamic: true},
+	{pattern: "/agents", label: "数字员工 管理"},
+	{pattern: "/agents/[a-f0-9]+", label: "数字员工 详情", dynamic: true},
 	{pattern: "/knowledge", label: "知识库"},
 }
 
@@ -123,7 +123,7 @@ func ToolDefinitions(hasKnowledge bool) []openai.Tool {
 			Type: openai.ToolTypeFunction,
 			Function: &openai.FunctionDefinition{
 				Name:        "get_dashboard_stats",
-				Description: "获取仪表盘统计数据，包括 Agent 在线数、任务进度、成功率等。",
+				Description: "获取仪表盘统计数据，包括 数字员工 在线数、任务进度、成功率等。",
 				Parameters: &jsonschema.Definition{
 					Type:       jsonschema.Object,
 					Properties: map[string]jsonschema.Definition{},

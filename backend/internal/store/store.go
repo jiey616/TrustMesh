@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -10,11 +11,18 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.uber.org/zap"
 	"trustmesh/backend/internal/model"
+	"trustmesh/backend/internal/project"
 	"trustmesh/backend/internal/transport"
 )
 
 type Store struct {
 	mu sync.RWMutex
+	// dispatchHook is set by the app layer to re-dispatch a todo (e.g.
+	dispatchHook func(ctx context.Context, taskID, todoID string)
+	// remindHook is set by the app layer to send a timeout reminder to a
+	// todo's assignee WITHOUT re-dispatching the todo (which would cause
+	// duplicate executions). Unlike dispatchHook it only nudges the agent.
+	remindHook func(ctx context.Context, taskID, todoID string)
 
 	streamMu sync.RWMutex
 
@@ -38,6 +46,8 @@ type Store struct {
 
 	taskArtifacts map[string][]model.TaskArtifact // taskID → []TaskArtifact
 
+	externalApps map[string]*model.ExternalApp // externalAppID → ExternalApp
+
 	taskComments map[string][]model.Comment
 
 	notifications     map[string]*model.Notification
@@ -50,9 +60,21 @@ type Store struct {
 	knowledgeDocs     map[string]*model.KnowledgeDocument
 	userKnowledgeDocs map[string][]string // userID → []docID
 
+	workflowTemplates     map[string]*model.WorkflowTemplate
+	userWorkflowTemplates map[string][]string // userID → []templateID
+
 	projectFiles      map[string]*model.ProjectFile // fileID → ProjectFile
-	projectFileIndex  map[string][]string            // projectID → []fileID
-	transferFileIndex map[string]string              // transferID → fileID
+	projectFileIndex  map[string][]string           // projectID → []fileID
+	transferFileIndex map[string]string             // transferID → fileID
+
+	meetings            map[string]*model.Meeting // meetingID → Meeting
+	projectMeetings     map[string][]string       // projectID → []meetingID
+	meetingMessages     map[string]*model.MeetingMessage
+	meetingMessageIndex map[string][]string // meetingID → []messageID
+
+	// fileStorage is used by the timeout monitor to auto-generate meeting
+	// minutes when a meeting is force-concluded without a host upload.
+	fileStorage project.FileStorage
 
 	mongoEnabled           bool
 	mongoClient            *mongo.Client
@@ -67,13 +89,26 @@ type Store struct {
 	mongoProcessedMessages *mongo.Collection
 	mongoNotifications     *mongo.Collection
 	mongoArtifacts         *mongo.Collection
+	mongoExternalApps      *mongo.Collection
 	mongoKnowledgeDocs     *mongo.Collection
 	mongoKnowledgeChunks   *mongo.Collection
 	mongoProjectFiles      *mongo.Collection
+	mongoMeetings          *mongo.Collection
+	mongoMeetingMessages   *mongo.Collection
+	mongoWorkflowTemplates *mongo.Collection
 	mongoTimeout           time.Duration
 	log                    *zap.Logger
 
 	userSubscribers map[string]map[chan model.UserStreamEvent]struct{}
+}
+
+// SetFileStorage injects the project file storage, used by the timeout monitor
+// to auto-generate meeting minutes when a meeting is force-concluded without a
+// host-uploaded summary.
+func (s *Store) SetFileStorage(fs project.FileStorage) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fileStorage = fs
 }
 
 type processedMessage struct {
@@ -84,6 +119,20 @@ type processedMessage struct {
 type AgentPresence struct {
 	NodeID     string
 	LastSeenAt time.Time
+}
+
+// SetDispatchHook registers a callback used to re-dispatch a todo (e.g. when
+// the timeout monitor retries a stuck todo). The hook runs outside the store
+// lock and should publish todo.assigned to the assignee.
+func (s *Store) SetDispatchHook(hook func(ctx context.Context, taskID, todoID string)) {
+	s.dispatchHook = hook
+}
+
+// SetRemindHook registers a callback used to send a timeout reminder to a
+// todo's assignee WITHOUT re-dispatching the todo (unlike dispatchHook). The
+// hook runs outside the store lock.
+func (s *Store) SetRemindHook(hook func(ctx context.Context, taskID, todoID string)) {
+	s.remindHook = hook
 }
 
 func New() *Store {
@@ -111,10 +160,18 @@ func New() *Store {
 		trustRequestIndex:  make(map[string]string),
 		knowledgeDocs:      make(map[string]*model.KnowledgeDocument),
 		userKnowledgeDocs:  make(map[string][]string),
+		workflowTemplates:  make(map[string]*model.WorkflowTemplate),
+		userWorkflowTemplates: make(map[string][]string),
 		projectFiles:       make(map[string]*model.ProjectFile),
 		projectFileIndex:   make(map[string][]string),
 		transferFileIndex:  make(map[string]string),
-		userSubscribers:    make(map[string]map[chan model.UserStreamEvent]struct{}),
+		externalApps:       make(map[string]*model.ExternalApp),
+
+		meetings:            make(map[string]*model.Meeting),
+		projectMeetings:     make(map[string][]string),
+		meetingMessages:     make(map[string]*model.MeetingMessage),
+		meetingMessageIndex: make(map[string][]string),
+		userSubscribers:     make(map[string]map[chan model.UserStreamEvent]struct{}),
 	}
 }
 
@@ -162,13 +219,27 @@ func copyProject(p *model.Project) *model.Project {
 		t := *p.TaskSummary.LatestTaskAt
 		clone.TaskSummary.LatestTaskAt = &t
 	}
+	if len(p.Workflows) > 0 {
+		clone.Workflows = make([]model.Workflow, len(p.Workflows))
+		for i := range p.Workflows {
+			if c := p.Workflows[i].Clone(); c != nil {
+				clone.Workflows[i] = *c
+			}
+		}
+	}
 	return &clone
 }
 
 func copyTask(t *model.TaskDetail) *model.TaskDetail {
 	clone := *t
 	clone.Messages = copyTaskMessages(t.Messages)
-	clone.Todos = append([]model.Todo{}, t.Todos...)
+	clone.Todos = make([]model.Todo, len(t.Todos))
+	for i := range t.Todos {
+		clone.Todos[i] = t.Todos[i]
+		clone.Todos[i].Questions = append([]model.TodoQuestion{}, t.Todos[i].Questions...)
+		clone.Todos[i].Outputs = append([]model.TodoOutput{}, t.Todos[i].Outputs...)
+		clone.Todos[i].Result.Metadata = copyMap(t.Todos[i].Result.Metadata)
+	}
 	clone.Artifacts = append([]model.TaskArtifact{}, t.Artifacts...)
 	clone.Result = model.TaskResult{
 		Summary:     t.Result.Summary,

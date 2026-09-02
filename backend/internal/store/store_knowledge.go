@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"trustmesh/backend/internal/model"
@@ -288,18 +290,97 @@ func (s *Store) SearchKnowledgeChunks(ctx context.Context, userID string, projec
 		return nil, err
 	}
 
-	// Simple keyword matching fallback
+	// Keyword matching fallback: split the query into 3-4 char keywords and
+	// match chunks that contain any of them, ranked by hit count. This makes
+	// natural-language queries (not just verbatim substrings) usable when no
+	// embedding backend is configured.
 	queryLower := strings.ToLower(query)
-	var matched []model.KnowledgeChunk
+	keywords := extractTextKeywords(queryLower)
+	type scored struct {
+		chunk model.KnowledgeChunk
+		hits  int
+	}
+	var matched []scored
 	for _, chunk := range chunks {
-		if strings.Contains(strings.ToLower(chunk.Content), queryLower) {
-			matched = append(matched, chunk)
-			if len(matched) >= limit {
+		content := strings.ToLower(chunk.Content)
+		if strings.Contains(content, queryLower) {
+			// full substring hit: perfect match
+			matched = append(matched, scored{chunk: chunk, hits: 1000})
+			continue
+		}
+		hits := 0
+		for _, kw := range keywords {
+			if strings.Contains(content, kw) {
+				hits++
+			}
+		}
+		if hits > 0 {
+			matched = append(matched, scored{chunk: chunk, hits: hits})
+		}
+	}
+	sort.SliceStable(matched, func(i, j int) bool { return matched[i].hits > matched[j].hits })
+	out := make([]model.KnowledgeChunk, 0, len(matched))
+	for i, m := range matched {
+		if i >= limit {
+			break
+		}
+		out = append(out, m.chunk)
+	}
+	return out, nil
+}
+
+// textStopwords are function words/particles that add no retrieval value as
+// 3-4 char keywords. Kept deliberately small; over-filtering hurts recall.
+var textStopwords = map[string]bool{
+	"怎么": true, "什么": true, "如何": true, "为什么": true, "是否": true,
+	"一个": true, "这个": true, "那个": true, "哪个": true, "可以": true,
+	"需要": true, "应该": true, "进行": true, "以及": true, "或者": true,
+	"就是": true, "我们": true, "你们": true, "他们": true, "对于": true,
+	"有关": true, "关于": true, "没有": true, "不是": true, "如果": true,
+	"然后": true, "但是": true, "因为": true, "所以": true, "请": true,
+	"让我": true, "帮我": true, "说一下": true, "告诉我": true,
+}
+
+// extractTextKeywords derives search keywords from a Chinese query by sliding
+// 3-4 char windows (longer first), dropping stopwords and duplicates, and
+// capping the list to avoid a keyword explosion on long queries.
+func extractTextKeywords(query string) []string {
+	var b strings.Builder
+	for _, r := range query {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	runes := []rune(b.String())
+	if len(runes) == 0 {
+		return nil
+	}
+	if len(runes) <= 4 {
+		return []string{string(runes)}
+	}
+
+	seen := make(map[string]bool, 24)
+	var words []string
+	for size := 4; size >= 3; size-- {
+		for i := 0; i+size <= len(runes); i++ {
+			w := string(runes[i : i+size])
+			if textStopwords[w] || seen[w] {
+				continue
+			}
+			seen[w] = true
+			words = append(words, w)
+			if len(words) >= 16 {
 				break
 			}
 		}
+		if len(words) >= 16 {
+			break
+		}
 	}
-	return matched, nil
+	if len(words) == 0 && len(runes) >= 3 {
+		return []string{string(runes[:3])}
+	}
+	return words
 }
 
 func containsTag(tags []string, target string) bool {
