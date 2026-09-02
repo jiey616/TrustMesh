@@ -1,12 +1,133 @@
 package store
 
 import (
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
 	"trustmesh/backend/internal/model"
 	"trustmesh/backend/internal/transport"
 )
+
+// mimeToExt maps distinguishing fragments of a MIME type (or a bare extension)
+// to a canonical extension key. Workflow templates declare output slots with
+// loose short forms such as "docx" / "markdown" while agents upload full MIME
+// types such as
+// "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+// normalising both sides to the same key is what makes them match.
+var mimeToExt = []struct {
+	frag string
+	ext  string
+}{
+	{"wordprocessingml.document", "docx"},
+	{"spreadsheetml.sheet", "xlsx"},
+	{"presentationml.presentation", "pptx"},
+	{"opendocument.text", "odt"},
+	{"opendocument.spreadsheet", "ods"},
+	{"text/markdown", "md"},
+	{"markdown", "md"},
+	{"text/csv", "csv"},
+	{"text/plain", "txt"},
+	{"application/pdf", "pdf"},
+	{"application/json", "json"},
+	{"application/zip", "zip"},
+	{"image/jpeg", "jpg"},
+	{"image/png", "png"},
+	{"video/mp4", "mp4"},
+	{"x-tar", "tar"},
+	{"gzip", "gz"},
+}
+
+// normalizeMimeKey reduces a MIME type or a bare extension to a canonical
+// short key so that loose declarations and full MIME types compare equal.
+// Returns "" for empty input.
+func normalizeMimeKey(mime string) string {
+	m := strings.ToLower(strings.TrimSpace(mime))
+	if m == "" {
+		return ""
+	}
+	for _, e := range mimeToExt {
+		if strings.Contains(m, e.frag) {
+			return e.ext
+		}
+	}
+	if !strings.Contains(m, "/") {
+		return strings.TrimPrefix(m, ".")
+	}
+	// Fall back to the MIME subtype, stripping parameters, structured-syntax
+	// suffixes (+json) and the legacy x- prefix.
+	sub := m
+	if i := strings.LastIndex(sub, "/"); i >= 0 {
+		sub = sub[i+1:]
+	}
+	if i := strings.Index(sub, ";"); i >= 0 {
+		sub = sub[:i]
+	}
+	if i := strings.Index(sub, "+"); i >= 0 {
+		sub = sub[:i]
+	}
+	return strings.TrimPrefix(sub, "x-")
+}
+
+// mimeMatchesDeclared reports whether an uploaded file's MIME type satisfies a
+// declared output slot. An empty declaration is a wildcard and matches
+// everything; unrecognised values on either side fall through as a match so a
+// missing mapping never blocks a legitimate binding.
+func mimeMatchesDeclared(declared, actual string) bool {
+	if strings.TrimSpace(declared) == "" {
+		return true
+	}
+	d, a := normalizeMimeKey(declared), normalizeMimeKey(actual)
+	if d == "" || a == "" {
+		return true
+	}
+	return d == a
+}
+
+// ArtifactFilingResult describes how an uploaded file was classified.
+type ArtifactFilingResult struct {
+	// OutputName is the slot the file was finally filed under; empty means the
+	// file is a process artifact.
+	OutputName string
+	// Bound is true when the artifact was attached to a workflow output slot.
+	Bound bool
+	// BoundBy is "declared" when the agent supplied outputName explicitly,
+	// "inferred" when the backend matched it automatically, "" otherwise.
+	BoundBy string
+	// UnboundWarn is true when the step declares output slots but this upload
+	// could not be matched to one — the caller should surface a warning.
+	UnboundWarn bool
+	// DeclaredNames lists the slot names the step declares (empty when the step
+	// declares none, i.e. the file is legitimately a process artifact).
+	DeclaredNames []string
+}
+
+// inferOutputBinding decides which workflow output slot an upload claims.
+//
+// Policy (deliberately conservative):
+//   - an explicit outputName always wins;
+//   - a step declaring exactly one slot whose mime matches is bound
+//     automatically;
+//   - a step declaring several slots is never auto-bound — which slot a file
+//     belongs to is genuinely ambiguous there (the 军旅 workflow declares two
+//     xlsx slots on one step), and misfiling a draft as the final deliverable
+//     is harder to notice than leaving it unbound;
+//   - a single slot whose mime does not match is left unbound with a warning.
+func inferOutputBinding(artifact model.TaskArtifact, declared []model.StepOutput) (outputName, boundBy string, unboundWarn bool) {
+	if artifact.OutputName != "" {
+		return artifact.OutputName, "declared", false
+	}
+	if len(declared) == 0 {
+		return "", "", false
+	}
+	if len(declared) > 1 {
+		return "", "", true
+	}
+	if !mimeMatchesDeclared(declared[0].MimeType, artifact.MimeType) {
+		return "", "", true
+	}
+	return declared[0].Name, "inferred", false
+}
 
 // taskArtifactsClosed reports whether a task no longer accepts new artifacts.
 // Only terminal tasks close the deliverable channel; in_progress and
@@ -20,15 +141,27 @@ func taskArtifactsClosed(taskStatus string) bool {
 	}
 }
 
-// SaveArtifact stores a new artifact and persists it to MongoDB.
+// SaveArtifact stores a new artifact and persists it to MongoDB. It is a
+// convenience wrapper around SaveArtifactWithFiling for callers that do not
+// know (or care about) the step's declared output slots.
 func (s *Store) SaveArtifact(artifact model.TaskArtifact) *transport.AppError {
+	_, appErr := s.SaveArtifactWithFiling(artifact, nil)
+	return appErr
+}
+
+// SaveArtifactWithFiling stores an artifact and classifies it against the
+// output slots declared by the owning workflow step. `declared` carries those
+// slots (nil when unknown); when the upload omits outputName the backend
+// infers the binding instead of silently degrading the file to a process
+// artifact. See inferOutputBinding for the matching policy.
+func (s *Store) SaveArtifactWithFiling(artifact model.TaskArtifact, declared []model.StepOutput) (ArtifactFilingResult, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// Resolve agent from node ID.
 	agent, agentErr := s.agentByNodeUnsafe(artifact.FromNodeID)
 	if agentErr != nil {
-		return agentErr
+		return ArtifactFilingResult{}, agentErr
 	}
 	artifact.FromAgentID = agent.ID
 	artifact.FromAgentName = agent.Name
@@ -36,7 +169,7 @@ func (s *Store) SaveArtifact(artifact model.TaskArtifact) *transport.AppError {
 	// Verify the task exists.
 	task, ok := s.tasks[artifact.TaskID]
 	if !ok || task.UserID != agent.UserID {
-		return transport.NotFound("task not found")
+		return ArtifactFilingResult{}, transport.NotFound("task not found")
 	}
 
 	// Verify todo belongs to the task if specified.
@@ -61,21 +194,26 @@ func (s *Store) SaveArtifact(artifact model.TaskArtifact) *transport.AppError {
 				// with TODO_ALREADY_DONE and never reached the platform.
 				// Duplicates are still collapsed by (todo, file name) below.
 				if task.Todos[i].Status == "done" && taskArtifactsClosed(task.Status) {
-					return transport.Conflict("TODO_ALREADY_DONE", "todo already done; deliverables are closed")
+					return ArtifactFilingResult{}, transport.Conflict("TODO_ALREADY_DONE", "todo already done; deliverables are closed")
 				}
 				break
 			}
 		}
 		if !found {
-			return transport.NotFound("todo not found in task")
+			return ArtifactFilingResult{}, transport.NotFound("todo not found in task")
 		}
 	}
 
 	// Classify the file nature. An upload carrying an outputName is a declared
-	// final deliverable bound to a workflow step output; everything else is a
-	// process file (drafts, intermediate notes, ...). Only deliverables
+	// final deliverable bound to a workflow step output; when it is missing the
+	// backend infers the binding from the step's declared slots instead of
+	// blindly degrading the file to a process artifact — agents frequently omit
+	// outputName because they were never told the slot name, and the resulting
+	// misfile is completely silent (2026-09-02 军旅终稿 DOCX). Only deliverables
 	// participate in downstream step-input resolution — see resolveStepInput.
 	// Legacy artifacts persisted before this field default to process.
+	outputName, boundBy, unboundWarn := inferOutputBinding(artifact, declared)
+	artifact.OutputName = outputName
 	if artifact.OutputName != "" {
 		artifact.Kind = "deliverable"
 	} else {
@@ -190,7 +328,25 @@ func (s *Store) SaveArtifact(artifact model.TaskArtifact) *transport.AppError {
 			zap.String("transfer_id", artifact.TransferID), zap.Error(err))
 	}
 
-	return nil
+	return ArtifactFilingResult{
+		OutputName:    artifact.OutputName,
+		Bound:         artifact.OutputName != "",
+		BoundBy:       boundBy,
+		UnboundWarn:   unboundWarn,
+		DeclaredNames: declaredSlotNames(declared),
+	}, nil
+}
+
+// declaredSlotNames extracts the raw names of a step's declared output slots.
+func declaredSlotNames(declared []model.StepOutput) []string {
+	if len(declared) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(declared))
+	for _, d := range declared {
+		names = append(names, d.Name)
+	}
+	return names
 }
 
 // TransferOwner is the best-effort owner lookup result used when an agent
@@ -345,4 +501,87 @@ func (s *Store) copyTaskWithArtifactsUnsafe(task *model.TaskDetail) *model.TaskD
 	clone := copyTask(task)
 	s.fillTaskArtifactsUnsafe(clone)
 	return clone
+}
+
+// BindArtifactOutput promotes an already-filed artifact to a declared
+// deliverable by attaching it to one of its step's workflow output slots.
+//
+// This is the manual escape hatch for uploads that arrived without
+// `--metadata outputName` and could not be auto-matched (ambiguous multi-slot
+// steps, unexpected mime types). Without it the only remedy was re-running the
+// transfer webhook by hand.
+func (s *Store) BindArtifactOutput(userID, taskID, todoID, transferID, outputName string) (*model.TaskArtifact, *transport.AppError) {
+	taskID = strings.TrimSpace(taskID)
+	todoID = strings.TrimSpace(todoID)
+	transferID = strings.TrimSpace(transferID)
+	outputName = strings.TrimSpace(outputName)
+	if taskID == "" || todoID == "" || transferID == "" || outputName == "" {
+		return nil, transport.Validation("invalid bind payload", map[string]any{
+			"task_id": "required", "todo_id": "required",
+			"artifact_id": "required", "output_name": "required",
+		})
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	task, ok := s.tasks[taskID]
+	if !ok || task.UserID != userID {
+		return nil, transport.NotFound("task not found")
+	}
+	todoIdx := -1
+	for i := range task.Todos {
+		if task.Todos[i].ID == todoID {
+			todoIdx = i
+			break
+		}
+	}
+	if todoIdx < 0 {
+		return nil, transport.NotFound("todo not found in task")
+	}
+	arts := s.taskArtifacts[taskID]
+	artIdx := -1
+	for i := range arts {
+		if arts[i].TransferID == transferID {
+			artIdx = i
+			break
+		}
+	}
+	if artIdx < 0 {
+		return nil, transport.NotFound("artifact not found in task")
+	}
+
+	arts[artIdx].OutputName = outputName
+	arts[artIdx].Kind = model.ArtifactKindDeliverable
+
+	ownerTodo := &task.Todos[todoIdx]
+	bound := model.TodoOutput{
+		OutputName: outputName,
+		ArtifactID: transferID,
+		FileRef:    arts[artIdx].ProjectFileID,
+	}
+	replaced := false
+	for i := range ownerTodo.Outputs {
+		if ownerTodo.Outputs[i].OutputName == outputName {
+			ownerTodo.Outputs[i] = bound
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		ownerTodo.Outputs = append(ownerTodo.Outputs, bound)
+	}
+
+	if err := s.persistArtifactUnsafe(&arts[artIdx]); err != nil && s.log != nil {
+		s.log.Warn("failed to persist bound artifact",
+			zap.String("transfer_id", transferID), zap.Error(err))
+	}
+	if err := s.persistTaskUnsafe(task); err != nil && s.log != nil {
+		s.log.Warn("failed to persist todo output binding",
+			zap.String("task_id", taskID), zap.String("output_name", outputName), zap.Error(err))
+	}
+	s.publishTaskUnsafe(taskID)
+
+	clone := arts[artIdx]
+	return &clone, nil
 }

@@ -96,7 +96,18 @@ allowed-tools:
    - ⚠️ **多个 step 的 `role` 可能完全相同**（如上例三个 step 全是 `developer`）。此时 role 完全无法区分该派给谁，**只能**用 `agent_id` 定位；仅凭 role 或名字选人必然被拒。
 4. **可拆分可追加**：一个步骤可以拆成多个 Todo（如"导演拆解分镜"拆成 2 条）；也可以在骨架基础上追加额外 Todo（澄清产物、中间检查等）——但**不得漏步骤、不得调换骨架顺序**。
 5. **人工确认**：step 标注 `need_review: true` 时，对应 Todo 执行完成后**必须声明 `need_review: true`**（人工确认点）；未标注的步骤默认不需要确认。
-6. **无 workflow 时**：按自由规划（上文规则），不受此约束。
+6. **把交付输出位名写进 Todo 的 `description`（双保险，必做）**：step 若声明了 `outputs`，把每个输出位的 `name` **原样**抄进对应 Todo 的 `description`，并说明这是必须认领的交付位：
+
+   ```
+   description: "…（原有描述）…\n\n【交付输出位】本步骤产出的最终交付文件必须认领以下输出位：\n- 剧名_剧本类型_版本_时间（docx）\n上传命令：clawsynapse transfer send --metadata taskId=… --metadata todoId=… --metadata outputName=剧名_剧本类型_版本_时间\n输出位名是标识符，必须原样复制，不要替换成真实剧名或日期。中间草稿不带 outputName。"
+   ```
+
+   为什么必须写：执行侧 Agent 的 `todo.assigned` payload 虽然也会带 `outputs[]`，但中间任何一环出问题（旧版本后端、payload 未刷新、Agent 走的是别的 skill 不看 payload）它就拿不到输出位名。
+   **你是唯一能看到完整 workflow 定义的一方**，把名字写进 description 是零成本的兜底。
+   2026-09-02 军旅项目就是执行侧拿不到输出位名，终稿被判成过程文件，既不上工作流图、下游也拿不到输入。
+   
+   step 没有 `outputs` 就什么都不用加。
+7. **无 workflow 时**：按自由规划（上文规则），不受此约束。
 
 **校验失败处理**：若 `task.plan_ready` 被拒绝（错误含 `WORKFLOW_MISMATCH` 和 `details` 说明），**按 details 修正后重新提交**——缺少步骤就按该 step 的 `agent_id` 补对应 Todo；顺序不对就调整顺序；派发对象不对就换成 `step.agent_id` 对应的那个 Agent（**不要拿名字相近的去替换**）。修正时**不要回到澄清流程**，需求已经确认过，直接重发 `task.plan_ready` 即可。修正后必须再次发送 `task.plan_ready`，不能放弃。**修正期间绝对禁止向用户声称「任务已创建/已派发」——被拒即代表规划未生效，任何此类表述都是虚假汇报。** 若修正两次仍被拒，向用户如实报告失败原因与 details 原文，等待人工介入。
 
@@ -220,6 +231,8 @@ FILE_CONTENT="$(curl -s "<download_url>")"
 2. 使用 `clawsynapse publish` 发送所有消息。
 3. `--session-key` 使用 incoming header 中的 `session` 值。
 4. payload 一律用 `jq -nc` 构建，绝不要手写拼接 JSON；`--arg` 值里优先用中文引号「」，必须用英文引号时用单引号包参（`'... "x" ...'`）或 `\"`，防止 JSON 破坏被 400 拒绝。
+5. **大 payload 推荐写临时文件后用 `--message @文件` 发送**（如 `jq -nc ... > /tmp/payload.json` 然后 `--message @/tmp/payload.json`）。CLI（2026-09-02 起的版本）会读取文件内容作为消息体，能彻底规避 shell 转义问题。历史故障：2026-09-02 PM 的 `task.reply` 与 `task.plan_ready` 都用 `@/tmp/...` 发送但旧版 CLI 不支持展开，平台收到的是 23 字节的字面量路径字符串，澄清问卷和任务规划全部 400 丢失，任务卡死 planning。
+6. **发送后必须核对回执。** 若收到 `BAD_PAYLOAD` / 400，或界面里出现 `@/tmp/...` 字样的消息，说明 payload 没有真正送达——检查 message 是否变成了字面量路径字符串，改用 `--message "$payload"`（变量直传）重发。**发送成功 ≠ 规划生效**：`task.plan_ready` 只有在平台返回成功（任务出现 Todo）后才算生效，在此之前绝不能向用户声称「任务已创建/已派发」。
 
 ### task.reply — 回复用户
 

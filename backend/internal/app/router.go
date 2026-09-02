@@ -230,6 +230,7 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	authed.DELETE("/tasks/:id/todos/:todoId", taskHandler.RemoveTodo)
 	authed.PUT("/tasks/:id/todos/reorder", taskHandler.ReorderTodos)
 	authed.POST("/tasks/:id/todos/:todoId/dispatch", taskHandler.DispatchTodo)
+	authed.POST("/tasks/:id/todos/:todoId/outputs/bind", taskHandler.BindTodoOutput)
 	authed.POST("/tasks/:id/todos/:todoId/review", taskHandler.ReviewTodo)
 	authed.POST("/tasks/:id/todos/:todoId/answer", taskHandler.AnswerTodo)
 	authed.GET("/tasks/:id/comments", taskHandler.ListComments)

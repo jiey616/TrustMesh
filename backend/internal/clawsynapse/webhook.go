@@ -39,6 +39,12 @@ type WebhookHandler struct {
 	downloadTTL time.Duration
 
 	onMeetingActivity func(meetingID string)
+
+	// unboundWarnMu guards unboundWarned, which throttles the "疑似最终交付物
+	// 未绑定" system comment to one per todo — an agent that uploads several
+	// intermediate drafts must not flood the task timeline.
+	unboundWarnMu sync.Mutex
+	unboundWarned map[string]bool
 }
 
 func NewWebhookHandler(st *store.Store, client *Client, log *zap.Logger) *WebhookHandler {
@@ -1649,6 +1655,11 @@ func (h *WebhookHandler) buildTodoAssignedPayload(task *model.TaskDetail, todo *
 	// 输出文件" directly via download_url. Non-blocking: unresolved links are
 	// still surfaced (Resolved=false) as a soft hint.
 	payload.Inputs = h.BuildTodoInputs(task, todo)
+	// Workflow-declared outputs: tell the agent which slot name(s) its
+	// deliverable must claim via `--metadata outputName=`. Without this the
+	// agent has no way to learn the slot name and silently files everything as
+	// a process artifact (2026-09-02: 军旅任务终稿 DOCX 因此未上工作流图).
+	payload.Outputs = h.BuildTodoOutputs(task, todo)
 
 	return payload
 }
@@ -1708,6 +1719,48 @@ func (h *WebhookHandler) BuildTodoInputs(task *model.TaskDetail, todo *model.Tod
 		return nil
 	}
 	return inputs
+}
+
+// BuildTodoOutputs returns the workflow output slots declared by the step this
+// todo belongs to, so the executing agent can name its deliverable correctly.
+// Returns nil when the task has no workflow, the todo cannot be aligned to a
+// step, or that step declares no outputs.
+//
+// The slot Name is an identifier, not a file name: templates such as
+// "剧名_剧本类型_版本_时间" must be copied verbatim into
+// `--metadata outputName=...`. Substituting real values into the placeholders
+// breaks the strict name matching used to resolve downstream inputs.
+//
+// Step resolution deliberately reuses stepIndexForTodo — the same alignment
+// BuildTodoInputs uses — so inputs and outputs always describe the same step.
+func (h *WebhookHandler) BuildTodoOutputs(task *model.TaskDetail, todo *model.Todo) []protocol.TodoOutputRef {
+	outs := h.stepOutputsForTodo(task, todo)
+	if len(outs) == 0 {
+		return nil
+	}
+	out := make([]protocol.TodoOutputRef, 0, len(outs))
+	for _, o := range outs {
+		out = append(out, protocol.TodoOutputRef{
+			Name:        o.Name,
+			Description: o.Description,
+			MimeType:    o.MimeType,
+		})
+	}
+	return out
+}
+
+// stepOutputsForTodo returns the raw model-level output slots declared by the
+// step this todo belongs to, used both to tell the agent the slot names on
+// dispatch and to classify inbound uploads on receipt.
+func (h *WebhookHandler) stepOutputsForTodo(task *model.TaskDetail, todo *model.Todo) []model.StepOutput {
+	if task.Workflow == nil || len(task.Workflow.Steps) == 0 {
+		return nil
+	}
+	idx := h.stepIndexForTodo(task, todo)
+	if idx < 0 || idx >= len(task.Workflow.Steps) {
+		return nil
+	}
+	return task.Workflow.Steps[idx].Outputs
 }
 
 // resolveStepInput resolves a single StepInput's link (StepIOLink) to the
@@ -2354,6 +2407,44 @@ func (h *WebhookHandler) warnTransferRejected(taskID, fromNode, transferID, file
 	}
 }
 
+// warnUnboundDeliverable reports an upload that looks like a final deliverable
+// but could not be matched to a declared output slot, so it was filed as a
+// process artifact and will never reach downstream steps or the workflow
+// diagram. The warning is throttled to one per todo: agents routinely upload
+// several intermediate drafts, and unthrottled warnings would bury the timeline.
+func (h *WebhookHandler) warnUnboundDeliverable(taskID, todoID, fromNode, transferID, fileName string, declaredNames []string) {
+	key := taskID + "|" + todoID
+	h.unboundWarnMu.Lock()
+	if h.unboundWarned == nil {
+		h.unboundWarned = map[string]bool{}
+	}
+	if h.unboundWarned[key] {
+		h.unboundWarnMu.Unlock()
+		return
+	}
+	h.unboundWarned[key] = true
+	h.unboundWarnMu.Unlock()
+
+	slots := strings.Join(declaredNames, " / ")
+	if slots == "" {
+		slots = "（该步骤未声明 mime 匹配的输出位）"
+	}
+	content := fmt.Sprintf(
+		"⚠️ 疑似最终交付物未绑定：本次上传的 `%s` 未携带 outputName，已按**过程文件**入库，不会出现在工作流图上、也不会作为下游步骤的输入。"+
+			"该步骤声明的输出位为：%s。"+
+			"请让执行方用 `clawsynapse transfer send --metadata taskId=… --metadata todoId=… --metadata outputName=<输出位名>` 重新上传，"+
+			"或在任务详情页手工「绑定为交付物」。",
+		strings.TrimSpace(fileName), slots)
+	if transferID != "" {
+		content += fmt.Sprintf(" transferId=%s", transferID)
+	}
+	if _, cErr := h.store.AppendSystemTaskComment(taskID, content); cErr != nil && h.log != nil {
+		h.log.Warn("append unbound deliverable system comment failed",
+			zap.String("task_id", taskID), zap.String("todo_id", todoID),
+			zap.String("transfer_id", transferID), zap.Error(cErr))
+	}
+}
+
 func (h *WebhookHandler) handleTransferReceived(c *gin.Context, webhook protocol.WebhookPayload) {
 	var msg struct {
 		TransferID string `json:"transferId"`
@@ -2412,6 +2503,22 @@ func (h *WebhookHandler) handleTransferReceived(c *gin.Context, webhook protocol
 		CreatedAt:  time.Now().UTC(),
 		OutputName: outputName,
 	}
+	// Look up the output slots the owning step declares. An agent that was
+	// never told the slot name uploads without outputName; matching the file
+	// against the declaration lets the backend file it as the deliverable it
+	// actually is instead of silently degrading it to a process artifact.
+	var declared []model.StepOutput
+	if todoID != "" {
+		if task := h.store.GetTaskInternal(taskID); task != nil {
+			for i := range task.Todos {
+				if task.Todos[i].ID == todoID {
+					declared = h.stepOutputsForTodo(task, &task.Todos[i])
+					break
+				}
+			}
+		}
+	}
+
 	// Classify up front so every copy of the artifact handed downstream
 	// (SaveArtifact AND the separate SaveProjectFileFromArtifact call below)
 	// carries the same file nature. SaveArtifact re-derives it as a fallback.
@@ -2421,11 +2528,31 @@ func (h *WebhookHandler) handleTransferReceived(c *gin.Context, webhook protocol
 		artifact.Kind = model.ArtifactKindProcess
 	}
 
-	if appErr := h.store.SaveArtifact(artifact); appErr != nil {
+	filing, appErr := h.store.SaveArtifactWithFiling(artifact, declared)
+	if appErr != nil {
 		h.warnTransferRejected(taskID, webhook.From, msg.TransferID, msg.FileName,
 			"入库被拒（"+appErr.Code+"："+appErr.Message+"）")
 		transport.WriteError(c, appErr)
 		return
+	}
+	// Mirror the authoritative classification back onto the local copy: the
+	// backend may have inferred a binding the caller did not declare, and the
+	// ProjectFile created below must carry the same kind.
+	artifact.OutputName = filing.OutputName
+	if filing.Bound {
+		artifact.Kind = model.ArtifactKindDeliverable
+	} else {
+		artifact.Kind = model.ArtifactKindProcess
+	}
+	if filing.BoundBy == "inferred" && h.log != nil {
+		h.log.Info("transfer bound to declared output slot by inference",
+			zap.String("transfer_id", msg.TransferID),
+			zap.String("task_id", taskID),
+			zap.String("todo_id", todoID),
+			zap.String("output_name", filing.OutputName))
+	}
+	if filing.UnboundWarn {
+		h.warnUnboundDeliverable(taskID, todoID, webhook.From, msg.TransferID, msg.FileName, filing.DeclaredNames)
 	}
 
 	// Auto-create ProjectFile and copy artifact to project files volume.
@@ -2461,6 +2588,10 @@ func (h *WebhookHandler) handleTransferReceived(c *gin.Context, webhook protocol
 	transport.WriteData(c, http.StatusOK, gin.H{
 		"transfer_id": msg.TransferID,
 		"task_id":     taskID,
+		"kind":        artifact.Kind,
+		"output_name": filing.OutputName,
+		"bound":       filing.Bound,
+		"bound_by":    filing.BoundBy,
 	})
 }
 

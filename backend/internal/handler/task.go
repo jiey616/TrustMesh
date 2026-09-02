@@ -200,6 +200,7 @@ func (h *TaskHandler) autoDispatchFirstTodo(ctx context.Context, userID string, 
 		},
 		AttachedFiles: h.enrichAttachedFiles(task.AttachedFiles),
 		Inputs:        h.webhookHandler.BuildTodoInputs(task, todo),
+		Outputs:       h.webhookHandler.BuildTodoOutputs(task, todo),
 	}
 	if _, err := h.publisher.Publish(ctx, todo.Assignee.NodeID, "todo.assigned", payload, task.ID, map[string]any{"source": "user_created"}); err != nil {
 		if h.log != nil {
@@ -303,6 +304,7 @@ func (h *TaskHandler) DispatchTodo(c *gin.Context) {
 		},
 		AttachedFiles: h.enrichAttachedFiles(task.AttachedFiles),
 		Inputs:        h.webhookHandler.BuildTodoInputs(task, todo),
+		Outputs:       h.webhookHandler.BuildTodoOutputs(task, todo),
 	}
 	if _, err := h.publisher.Publish(context.Background(), todo.Assignee.NodeID, "todo.assigned", payload, task.ID, map[string]any{"source": "manual_dispatch"}); err != nil {
 		if h.log != nil {
@@ -323,6 +325,35 @@ func (h *TaskHandler) DispatchTodo(c *gin.Context) {
 // ReviewTodo handles a human reviewer approving or rejecting a completed todo
 // that is awaiting review. approve unblocks the pipeline (next todo dispatched);
 // reject cascade-resets and re-dispatches the audited predecessor for rework.
+// BindTodoOutput attaches an already-filed artifact to a workflow output slot,
+// promoting it from a process file to a declared deliverable so it shows up on
+// the workflow diagram and becomes resolvable as a downstream step input.
+// This is the manual remedy for uploads that arrived without
+// `--metadata outputName` and could not be auto-matched (ambiguous multi-slot
+// steps, unexpected mime types).
+func (h *TaskHandler) BindTodoOutput(c *gin.Context) {
+	userID, ok := currentUserID(c)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		ArtifactID string `json:"artifact_id"`
+		OutputName string `json:"output_name"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid request body"))
+		return
+	}
+
+	artifact, appErr := h.store.BindArtifactOutput(userID, c.Param("id"), c.Param("todoId"), body.ArtifactID, body.OutputName)
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
+	transport.WriteData(c, http.StatusOK, artifact)
+}
+
 func (h *TaskHandler) ReviewTodo(c *gin.Context) {
 	userID, ok := currentUserID(c)
 	if !ok {
@@ -442,6 +473,7 @@ func (h *TaskHandler) publishReworkDispatch(ctx context.Context, userID string, 
 		},
 		AttachedFiles: h.enrichAttachedFiles(task.AttachedFiles),
 		Inputs:        h.webhookHandler.BuildTodoInputs(task, todo),
+		Outputs:       h.webhookHandler.BuildTodoOutputs(task, todo),
 	}
 	if _, err := h.publisher.Publish(ctx, todo.Assignee.NodeID, "todo.assigned", payload, task.ID, map[string]any{"source": "rework", "reason": reason}); err != nil {
 		if h.log != nil {
@@ -473,6 +505,7 @@ func (h *TaskHandler) dispatchNextTodo(ctx context.Context, userID string, task 
 		},
 		AttachedFiles: h.enrichAttachedFiles(task.AttachedFiles),
 		Inputs:        h.webhookHandler.BuildTodoInputs(task, todo),
+		Outputs:       h.webhookHandler.BuildTodoOutputs(task, todo),
 	}
 	if _, err := h.publisher.Publish(ctx, todo.Assignee.NodeID, "todo.assigned", payload, task.ID, map[string]any{"source": "review_approved"}); err != nil {
 		if h.log != nil {

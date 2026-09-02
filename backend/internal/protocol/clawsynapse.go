@@ -192,6 +192,22 @@ type TodoAssignedPayload struct {
 	// expectation with Resolved=false (source not ready yet — soft hint, never
 	// blocks dispatch).
 	Inputs []TodoInputRef `json:"inputs,omitempty"`
+	// Outputs are the workflow output slots this step declares as its
+	// deliverables. The executing agent MUST copy `name` verbatim into
+	// `--metadata outputName=...` when uploading the final deliverable,
+	// otherwise the file is filed as a process artifact and never reaches
+	// downstream steps. Empty when the step declares no outputs.
+	Outputs []TodoOutputRef `json:"outputs,omitempty"`
+}
+
+// TodoOutputRef carries a workflow-declared output slot. `Name` is an
+// identifier (often a human-facing naming template such as
+// "剧名_剧本类型_版本_时间"), NOT a file name — the agent must copy it
+// verbatim rather than substituting real values into the placeholders.
+type TodoOutputRef struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mime_type,omitempty"`
 }
 
 // TaskAttachedFileRef carries file info embedded in task messages.

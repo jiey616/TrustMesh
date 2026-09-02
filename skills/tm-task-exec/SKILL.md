@@ -254,9 +254,48 @@ result 字段说明：
 
 - `--target` 使用 incoming header 中 `from` 的值（TrustMesh 节点）
 - `--metadata` 必须包含 `taskId`，`todoId` 可选但推荐
-- **最终交付文件必须带 `--metadata "outputName=<步骤输出名>"`**。outputName **必须原样复制**任务 `todo.assigned` payload 里 workflow 步骤 `outputs[].name`（或上游 `inputs[].source.output`）定义的名字——模板名里带"剧名"等占位字样就原样带着，**不要自创真实剧名变体**，否则下游输入解析精确匹配会失配。带 outputName 的文件归类为「最终交付文件」并绑定到工作流输出，下游步骤才能精确拿到；不带 outputName 的文件一律归为「过程文件」（草稿/中间稿），不会作为下游输入。同一 outputName 重复上传自动覆盖旧版。
+- **最终交付文件必须带 `--metadata "outputName=<步骤输出位名>"`**，取值见下方「输出位」小节
 - 同一 `transferId` 重复发送会覆盖旧文件（可用于修订）
 - **如果文件上传失败，在 `todo.complete` 中说明，或发送 `todo.fail`**
+
+### 输出位（outputName）从哪来
+
+你收到的 `todo.assigned` payload 里有 `outputs[]` 数组，列出本步骤声明的交付输出位：
+
+```json
+"outputs": [
+  { "name": "剧名_剧本类型_版本_时间", "mime_type": "docx", "description": "最终剧本定稿" }
+]
+```
+
+- **`outputs` 为空或不存在** → 本步骤未声明交付位，你产出的所有文件都是过程文件，只带 `taskId`/`todoId` 即可。**这是正常的，不是你漏了什么。**
+- **`outputs` 非空** → 交付给用户的最终成果**必须**带上对应输出位名；中间草稿、研究笔记、素材等不带，保持过程文件。
+- **声明了多个输出位** → 每个输出位分别上传一次，各带自己的 `outputName`。一次上传只能认领一个输出位。
+
+**占位名铁律**：输出位的 `name` 是**标识符，不是文件名**。像 `剧名_剧本类型_版本_时间` 这种带"剧名""版本""时间"字样的模板名，
+必须**原样复制**，不要替换成真实剧名或日期。下游步骤按这个名字做**精确匹配**，你改成 `生死靶心_微电影_剧本_v1` 就失配了。
+真实文件名随你怎么起——**文件名和 outputName 是两回事，互不干扰**。
+
+> 2026-09-02 真实事故：军旅项目的最终剧本 DOCX 上传时没带 outputName，被判为过程文件，
+> 既不上工作流图，下游分镜步骤也拿不到输入。补带 `--metadata "outputName=剧名_剧本类型_版本_时间"` 重传才恢复。
+
+（对照：`inputs[]` 是**上游**步骤给你的输入文件，带 `download_url` 可直接下载；`outputs[]` 是**你**要产出的交付位。别搞反。）
+
+### 上传后自检
+
+`transfer send` 返回 `transfer.sent` 和 `transferId`，**只代表文件已发出，不代表已入库**。
+文件经消息队列异步送到平台，平台的接收结果（成功 / 被拒 / 判为过程文件）你这边**看不到**。
+
+会无声失败的三种情况：
+
+| 情况 | 后果 |
+|---|---|
+| 漏了 `--metadata taskId=` | 平台 422 拒收，文件留在传输卷，用户在平台文件列表里**什么都看不到** |
+| `outputName` 拼错或自创 | 文件入库但不认领任何输出位，降级为过程文件，不上工作流图 |
+| 步骤声明了多个输出位却没带 outputName | 同上，且平台会在任务时间线留一条 ⚠️ 提示 |
+
+**命令返回成功 ≠ 交付完成。** 在 `todo.complete` 的 `result` 里写清楚你上传了哪些文件、各自带了什么 outputName，
+用户或 PM 发现对不上时会据此让你重传。
 
 示例：
 
@@ -272,7 +311,7 @@ clawsynapse transfer send \
   --metadata "taskId=$TASK_ID" \
   --metadata "todoId=$TODO_ID"
 
-# 最终交付文件：额外带 outputName（与工作流步骤 outputs 定义的输出名一致）
+# 最终交付文件：额外带 outputName（原样复制 payload.outputs[].name）
 clawsynapse transfer send \
   --target "$TARGET_NODE" \
   --file /tmp/login-api-report.pdf \
@@ -280,6 +319,20 @@ clawsynapse transfer send \
   --metadata "taskId=$TASK_ID" \
   --metadata "todoId=$TODO_ID" \
   --metadata "outputName=分析报告"
+
+# 多个输出位：每个输出位单独上传一次，各带自己的 outputName
+#   比如 payload.outputs = [{name:"方案文档"},{name:"分镜头脚本"}]
+clawsynapse transfer send \
+  --target "$TARGET_NODE" --file /tmp/plan.md --mime-type text/markdown \
+  --metadata "taskId=$TASK_ID" --metadata "todoId=$TODO_ID" \
+  --metadata "outputName=方案文档"
+
+clawsynapse transfer send \
+  --target "$TARGET_NODE" \
+  --file /tmp/shotlist.xlsx \
+  --mime-type application/vnd.openxmlformats-officedocument.spreadsheetml.sheet \
+  --metadata "taskId=$TASK_ID" --metadata "todoId=$TODO_ID" \
+  --metadata "outputName=分镜头脚本"
 ```
 
 多个文件时，对每个文件分别执行一次 `transfer send`，每次都带上 `--metadata taskId=...`。

@@ -2,7 +2,9 @@ package store
 
 import (
 	"sort"
+	"strings"
 
+	"go.uber.org/zap"
 	"trustmesh/backend/internal/model"
 	"trustmesh/backend/internal/transport"
 )
@@ -186,4 +188,29 @@ func isValidTaskStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+// SetTaskWorkflow attaches (or replaces) the workflow snapshot carried by a
+// task. Tasks created before a project gained a primary workflow, and tasks
+// assembled by operational scripts, have no workflow; attaching one is what
+// makes step-level I/O declaration — and therefore deliverable binding —
+// available to them.
+func (s *Store) SetTaskWorkflow(taskID string, wf *model.Workflow) *transport.AppError {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return transport.Validation("invalid task", map[string]any{"task_id": "required"})
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	task, ok := s.tasks[taskID]
+	if !ok {
+		return transport.NotFound("task not found")
+	}
+	task.Workflow = wf
+	if err := s.persistTaskUnsafe(task); err != nil && s.log != nil {
+		s.log.Warn("failed to persist task workflow",
+			zap.String("task_id", taskID), zap.Error(err))
+	}
+	s.publishTaskUnsafe(taskID)
+	return nil
 }
