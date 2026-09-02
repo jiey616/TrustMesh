@@ -176,8 +176,16 @@ func (h *WebhookHandler) HandleWebhook(c *gin.Context) {
 		}
 		h.handleTaskComment(c, payload)
 	case "task.error":
-		// Agent encountered an error (e.g. Hermes crash). Logged by ClawSynapse; no action needed.
-		transport.WriteData(c, http.StatusOK, gin.H{"status": "ok", "ignored": true})
+		// Agent/pipeline runtime error (e.g. Hermes crash, upstream rejection
+		// of a PM publish). Previously silently ignored — the PM's own
+		// "已派发/已确认" ACK was then the only visible trace, single-sidely
+		// misleading the user while the task silently stalled. Persist it as
+		// a flagged task comment (same degradation as todo.error) so failures
+		// are visible and auditable in the timeline.
+		if trimmed := strings.TrimSpace(payload.Message); trimmed != "" {
+			payload.Message = "⚠️【执行侧故障上报】" + trimmed
+		}
+		h.handleTaskComment(c, payload)
 	case "transfer.received":
 		h.handleTransferReceived(c, payload)
 	case "task.context.query":
@@ -503,16 +511,18 @@ func cleanAgentNoise(msg string) string {
 // (e.g. "ACK task.reply", "ACK task.reply WAITING"). Stripping them lets us
 // tell a pure acknowledgement apart from a real reply that merely starts with
 // "ACK ".
-var ackBoilerplate = regexp.MustCompile(`(?i)\b(task\.(reply|response|comment)|chat\.(message|response)|meeting\.(chat|response)|waiting)\b`)
+var ackBoilerplate = regexp.MustCompile(`(?i)\b((?:task|todo)\.(?:reply|response|comment|message|plan_ready|assign|assigned|create|todo_add|todo_modify|progress|complete|fail|ask|review)|chat\.(?:message|response)|meeting\.(?:chat|response)|waiting)\b`)
 
 // explicitAckRe matches a message that is an explicit protocol receipt emitted
 // by the PM Agent after publishing a message of a given type, e.g.
 // "ACK task.reply", "ACK task.response", "ACK task.comment",
 // "ACK chat.message", "ACK chat.response", "ACK meeting.chat",
-// "ACK meeting.response". Any trailing text (e.g. a Chinese elaboration such
-// as "等待用户回复澄清问题。") is decoration, never user-facing content, so
-// the whole message is treated as a silent acknowledgement.
-var explicitAckRe = regexp.MustCompile(`(?i)^\s*ACK\s+(task|chat|meeting)\.(reply|response|comment|message|chat)\b`)
+// "ACK meeting.response", and planning/dispatch receipts such as
+// "ACK task.plan_ready" / "ACK todo.assigned". Any trailing text (e.g. a
+// Chinese elaboration such as "等待用户回复澄清问题。") is decoration, never
+// user-facing content, so the whole message is treated as a silent
+// acknowledgement.
+var explicitAckRe = regexp.MustCompile(`(?i)^\s*ACK\s+((?:task|chat|meeting)\.(?:reply|response|comment|message|chat|plan_ready|assign|assigned|create|todo_add|todo_modify|status_changed)|todo\.(?:assigned|progress|complete|fail|comment|ask|review|status_changed))\b`)
 
 // stripLeadingExplicitAck handles "先 ACK 后正文" 型回复（persona 型运行时，
 // 如编剧山雨："ACK task.comment\n\n已完成第5步视听蓝图…"）。
@@ -598,6 +608,12 @@ func isSilentACK(msg string) bool {
 		}
 		// Has real content — not a silent ACK
 		return false
+	}
+	// Bare runtime receipt ("WAITING") — the ClawSynapse response contract
+	// forces agents to emit this when they have nothing to add. Pure chatter
+	// that previously leaked into the comment timeline.
+	if strings.EqualFold(strings.TrimSpace(msg), "waiting") {
+		return true
 	}
 	// Empty ACK from PM, e.g. "ACK task.reply", "ACK task.reply WAITING",
 	// "ACK task.response\n\nWAITING", "ACK task.comment\n\nWAITING".
@@ -1040,6 +1056,24 @@ func (h *WebhookHandler) handleTodoModify(c *gin.Context, webhook protocol.Webho
 func (h *WebhookHandler) handleTaskPlanReady(c *gin.Context, webhook protocol.WebhookPayload) {
 	var payload protocol.TaskPlanReadyPayload
 	if err := decodeWebhookMessage(webhook.Message, &payload); err != nil {
+		// A garbage plan body (e.g. a literal "@/tmp/payload_plan.json" @file
+		// reference that failed to expand) used to be rejected with a bare 400:
+		// invisible in the UI while the PM still reported success. Surface the
+		// rejection as a system comment so the timeline tells the real story.
+		taskID, _ := webhook.Metadata["taskId"].(string)
+		if taskID == "" {
+			taskID = strings.TrimSpace(webhook.SessionKey)
+		}
+		if taskID != "" {
+			preview := strings.TrimSpace(webhook.Message)
+			if len(preview) > 200 {
+				preview = preview[:200] + "…"
+			}
+			if _, cErr := h.store.AppendSystemTaskComment(taskID,
+				fmt.Sprintf("⚠️ PM 规划提交被拒：task.plan_ready 消息体无法解析（BAD_PAYLOAD），内容片段：%s。请 PM 以约定的 JSON 格式重新提交 task.plan_ready。", preview)); cErr != nil && h.log != nil {
+				h.log.Warn("append plan bad-payload system comment failed", zap.String("task_id", taskID), zap.Error(cErr))
+			}
+		}
 		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid task.plan_ready message"))
 		return
 	}
@@ -1473,11 +1507,27 @@ func (h *WebhookHandler) handleTaskComment(c *gin.Context, webhook protocol.Webh
 		return
 	}
 
-	event, appErr := h.store.AddTaskCommentByNode(webhook.From, store.TaskCommentInput{
-		TaskID:  payload.TaskID,
-		TodoID:  payload.TodoID,
-		Content: payload.Content,
-	})
+	event, appErr := func() (*model.Comment, *transport.AppError) {
+		// Pure protocol receipts ("ACK todo.status_changed - TD_01 -> ...",
+		// bare "WAITING") used to pollute the comment timeline. Strip a
+		// leading ACK receipt: real content after it is kept, a pure receipt
+		// (or bare WAITING) is ignored entirely — same silent-ACK contract
+		// as task.reply, minus the content loss.
+		if rest := stripLeadingExplicitAck(payload.Content); rest != "" {
+			payload.Content = rest
+		} else if isSilentACK(payload.Content) {
+			return nil, nil
+		}
+		return h.store.AddTaskCommentByNode(webhook.From, store.TaskCommentInput{
+			TaskID:  payload.TaskID,
+			TodoID:  payload.TodoID,
+			Content: payload.Content,
+		})
+	}()
+	if event == nil && appErr == nil {
+		transport.WriteData(c, http.StatusOK, gin.H{"status": "ok", "ignored": true})
+		return
+	}
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
