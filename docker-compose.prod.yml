@@ -37,13 +37,16 @@ services:
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-1536}
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
       KNOWLEDGE_STORAGE_PATH: ${KNOWLEDGE_STORAGE_PATH:-/var/lib/trustmesh-knowledge}
+      PLATFORM_NAME: ${PLATFORM_NAME:-TrustMesh}
       ASSISTANT_API_URL: ${ASSISTANT_API_URL:-https://api.openai.com/v1}
       ASSISTANT_API_KEY: ${ASSISTANT_API_KEY:-}
       ASSISTANT_MODEL: ${ASSISTANT_MODEL:-gpt-4o-mini}
       MARKET_DATA_PATH: ${MARKET_DATA_PATH:-/app/data/roles_index.json}
+      FILES_STORAGE_PATH: ${FILES_STORAGE_PATH:-/var/lib/trustmesh-files}
     volumes:
       - trustmesh-transfer-data:/var/lib/trustmesh-transfers:ro
       - trustmesh-knowledge-data:/var/lib/trustmesh-knowledge
+      - trustmesh-files-data:/var/lib/trustmesh-files
       - ./data/roles_index.json:/app/data/roles_index.json:ro
       - ./data/roles:/app/data/roles:ro
     healthcheck:
@@ -69,7 +72,7 @@ services:
       DATA_DIR: ${CLAWSYNAPSE_DATA_DIR:-/var/lib/clawsynapse}
       IDENTITY_KEY_PATH: ${CLAWSYNAPSE_IDENTITY_KEY_PATH:-/var/lib/clawsynapse/identity.key}
       IDENTITY_PUB_PATH: ${CLAWSYNAPSE_IDENTITY_PUB_PATH:-/var/lib/clawsynapse/identity.pub}
-      DELIVERABLE_PREFIXES: ${DELIVERABLE_PREFIXES:-chat,task,todo,conversation}
+      DELIVERABLE_PREFIXES: ${DELIVERABLE_PREFIXES:-chat,task,todo,conversation,meeting}
       TRANSFER_DIR: ${TRANSFER_DIR:-/var/lib/trustmesh-transfers}
       TRANSFER_TTL: ${TRANSFER_TTL:-24h}
       LOG_LEVEL: ${CLAWSYNAPSE_LOG_LEVEL:-info}
@@ -118,3 +121,4 @@ volumes:
   trustmesh-transfer-data:
   trustmesh-qdrant-data:
   trustmesh-knowledge-data:
+  trustmesh-files-data:
