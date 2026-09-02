@@ -21,6 +21,52 @@ export interface ApiListResponse<T> {
   meta: ApiListMeta
 }
 
+// ─── 外部应用（SSO 连接平台）───
+
+export type ExternalAppStatus = 'enabled' | 'disabled'
+export type ExternalAppSSOType = 'trustmesh_jwt'
+export type ExternalAppFrameMode = 'newtab' | 'iframe'
+
+// 安全视图：不含 client_secret
+export interface ExternalAppView {
+  id: string
+  name: string
+  base_url: string
+  client_id: string
+  sso_type: ExternalAppSSOType
+  frame_mode: ExternalAppFrameMode
+  scopes: string
+  status: ExternalAppStatus
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateExternalAppRequest {
+  name: string
+  base_url: string
+  client_id: string
+  sso_type?: ExternalAppSSOType
+  frame_mode?: ExternalAppFrameMode
+  scopes?: string
+}
+
+export interface UpdateExternalAppRequest {
+  name?: string
+  base_url?: string
+  sso_type?: ExternalAppSSOType
+  frame_mode?: ExternalAppFrameMode
+  scopes?: string
+  status?: ExternalAppStatus
+}
+
+export interface LaunchExternalAppResponse {
+  app_id: string
+  app_name: string
+  launch_url: string
+  expires_in: number
+}
+
 // ─── 领域模型 ───
 
 export interface User {
@@ -59,6 +105,7 @@ export interface Project {
   status: ProjectStatus
   task_summary: ProjectTaskSummary
   pm_agent: PMAgentSummary
+  workflows?: Workflow[]
   created_at: string
   updated_at: string
 }
@@ -99,7 +146,7 @@ export interface UIResponse {
 
 export interface TaskMessage {
   id: string
-  role: 'user' | 'pm_agent'
+  role: 'user' | 'pm_agent' | 'agent'
   content: string
   ui_blocks?: UIBlock[]
   ui_response?: UIResponse
@@ -184,6 +231,7 @@ export interface AgentChatSessionSummary {
 }
 export type AgentRole = 'pm' | 'developer' | 'reviewer' | 'custom'
 export type AgentStatus = 'online' | 'offline' | 'busy'
+export type AgentProduct = 'trustmesh' | 'hermes' | 'opc' | 'openclaw' | string
 
 export interface AgentUsage {
   project_count: number
@@ -193,6 +241,38 @@ export interface AgentUsage {
   in_use: boolean
 }
 
+export interface StepOutput {
+  name: string
+  description?: string
+  mime_type?: string
+}
+
+export interface StepIOLink {
+  step: string // "prev" 或上游步骤名
+  output: string // 该步骤声明的输出名
+}
+
+export interface StepInput {
+  name: string
+  description?: string
+  mime_type?: string
+  source: StepIOLink
+}
+
+export interface WorkflowStep {
+  name: string
+  role?: string
+  agent_id?: string
+  need_review?: boolean
+  inputs?: StepInput[]
+  outputs?: StepOutput[]
+}
+
+export interface Workflow {
+  name: string
+  steps: WorkflowStep[]
+}
+
 export interface Agent {
   id: string
   name: string
@@ -200,6 +280,7 @@ export interface Agent {
   role: AgentRole
   capabilities: string[]
   node_id: string
+  product: AgentProduct
   status: AgentStatus
   archived: boolean
   last_seen_at: string | null
@@ -218,10 +299,49 @@ export interface TodoResult {
   summary: string
   output: string
   metadata: Record<string, unknown>
+  action_items?: ActionItem[]
 }
 
-export type TaskStatus = 'planning' | 'review' | 'pending' | 'in_progress' | 'done' | 'failed' | 'canceled'
+export interface ActionItem {
+  title: string
+  description?: string
+  assignee_node_id?: string
+  assignee_role?: string
+  status: 'pending' | 'awaiting_confirmation' | 'converted'
+  converted_task_id?: string
+  confirmed_by?: string
+  created_at: string
+}
+
+export interface ActionItemRefDTO {
+  task_id: string
+  todo_id: string
+  task_title: string
+  todo_title: string
+  item_index: number
+  title: string
+  description?: string
+  assignee_node_id?: string
+  assignee_role?: string
+  status: string
+  converted_task_id?: string
+  created_at: string
+}
+
+export type TaskStatus = 'planning' | 'review' | 'pending' | 'in_progress' | 'awaiting_review' | 'waiting_user' | 'done' | 'failed' | 'canceled'
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent'
+
+export interface TodoQuestion {
+  id: string
+  question: string
+  options?: string[]
+  required: boolean
+  asked_at: string
+  answer?: string
+  answered_by?: string
+  answered_at?: string | null
+  timed_out?: boolean
+}
 
 export interface ActorRef {
   actor_type: string
@@ -243,6 +363,11 @@ export interface Todo {
   cancel_reason: string | null
   result: TodoResult
   created_at: string
+  review_status?: '' | 'pending_approval' | 'approved' | 'rejected'
+  review_reason?: string | null
+  rework_count?: number
+  max_reworks?: number
+  questions?: TodoQuestion[]
 }
 
 export interface TaskArtifact {
@@ -294,6 +419,8 @@ export interface TaskDetail {
   description: string
   status: TaskStatus
   priority: TaskPriority
+  source_task_id?: string
+  workflow?: Workflow
   pm_agent: PMAgentSummary
   messages?: TaskMessage[]
   todos: Todo[]
@@ -321,6 +448,8 @@ export type EventType =
   | 'planning_reply'
   | 'agent_status_changed'
   | 'artifact_received'
+  | 'todo_ask_received'
+  | 'todo_answer_received'
 
 export interface Event {
   id: string
@@ -505,6 +634,94 @@ export interface AgentTaskItem {
   updated_at: string
 }
 
+// --- 节点能力查询（capability 契约，阶段 1 只读） ---
+
+export interface CapabilitySkill {
+  name: string
+  description: string
+  category: string
+}
+
+export interface CapabilityModel {
+  id: string
+  provider: string
+  model: string
+  isDefault: boolean
+}
+
+export interface CapabilityJob {
+  id: string
+  name: string
+  schedule: string
+  enabled: boolean
+  prompt: string
+  skills?: string[]
+  nextRun?: string
+  executions?: CapabilityExecution[]
+}
+
+// cron 定时任务执行记录（capability.executions 契约，第 1 层随 capabilities 读回、第 2 层详情查询）
+export interface CapabilityExecution {
+  executionId: string
+  jobId: string
+  status: 'running' | 'completed' | 'failed' | 'unknown'
+  startedAtMs: number
+  finishedAtMs: number
+  durationMs: number
+  error: string
+  outputFile: string
+  outputPreview: string
+  /** 完整结果 markdown，仅执行历史详情（第 2 层）返回 */
+  output?: string
+}
+
+export interface CronExecutionsResult {
+  executions: CapabilityExecution[]
+  error?: string
+}
+
+export interface CapabilityInfo {
+  product: string
+  available: boolean
+  skills: CapabilitySkill[]
+  models: CapabilityModel[]
+  jobs: CapabilityJob[]
+  reason?: string
+}
+
+// --- 节点能力写回（capability 契约，阶段 2） ---
+
+export interface ProviderConfig {
+  name?: string
+  api_mode?: string
+  transport?: string
+  model?: string
+  default_model?: string
+  api_key?: string
+}
+
+export interface SetCapabilityRequest {
+  target: 'skill' | 'model' | 'cron'
+  action: string
+  skill?: string
+  fileIds?: string[]
+  model?: string
+  provider?: ProviderConfig
+  job?: Record<string, unknown>
+  jobId?: string
+}
+
+export interface SetCapabilityResult {
+  ok: boolean
+  target: string
+  action: string
+  skill?: string
+  model?: string
+  jobId?: string
+  restartStatus: 'none' | 'restarted' | 'restart_failed'
+  error?: string
+}
+
 export interface ClawSynapseHealth {
   online: boolean
   node_id?: string
@@ -560,6 +777,7 @@ export interface UpdateProjectRequest {
   name?: string
   description?: string
   pm_agent_id?: string
+  workflows?: Workflow[]
 }
 
 export interface CreatePlanningTaskRequest {
@@ -724,7 +942,7 @@ export interface AssistantSSEEvent {
 
 // ─── 项目文件管理 ───
 
-export type ProjectFileSource = 'user_upload' | 'agent_artifact'
+export type ProjectFileSource = 'user_upload' | 'agent_artifact' | 'meeting_minutes'
 
 export interface ProjectFile {
   id: string

@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, MoreHorizontal, Pencil, RotateCcw, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
 import { normalizeEscapedText } from '@/lib/utils'
@@ -17,6 +17,8 @@ const statusIndicatorColors = {
   review: 'bg-amber-500',
   pending: 'bg-slate-400',
   in_progress: 'bg-sky-500 animate-pulse',
+  awaiting_review: 'bg-amber-500',
+  waiting_user: 'bg-violet-500 animate-pulse',
   done: 'bg-emerald-500',
   failed: 'bg-rose-500',
   canceled: 'bg-slate-500/60',
@@ -28,9 +30,10 @@ interface TodoListProps {
   variant?: 'card' | 'nested'
   onEditTodo?: (todo: Todo) => void
   onDeleteTodo?: (todo: Todo) => void
+  onReviewTodo?: (todo: Todo, action: 'approve' | 'reject') => void
 }
 
-export function TodoList({ todos, artifacts, variant = 'card', onEditTodo, onDeleteTodo }: TodoListProps) {
+export function TodoList({ todos, artifacts, variant = 'card', onEditTodo, onDeleteTodo, onReviewTodo }: TodoListProps) {
   const safeArtifacts = artifacts ?? []
 
   if (todos.length === 0) {
@@ -47,6 +50,7 @@ export function TodoList({ todos, artifacts, variant = 'card', onEditTodo, onDel
           variant={variant}
           onEdit={onEditTodo}
           onDelete={onDeleteTodo}
+          onReview={onReviewTodo}
         />
       ))}
     </div>
@@ -59,25 +63,32 @@ function TodoItem({
   variant,
   onEdit,
   onDelete,
+  onReview,
 }: {
   todo: Todo
   artifacts: TaskArtifact[]
   variant: 'card' | 'nested'
   onEdit?: (todo: Todo) => void
   onDelete?: (todo: Todo) => void
+  onReview?: (todo: Todo, action: 'approve' | 'reject') => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const relatedArtifacts = (artifacts ?? []).filter((a) => a.todo_id === todo.id)
   const hasDetails = todo.description || todo.error || relatedArtifacts.length > 0
   const isCard = variant === 'card'
   const canModify = todo.status === 'pending'
+  const isAwaitingReview = todo.review_status === 'pending_approval'
+  const isRejected = todo.review_status === 'rejected'
+  const isWaitingUser = todo.status === 'waiting_user'
 
   return (
     <div
       className={cn(
         isCard
           ? 'rounded-lg border bg-card'
-          : 'border-t border-border/60 first:border-t-0'
+          : 'border-t border-border/60 first:border-t-0',
+        isAwaitingReview && isCard && 'border-amber-400/70 bg-amber-50/60 dark:bg-amber-950/20',
+        isWaitingUser && isCard && 'border-violet-400/70 bg-violet-50/60 dark:bg-violet-950/20',
       )}
     >
       <div className={cn('flex items-start gap-3', isCard ? 'p-3' : 'py-3 pr-1')}>
@@ -102,7 +113,27 @@ function TodoItem({
                 <span className={cn('truncate font-medium', isCard ? 'text-sm' : 'text-[13px]')}>
                   {todo.title}
                 </span>
+                {isAwaitingReview && (
+                  <Badge variant="outline" className="shrink-0 border-amber-400/70 bg-amber-100/70 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 text-[11px]">
+                    ⏳ 待人工确认
+                  </Badge>
+                )}
+                {isWaitingUser && (
+                  <Badge variant="outline" className="shrink-0 border-violet-400/70 bg-violet-100/70 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300 text-[11px]">
+                    ❓ 待用户输入
+                  </Badge>
+                )}
+                {isRejected && (
+                  <Badge variant="outline" className="shrink-0 border-rose-400/70 bg-rose-100/70 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300 text-[11px]">
+                    🔄 已退回重做
+                  </Badge>
+                )}
               </div>
+              {isRejected && todo.review_reason && (
+                <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                  退回原因：{normalizeEscapedText(todo.review_reason)}
+                </p>
+              )}
             </div>
             <span className="mt-0.5 shrink-0 text-xs text-muted-foreground">
               {todo.assignee.name}
@@ -114,6 +145,30 @@ function TodoItem({
               : <ChevronRight className="size-4 shrink-0 text-muted-foreground mt-0.5" />
           )}
         </button>
+
+        {/* Review actions for todos awaiting human confirmation */}
+        {isAwaitingReview && onReview && (
+          <div className="flex shrink-0 items-center gap-1">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2 text-xs border-emerald-400/70 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300"
+              onClick={() => onReview(todo, 'approve')}
+            >
+              <Check className="mr-1 size-3.5" />
+              通过
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2 text-xs border-rose-400/70 text-rose-700 hover:bg-rose-50 dark:text-rose-300"
+              onClick={() => onReview(todo, 'reject')}
+            >
+              <RotateCcw className="mr-1 size-3.5" />
+              退回重做
+            </Button>
+          </div>
+        )}
 
         {/* Edit/Delete menu for pending todos */}
         {canModify && (

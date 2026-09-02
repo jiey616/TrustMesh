@@ -6,7 +6,11 @@ import type {
   AgentInsights,
   AgentStats,
   AgentTaskItem,
+  CapabilityInfo,
   CreateAgentRequest,
+  CronExecutionsResult,
+  SetCapabilityRequest,
+  SetCapabilityResult,
   UpdateAgentRequest,
 } from '@/types'
 
@@ -42,4 +46,25 @@ export async function listAgentTasks(id: string, status?: string) {
   const searchParams: Record<string, string> = {}
   if (status) searchParams.status = status
   return api.get(`agents/${id}/tasks`, { searchParams }).json<ApiListResponse<AgentTaskItem>>()
+}
+
+export async function getAgentCapabilities(id: string) {
+  return api.get(`agents/${id}/capabilities`).json<ApiResponse<CapabilityInfo>>()
+}
+
+export async function setAgentCapabilities(id: string, input: SetCapabilityRequest) {
+  return api.post(`agents/${id}/capabilities`, { json: input }).json<ApiResponse<SetCapabilityResult>>()
+}
+
+export async function getCronExecutions(id: string, jobId?: string, limit = 20) {
+  const searchParams: Record<string, string> = {}
+  if (jobId) searchParams.jobId = jobId
+  searchParams.limit = String(limit)
+  return api.get(`agents/${id}/cron/executions`, { searchParams }).json<ApiResponse<CronExecutionsResult>>()
+}
+
+export async function uploadSkillFile(id: string, file: File) {
+  const form = new FormData()
+  form.append('file', file)
+  return api.post(`agents/${id}/skills/upload`, { body: form }).json<ApiResponse<{ fileId: string }>>()
 }

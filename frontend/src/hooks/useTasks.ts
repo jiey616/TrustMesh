@@ -3,7 +3,7 @@ import * as tasksApi from '@/api/tasks'
 import { usePageVisibility } from './usePageVisibility'
 import { useRealtimeStatus } from '@/realtime/hooks/useRealtimeStatus'
 import type { CreateTaskInput } from '@/api/tasks'
-import type { AppendTaskMessageRequest, CreatePlanningTaskRequest, ListProjectTasksQuery, RejectPlanRequest, TaskDetail } from '@/types'
+import type { AppendTaskMessageRequest, CreatePlanningTaskRequest, ListProjectTasksQuery, RejectPlanRequest, TaskDetail, Workflow } from '@/types'
 
 function normalizeTaskDetail(task: TaskDetail): TaskDetail {
   return {
@@ -128,8 +128,8 @@ export function useCreatePlanningTask() {
 export function useCreateTaskFromText() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ projectId, content, agentId, fileIds }: { projectId: string; content: string; agentId?: string; fileIds?: string[] }) =>
-      tasksApi.createTaskFromText(projectId, content, agentId, fileIds),
+    mutationFn: ({ projectId, content, agentId, fileIds, workflow }: { projectId: string; content: string; agentId?: string; fileIds?: string[]; workflow?: Workflow }) =>
+      tasksApi.createTaskFromText(projectId, content, agentId, fileIds, workflow),
     onSuccess: (res) => {
       qc.setQueryData(['tasks', 'detail', res.data.id], normalizeTaskDetail(res.data))
       qc.invalidateQueries({ queryKey: ['tasks'] })

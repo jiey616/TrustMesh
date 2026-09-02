@@ -25,7 +25,7 @@ export function AgentStatusCard({ agent }: AgentStatusCardProps) {
           <div className="flex items-center gap-2 min-w-0">
             <Avatar
               fallback={agent.name}
-              seed={agent.id}
+              seed={agent.node_id}
               kind="agent"
               role={agent.role}
               size="sm"

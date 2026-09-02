@@ -16,7 +16,7 @@ export function AssistantPanel() {
   } = useAssistant()
 
   return (
-    <div className="flex flex-col w-[480px] h-[680px] rounded-2xl border bg-background shadow-2xl overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-200">
+    <div className="flex flex-col w-[min(480px,calc(100vw-32px))] h-[min(680px,calc(100vh-96px))] rounded-2xl border bg-background shadow-2xl overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-200">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30">
         <span className="text-sm font-medium">Assistant</span>

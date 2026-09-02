@@ -39,7 +39,7 @@ export function AgentCard({ agent, onEdit, onDelete }: AgentCardProps) {
           <Link to={`/agents/${agent.id}`} className="flex items-center gap-3 min-w-0 flex-1">
             <Avatar
               fallback={agent.name}
-              seed={agent.id}
+              seed={agent.node_id}
               kind="agent"
               role={agent.role}
               size="lg"

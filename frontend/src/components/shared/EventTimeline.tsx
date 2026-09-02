@@ -31,6 +31,8 @@ const eventConfig: Record<EventType, { icon: typeof Circle; color: string; label
   planning_reply: { icon: MessageSquare, color: 'text-info', label: 'PM 规划回复' },
   agent_status_changed: { icon: Radio, color: 'text-warning', label: 'Agent 状态' },
   artifact_received: { icon: Paperclip, color: 'text-info', label: '上传了文件' },
+  todo_ask_received: { icon: MessageSquare, color: 'text-warning', label: '请求确认' },
+  todo_answer_received: { icon: CheckCircle2, color: 'text-success', label: '用户已回复' },
 }
 
 const taskStatusBadge: Record<string, { label: string; variant: 'secondary' | 'info' | 'success' | 'destructive' }> = {

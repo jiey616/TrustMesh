@@ -13,6 +13,8 @@ const statusIcon: Record<TaskStatus, { icon: typeof Circle; className: string }>
   review: { icon: MessageSquareMore, className: 'text-warning' },
   pending: { icon: Circle, className: 'text-muted-foreground' },
   in_progress: { icon: Loader2, className: 'text-info animate-spin' },
+  awaiting_review: { icon: MessageSquareMore, className: 'text-warning' },
+  waiting_user: { icon: MessageSquareMore, className: 'text-warning animate-pulse' },
   done: { icon: CheckCircle2, className: 'text-success' },
   failed: { icon: XCircle, className: 'text-destructive' },
   canceled: { icon: CircleSlash2, className: 'text-muted-foreground' },

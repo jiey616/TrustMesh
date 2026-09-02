@@ -12,6 +12,7 @@ import type {
   Event,
   Comment,
   ListProjectTasksQuery,
+  Workflow,
 } from '@/types'
 
 export interface CreateTaskInput {
@@ -20,6 +21,7 @@ export interface CreateTaskInput {
   priority?: TaskPriority
   assignee_agent_id: string
   file_ids?: string[]
+  workflow?: Workflow
 }
 
 export async function createTask(projectId: string, input: CreateTaskInput) {
@@ -30,9 +32,11 @@ export async function createPlanningTask(projectId: string, input: CreatePlannin
   return api.post(`projects/${projectId}/tasks/planning`, { json: input }).json<ApiResponse<TaskDetail>>()
 }
 
-export async function createTaskFromText(projectId: string, content: string, agentId?: string, fileIds?: string[]) {
+export async function createTaskFromText(projectId: string, content: string, agentId?: string, fileIds?: string[], workflow?: Workflow) {
   return api
-    .post(`projects/${projectId}/tasks/from-text`, { json: { content, agent_id: agentId ?? '', file_ids: fileIds ?? [] } })
+    .post(`projects/${projectId}/tasks/from-text`, {
+      json: { content, agent_id: agentId ?? '', file_ids: fileIds ?? [], workflow: workflow ?? undefined },
+    })
     .json<ApiResponse<TaskDetail>>()
 }
 
@@ -58,6 +62,14 @@ export async function listTaskEvents(id: string) {
 
 export async function dispatchTodo(taskId: string, todoId: string) {
   return api.post(`tasks/${taskId}/todos/${todoId}/dispatch`).json<ApiResponse<TaskDetail>>()
+}
+
+export async function reviewTodo(taskId: string, todoId: string, action: 'approve' | 'reject', reason?: string) {
+  return api.post(`tasks/${taskId}/todos/${todoId}/review`, { json: { action, reason: reason ?? '' } }).json<ApiResponse<TaskDetail>>()
+}
+
+export async function answerTodo(taskId: string, todoId: string, questionId: string, answer: string) {
+  return api.post(`tasks/${taskId}/todos/${todoId}/answer`, { json: { question_id: questionId, answer } }).json<ApiResponse<{ question_id: string }>>()
 }
 
 export async function cancelTask(taskId: string, reason: string) {

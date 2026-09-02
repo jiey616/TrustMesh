@@ -11,6 +11,10 @@ import {
   BookOpen,
   Briefcase,
   Loader2,
+  ExternalLink,
+  Boxes,
+  Settings,
+  Building2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -20,8 +24,10 @@ import { Separator } from '@/components/ui/separator'
 import { Avatar } from '@/components/ui/avatar'
 import { AgentStatusIcon, ProjectWorkStatusDot } from '@/components/shared/StatusBadge'
 import { TrustMeshLogo } from '@/components/shared/TrustMeshLogo'
+import { PlatformName } from '@/components/shared/PlatformName'
 import { useProjects } from '@/hooks/useProjects'
 import { useAgents } from '@/hooks/useAgents'
+import { useExternalApps, useLaunchExternalApp } from '@/hooks/useExternalApps'
 import { useUnreadCount } from '@/hooks/useNotifications'
 import { useJoinRequests } from '@/hooks/useJoinRequests'
 import { useAuthStore } from '@/stores/authStore'
@@ -75,6 +81,8 @@ export function Sidebar({ onCreateProject }: SidebarProps) {
   const { data: unreadCount } = useUnreadCount()
   const platformName = usePlatformStore((s) => s.name)
   const { data: pendingRequests } = useJoinRequests('pending')
+  const { data: externalApps } = useExternalApps()
+  const launchApp = useLaunchExternalApp()
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
   const { setTheme, resolvedTheme } = useThemeStore()
@@ -98,6 +106,7 @@ export function Sidebar({ onCreateProject }: SidebarProps) {
     <aside
       className={cn(
         'flex h-full flex-col border-r bg-sidebar text-sidebar-foreground transition-all duration-200',
+        'dark:bg-[rgba(11,11,16,0.85)] dark:backdrop-blur-xl dark:border-white/[0.06]',
         collapsed ? 'w-16' : 'w-64'
       )}
     >
@@ -106,7 +115,7 @@ export function Sidebar({ onCreateProject }: SidebarProps) {
         {!collapsed && (
           <Link to="/dashboard" className="flex items-center gap-2 font-semibold text-lg">
             <TrustMeshLogo size={28} platformName={platformName} />
-            {platformName}
+            <PlatformName size="sm" />
           </Link>
         )}
         <Button
@@ -134,6 +143,17 @@ export function Sidebar({ onCreateProject }: SidebarProps) {
           >
             <LayoutDashboard className="size-4 shrink-0" />
             {!collapsed && <span>仪表盘</span>}
+          </Link>
+
+          <Link
+            to="/office"
+            className={cn(
+              'flex items-center gap-2 rounded-lg px-2 py-2 text-sm transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+              isActive('/office') && 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
+            )}
+          >
+            <Building2 className="size-4 shrink-0" />
+            {!collapsed && <span>办公室</span>}
           </Link>
 
           <Link
@@ -247,7 +267,7 @@ export function Sidebar({ onCreateProject }: SidebarProps) {
             >
               <Avatar
                 fallback={agent.name}
-                seed={agent.id}
+                seed={agent.node_id}
                 kind="agent"
                 role={agent.role}
                 size="sm"
@@ -283,6 +303,73 @@ export function Sidebar({ onCreateProject }: SidebarProps) {
               <span className="absolute right-1 top-0.5 size-2 rounded-full bg-amber-500" />
             )}
           </Link>
+        </div>
+
+        <Separator className="my-2" />
+
+        {/* 外部应用（常驻启动入口） */}
+        <div className="px-2">
+          {!collapsed && (
+            <div className="mb-1 flex items-center justify-between px-2">
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                外部应用
+              </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-6"
+                title="管理外部应用"
+                render={<Link to="/external-apps" />}
+              >
+                <Settings className="size-3.5" />
+              </Button>
+            </div>
+          )}
+          {externalApps?.map((app) => (
+            <div
+              key={app.id}
+              className={cn(
+                'flex items-center gap-2 rounded-lg px-2 py-2 text-sm transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+              )}
+            >
+              <Boxes className="size-4 shrink-0 text-primary" />
+              {!collapsed && (
+                <>
+                  <span className="truncate flex-1" title={app.name}>
+                    {app.name}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-6 shrink-0"
+                    title="打开"
+                    disabled={app.status !== 'enabled'}
+                    onClick={() =>
+                      launchApp.mutateAsync({ id: app.id, projectId }).then((res) =>
+                        window.open(res.launch_url, '_blank', 'noopener,noreferrer'),
+                      )
+                    }
+                  >
+                    <ExternalLink className="size-3.5" />
+                  </Button>
+                </>
+              )}
+              {collapsed && (
+                <Link to="/external-apps" className="flex-1" title={app.name}>
+                  <span className="sr-only">{app.name}</span>
+                </Link>
+              )}
+            </div>
+          ))}
+          {!collapsed && (!externalApps || externalApps.length === 0) && (
+            <Link
+              to="/external-apps"
+              className="flex items-center gap-2 rounded-lg px-2 py-2 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            >
+              <ExternalLink className="size-4 shrink-0" />
+              <span>去连接外部平台</span>
+            </Link>
+          )}
         </div>
       </ScrollArea>
 

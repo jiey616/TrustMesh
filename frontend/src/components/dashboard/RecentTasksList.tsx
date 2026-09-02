@@ -33,7 +33,7 @@ export function RecentTasksList({ tasks, loading }: RecentTasksListProps) {
               {task.pm_agent ? (
                 <Avatar
                   fallback={task.pm_agent.name}
-                  seed={task.pm_agent.id}
+                  seed={task.pm_agent.node_id}
                   kind="agent"
                   role="pm"
                   size="sm"

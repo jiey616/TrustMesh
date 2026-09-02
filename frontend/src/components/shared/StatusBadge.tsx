@@ -8,6 +8,8 @@ const taskStatusConfig: Record<TaskStatus, { label: string; variant: 'secondary'
   review: { label: '待确认', variant: 'warning' },
   pending: { label: '待处理', variant: 'secondary' },
   in_progress: { label: '进行中', variant: 'info' },
+  awaiting_review: { label: '待人工确认', variant: 'warning' },
+  waiting_user: { label: '待用户输入', variant: 'warning' },
   done: { label: '已完成', variant: 'success' },
   failed: { label: '失败', variant: 'destructive' },
   canceled: { label: '已取消', variant: 'secondary' },
@@ -41,7 +43,7 @@ const projectWorkStatusConfig: Record<ProjectWorkStatus, { label: string; varian
 }
 
 export function TaskStatusBadge({ status }: { status: TaskStatus }) {
-  const config = taskStatusConfig[status]
+  const config = taskStatusConfig[status] ?? { label: status ?? '未知', variant: 'secondary' as const }
   return <Badge variant={config.variant}>{config.label}</Badge>
 }
 

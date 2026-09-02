@@ -3,6 +3,9 @@ import { X, Download, ChevronLeft, ChevronRight, Loader2, FileText, Image, FileC
 import { Button } from '@/components/ui/button'
 import { downloadProjectFile } from '@/api/projectFiles'
 import type { ProjectFile } from '@/types'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { cn, normalizeEscapedText } from '@/lib/utils'
 
 interface Props {
   file: ProjectFile | null
@@ -12,11 +15,12 @@ interface Props {
   onNavigate: (file: ProjectFile) => void
 }
 
-function mimeCategory(mime: string): 'text' | 'image' | 'pdf' | 'csv' | 'code' | 'other' {
+function mimeCategory(mime: string): 'text' | 'image' | 'pdf' | 'csv' | 'code' | 'markdown' | 'other' {
   if (!mime) return 'other'
   if (mime.startsWith('image/')) return 'image'
   if (mime === 'application/pdf') return 'pdf'
   if (mime === 'text/csv' || mime === 'text/tab-separated-values') return 'csv'
+  if (mime === 'text/markdown') return 'markdown'
   const codeMimes = [
     'application/json', 'application/javascript', 'application/xml',
     'text/html', 'text/css', 'application/x-yaml', 'text/yaml',
@@ -193,7 +197,15 @@ export function FilePreview({ file, projectId, files, onClose, onNavigate }: Pro
   const [error, setError] = useState<string | null>(null)
   const prevFileRef = useRef<string | null>(null)
 
-  const category = useMemo(() => file ? mimeCategory(file.mime_type) : 'other', [file])
+  const category = useMemo(() => {
+    if (!file) return 'other'
+    const mimeCat = mimeCategory(file.mime_type)
+    if (mimeCat !== 'text') return mimeCat
+    // Override text → markdown when the file extension indicates Markdown
+    const ext = file.file_name.split('.').pop()?.toLowerCase() ?? ''
+    if (ext === 'md' || ext === 'markdown') return 'markdown'
+    return mimeCat
+  }, [file])
   const lang = useMemo(() => {
     if (!file) return ''
     if (category === 'code' || category === 'text') return guessLang(file.mime_type, file.file_name)
@@ -252,8 +264,20 @@ export function FilePreview({ file, projectId, files, onClose, onNavigate }: Pro
 
   if (!file) return null
 
-  const handleDownload = () => {
-    window.open(`/api/v1/projects/${projectId}/files/${file.id}/content`, '_blank')
+  const handleDownload = async () => {
+    try {
+      const blob = await downloadProjectFile(projectId, file.id)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = file.file_name
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    } catch (e) {
+      console.error('download failed', e)
+    }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -341,6 +365,22 @@ export function FilePreview({ file, projectId, files, onClose, onNavigate }: Pro
 
           {!loading && !error && category === 'pdf' && objectUrl && (
             <PdfView url={objectUrl} fileName={file.file_name} />
+          )}
+
+          {!loading && !error && category === 'markdown' && content !== null && (
+            <div className="overflow-auto h-full px-4 py-2">
+              <div className={cn(
+                'prose prose-sm max-w-none text-foreground dark:prose-invert',
+                'prose-p:my-2 prose-headings:my-3',
+                'prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5',
+                'prose-pre:overflow-x-auto prose-pre:text-xs',
+                'prose-code:text-xs prose-table:text-xs',
+              )}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {normalizeEscapedText(content ?? '', { preserveMarkdownCode: true })}
+                </ReactMarkdown>
+              </div>
+            </div>
           )}
 
           {!loading && !error && (category === 'text' || category === 'code') && content !== null && (

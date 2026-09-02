@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { TaskStatusBadge, PriorityBadge } from '@/components/shared/StatusBadge'
 import { TaskFeed } from './TaskFeed'
+import { TaskTodoSection } from './TaskTodoSection'
 import { TaskThreadSheet } from './TaskThreadSheet'
 import { TaskResultView } from './TaskResult'
 import { TaskDescription } from './TaskDescription'
@@ -15,12 +16,30 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { useTask, useAddTaskComment, useAppendTaskMessage, useCreateTaskFromText, useApprovePlan, useRejectPlan } from '@/hooks/useTasks'
 import { useAgents } from '@/hooks/useAgents'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectTrigger,
+  SelectContent,
+  SelectItem,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { ApiRequestError } from '@/api/client'
+import { reviewTodo } from '@/api/tasks'
 import { downloadProjectFile, uploadProjectFile } from '@/api/projectFiles'
 import { useProjectFiles } from '@/hooks/useProjectFiles'
+import { useProject } from '@/hooks/useProjects'
+import { sourceMeta } from '@/lib/fileSource'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { TaskMessage, TaskDetail, UIResponse, Todo, TaskAttachedFile, ProjectFile } from '@/types'
+import type { TaskMessage, TaskDetail, UIResponse, Todo, TaskAttachedFile, ProjectFile, Workflow } from '@/types'
 import { normalizeEscapedText, cn } from '@/lib/utils'
 
 type TaskWorkspaceProps = {
@@ -97,10 +116,16 @@ function AttachedFileItem({
     }
   }
 
+  const meta = sourceMeta(file.source)
   return (
     <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-muted/40 border text-sm">
       <File className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="flex-1 truncate">{file.file_name}</span>
+      <span
+        className={`shrink-0 text-[10px] leading-none px-1.5 py-0.5 rounded-full border ${meta.cls}`}
+      >
+        {meta.label}
+      </span>
       <span className="shrink-0 text-xs text-muted-foreground">{formatFileSize(file.file_size)}</span>
       <Button
         variant="ghost"
@@ -138,12 +163,14 @@ function PlanReviewPanel({
   onReject,
   isApproving,
   isRejecting,
+  workflow,
 }: {
   todos: Todo[]
   onApprove: () => void
   onReject: (feedback: string) => void
   isApproving: boolean
   isRejecting: boolean
+  workflow?: Workflow
 }) {
   const [showRejectInput, setShowRejectInput] = useState(false)
   const [feedback, setFeedback] = useState('')
@@ -156,7 +183,14 @@ function PlanReviewPanel({
   return (
     <div className="border rounded-xl bg-muted/20 p-4 flex flex-col gap-3">
       <div>
-        <p className="text-sm font-medium">PM 已完成规划，请确认后开始执行</p>
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-medium">PM 已完成规划，请确认后开始执行</p>
+          {workflow && workflow.steps.length > 0 && (
+            <span className="shrink-0 rounded-md bg-primary/10 px-2 py-0.5 text-[11px] text-primary">
+              工作流：{workflow.name || '未命名'}
+            </span>
+          )}
+        </div>
         <p className="text-xs text-muted-foreground mt-1">共 {todos.length} 个子任务</p>
       </div>
 
@@ -227,19 +261,22 @@ function DraftPlanningState({
   onSubmit,
   disabled,
   candidates,
+  workflows,
 }: {
   projectId?: string
-  onSubmit: (content: string, agentId?: string, fileIds?: string[]) => Promise<void>
+  onSubmit: (content: string, agentId?: string, fileIds?: string[], workflow?: Workflow) => Promise<void>
   disabled: boolean
   candidates: TaskMentionCandidate[]
+  workflows?: Workflow[]
 }) {
   const [selectedFiles, setSelectedFiles] = useState<SelectedFile[]>([])
   const [attachOpen, setAttachOpen] = useState(false)
   const [filesPopoverOpen, setFilesPopoverOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [selectedWorkflow, setSelectedWorkflow] = useState<string>('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const attachRef = useRef<HTMLDivElement>(null)
-  const { data: projectFiles } = useProjectFiles(projectId, { source: 'user_upload' })
+  const { data: projectFiles } = useProjectFiles(projectId)
 
   // Close attach dropdown on outside click
   useEffect(() => {
@@ -288,7 +325,8 @@ function DraftPlanningState({
 
   const handleSubmit = async ({ content, mentionAgentIds }: TaskCommentSubmitInput) => {
     const fileIds = selectedFiles.length > 0 ? selectedFiles.map((f) => f.id) : undefined
-    await onSubmit(content, mentionAgentIds[0], fileIds)
+    const wf = workflows?.find((w) => w.name === selectedWorkflow)
+    await onSubmit(content, mentionAgentIds[0], fileIds, wf)
     setSelectedFiles([])
     return true
   }
@@ -302,6 +340,24 @@ function DraftPlanningState({
         <p className="mt-2 text-sm text-muted-foreground">
           描述需求由 PM 规划；输入 @ 直接指派给执行 Agent。
         </p>
+        {workflows && workflows.length > 0 && (
+          <div className="mt-3 flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">工作流</span>
+            <Select value={selectedWorkflow} onValueChange={(v: string | null) => setSelectedWorkflow(v ?? '')}>
+              <SelectTrigger className="h-8 w-56 text-xs">
+                <SelectValue placeholder="不选（PM 自由规划）" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">不选（PM 自由规划）</SelectItem>
+                {workflows.map((w) => (
+                  <SelectItem key={w.name} value={w.name}>
+                    {w.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
 
       <div className="flex-1 min-h-0 px-5 py-6">
@@ -413,13 +469,14 @@ function DraftPlanningState({
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
-              {fileList.length === 0 ? (
+              {                fileList.length === 0 ? (
                 <p className="text-xs text-muted-foreground px-2 py-4 text-center">
-                  暂无文件，请先从本地上传
+                  暂无可用项目文件
                 </p>
               ) : (
                 fileList.map((f) => {
                   const checked = selectedFiles.some((sf) => sf.id === f.id)
+                  const meta = sourceMeta(f.source)
                   return (
                     <label
                       key={f.id}
@@ -434,6 +491,11 @@ function DraftPlanningState({
                       />
                       <File className="size-3.5 text-muted-foreground shrink-0" />
                       <span className="truncate">{f.file_name}</span>
+                      <span
+                        className={`shrink-0 text-[10px] leading-none px-1.5 py-0.5 rounded-full border ${meta.cls}`}
+                      >
+                        {meta.label}
+                      </span>
                       <span className="text-xs text-muted-foreground ml-auto shrink-0">
                         {formatFileSize(f.file_size)}
                       </span>
@@ -458,9 +520,13 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
   const taskId = 'taskId' in props ? props.taskId : undefined
   const projectId = 'projectId' in props ? props.projectId : undefined
   const { data: task } = useTask(taskId)
+  const { data: draftProject } = useProject(projectId)
   const [chatOpen, setChatOpen] = useState(false)
   const [resultOpen, setResultOpen] = useState(false)
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false)
+  const [rejectTodo, setRejectTodo] = useState<Todo | null>(null)
+  const [rejectReason, setRejectReason] = useState('')
+  const [reviewing, setReviewing] = useState(false)
   const planningScrollRef = useRef<HTMLDivElement>(null)
   const addComment = useAddTaskComment()
   const appendTaskMessage = useAppendTaskMessage()
@@ -501,6 +567,44 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
       return messages[index + 1]
     }
     return undefined
+  }
+
+  const handleReview = async (todo: Todo, action: 'approve' | 'reject') => {
+    if (!taskId) {
+      return
+    }
+    if (action === 'reject') {
+      setRejectTodo(todo)
+      setRejectReason('')
+      return
+    }
+    setReviewing(true)
+    try {
+      await reviewTodo(taskId, todo.id, 'approve')
+      toast.success(`${todo.title} 已确认通过`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '操作失败，请稍后重试')
+    } finally {
+      setReviewing(false)
+    }
+  }
+
+  const handleRejectConfirm = async () => {
+    if (!taskId || !rejectTodo) return
+    if (!rejectReason.trim()) {
+      toast.error('请填写退回原因')
+      return
+    }
+    setReviewing(true)
+    try {
+      await reviewTodo(taskId, rejectTodo.id, 'reject', rejectReason.trim())
+      setRejectTodo(null)
+      toast.success(`${rejectTodo.title} 已退回上一个 Todo 重做`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '操作失败，请稍后重试')
+    } finally {
+      setReviewing(false)
+    }
   }
 
   const handleSubmitComment = async ({ content, mentionAgentIds }: TaskCommentSubmitInput) => {
@@ -560,12 +664,12 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     }
   }
 
-  const handleCreateTaskFromText = async (content: string, agentId?: string, fileIds?: string[]) => {
+  const handleCreateTaskFromText = async (content: string, agentId?: string, fileIds?: string[], workflow?: Workflow) => {
     if (!projectId) {
       return
     }
     try {
-      const res = await createTaskFromText.mutateAsync({ projectId, content, agentId, fileIds })
+      const res = await createTaskFromText.mutateAsync({ projectId, content, agentId, fileIds, workflow })
       props.onTaskCreated?.(res.data.id)
     } catch (error) {
       const message = error instanceof ApiRequestError ? error.message : '创建任务失败'
@@ -577,6 +681,8 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
     const executorCandidates: TaskMentionCandidate[] = (allAgents ?? [])
       .filter((a) => a.role !== 'pm')
       .map((a) => ({ id: a.id, name: a.name, roleLabel: '执行 Agent' }))
+
+    const draftWorkflows = draftProject?.workflows ?? []
 
     return (
       <div className="flex flex-col h-full">
@@ -595,6 +701,7 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
           onSubmit={handleCreateTaskFromText}
           disabled={createTaskFromText.isPending}
           candidates={executorCandidates}
+          workflows={draftWorkflows}
         />
       </div>
     )
@@ -687,12 +794,25 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
                   onReject={handleRejectPlan}
                   isApproving={approvePlan.isPending}
                   isRejecting={rejectPlan.isPending}
+                  workflow={task.workflow}
                 />
               )}
             </div>
           </ScrollArea>
         ) : (
-          <TaskFeed taskId={task.id} />
+          <ScrollArea className="h-full px-5 py-4">
+            <div className="flex flex-col gap-4">
+              {task.todos.length > 0 && (
+                <TaskTodoSection
+                  todos={task.todos}
+                  artifacts={task.artifacts ?? []}
+                  defaultCollapsed={false}
+                  onReviewTodo={handleReview}
+                />
+              )}
+              <TaskFeed taskId={task.id} />
+            </div>
+          </ScrollArea>
         )}
       </div>
 
@@ -734,6 +854,32 @@ export function TaskWorkspace(props: TaskWorkspaceProps) {
         onOpenChange={setCancelDialogOpen}
         task={task}
       />
+
+      <Dialog open={!!rejectTodo} onOpenChange={() => !reviewing && setRejectTodo(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>退回重做</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            「{rejectTodo?.title}」的产出不通过，将退回上一个 Todo 重做，并级联重置后续 Todo。退回原因会直接写入前序智能体的重做指令，请给出具体的修改项（如「M-1 第 263 行：广寒宫→广寒弓」），智能体将据此逐条修复。
+          </p>
+          <Input
+            value={rejectReason}
+            onChange={(e) => setRejectReason(e.target.value)}
+            placeholder="请填写退回原因（必填，将作为智能体的重做依据）"
+            className="mt-2"
+            disabled={reviewing}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRejectTodo(null)} disabled={reviewing}>
+              取消
+            </Button>
+            <Button variant="destructive" onClick={handleRejectConfirm} disabled={reviewing}>
+              {reviewing ? '处理中…' : '确认退回'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

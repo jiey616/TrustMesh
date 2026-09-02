@@ -8,6 +8,7 @@ import { ApiRequestError } from '@/api/client'
 import { toast } from 'sonner'
 import agentNetworkSvg from '@/assets/agent-network.svg'
 import { TrustMeshLogo } from '@/components/shared/TrustMeshLogo'
+import { PlatformName } from '@/components/shared/PlatformName'
 import { usePlatformStore } from '@/stores/platformStore'
 
 export function LoginPage() {
@@ -39,17 +40,20 @@ export function LoginPage() {
   return (
     <div className="flex min-h-screen">
       {/* Left: Brand hero */}
-      <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden bg-[#0c0a1a] items-center justify-center">
-        {/* Background gradient layers */}
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,rgba(109,95,245,0.15),transparent_60%)]" />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,rgba(139,127,248,0.1),transparent_60%)]" />
+      <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden bg-[#0a0818] items-center justify-center">
+        {/* Background gradient layers - 更丰富的渐变 */}
+        <div className="absolute inset-0">
+          <div className="absolute top-0 left-0 w-[700px] h-[700px] bg-[radial-gradient(circle,rgba(158,76,255,0.25),transparent_65%)]" />
+          <div className="absolute bottom-0 right-0 w-[500px] h-[500px] bg-[radial-gradient(circle,rgba(232,121,249,0.15),transparent_65%)]" />
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-[radial-gradient(circle,rgba(192,132,252,0.1),transparent_60%)]" />
+        </div>
         {/* Grid overlay */}
-        <div className="absolute inset-0 bg-[linear-gradient(rgba(139,127,248,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(139,127,248,0.03)_1px,transparent_1px)] bg-[size:48px_48px]" />
+        <div className="absolute inset-0 bg-[linear-gradient(rgba(168,85,247,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(168,85,247,0.04)_1px,transparent_1px)] bg-[size:48px_48px]" />
 
         <div className="relative z-10 flex flex-col items-center px-12 max-w-lg">
           {/* Logo */}
           <TrustMeshLogo size={56} className="mb-6" platformName={platformName} />
-          <h2 className="text-3xl font-bold text-white mb-3 text-center">{platformName}</h2>
+          <PlatformName size="lg" className="mb-3" />
           <p className="text-base text-[#a1a1aa] text-center mb-10 leading-relaxed">
             多个 AI Agent 汇聚在同一工作空间，协同编排任务、驱动项目交付
           </p>
@@ -75,7 +79,7 @@ export function LoginPage() {
           {/* Mobile logo */}
           <div className="mb-8 flex flex-col items-center lg:hidden">
             <TrustMeshLogo size={48} className="mb-3" platformName={platformName} />
-            <h1 className="text-xl font-bold">{platformName}</h1>
+            <PlatformName size="md" />
           </div>
 
           <div className="mb-8">

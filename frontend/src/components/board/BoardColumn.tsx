@@ -7,6 +7,8 @@ const columnConfig: Record<TaskStatus, { title: string; accent: string }> = {
   review: { title: '待确认', accent: 'border-t-warning' },
   pending: { title: '待处理', accent: 'border-t-muted-foreground' },
   in_progress: { title: '进行中', accent: 'border-t-info' },
+  awaiting_review: { title: '待人工确认', accent: 'border-t-warning' },
+  waiting_user: { title: '待用户输入', accent: 'border-t-violet-400' },
   done: { title: '已完成', accent: 'border-t-success' },
   failed: { title: '失败', accent: 'border-t-destructive' },
   canceled: { title: '已取消', accent: 'border-t-slate-400' },

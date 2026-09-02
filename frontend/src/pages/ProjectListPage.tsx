@@ -100,7 +100,7 @@ export function ProjectListPage() {
                       <div className="flex items-center gap-1.5">
                         <Avatar
                           fallback={project.pm_agent.name}
-                          seed={project.pm_agent.id}
+                          seed={project.pm_agent.node_id}
                           kind="agent"
                           role="pm"
                           size="sm"

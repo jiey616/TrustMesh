@@ -8,7 +8,7 @@ interface PlatformState {
 }
 
 export const usePlatformStore = create<PlatformState>()((set, get) => ({
-  name: 'TrustMesh',
+  name: '',
   loaded: false,
   fetch: async () => {
     if (get().loaded) return

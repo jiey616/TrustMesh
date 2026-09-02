@@ -10,19 +10,22 @@ import {
   Download,
   Eye,
   Loader2,
+  Send,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Avatar } from '@/components/ui/avatar'
 import { cn, formatRelativeTime, normalizeEscapedText } from '@/lib/utils'
 import { TrustMeshLogo } from '@/components/shared/TrustMeshLogo'
 import { usePlatformStore } from '@/stores/platformStore'
 import { useTaskEvents } from '@/hooks/useTasks'
-import { getTaskArtifactContent } from '@/api/tasks'
+import { getTaskArtifactContent, answerTodo } from '@/api/tasks'
 import { ApiRequestError } from '@/api/client'
 import { FileViewer } from '@/components/task/FileViewer'
 import { toast } from 'sonner'
-import type { Event } from '@/types'
+import type { Event, UIBlock } from '@/types'
+import { UIBlockRenderer } from '@/components/task-thread/UIBlockRenderer'
 
 // ─── 配置 ───
 
@@ -39,6 +42,7 @@ const eventLabel: Record<string, string> = {
   planning_reply: 'PM 回复',
   agent_status_changed: '状态变更',
   artifact_received: '上传文件',
+  todo_ask_received: '请求确认',
 }
 
 const actorRoleBadge: Record<string, { label: string; className: string } | null> = {
@@ -133,7 +137,93 @@ const proseSmall = cn(
 
 // ─── 事件内容渲染 ───
 
-function EventContent({ event }: { event: Event }) {
+// InteractiveQuestionBlock renders an inline, actionable UI block for a
+// todo.ask request: option buttons (point-to-answer) plus a free-text input.
+function InteractiveQuestionBlock({
+  taskId,
+  todoId,
+  questionId,
+  options,
+  onAnswered,
+}: {
+  taskId: string
+  todoId: string
+  questionId: string
+  question: string
+  options: string[]
+  onAnswered?: () => void
+}) {
+  const [value, setValue] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [submitted, setSubmitted] = useState(false)
+
+  const submit = async (answer: string) => {
+    if (!answer.trim() || submitting) return
+    setSubmitting(true)
+    try {
+      await answerTodo(taskId, todoId, questionId, answer.trim())
+      setSubmitted(true)
+      toast.success('已提交，智能体继续执行中')
+      onAnswered?.()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '提交失败，请稍后重试')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (submitted) {
+    return (
+      <div className="rounded-lg border border-violet-400/50 bg-violet-100/50 px-3 py-2 text-xs text-violet-700 dark:bg-violet-900/20 dark:text-violet-300">
+        ✅ 已提交，智能体继续执行中
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-lg border border-violet-400/50 bg-violet-50/50 p-3 dark:bg-violet-950/20">
+      <p className="text-xs font-medium text-muted-foreground mb-2">需要你确认</p>
+      {options.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {options.map((opt) => (
+            <Button
+              key={opt}
+              size="sm"
+              variant="outline"
+              disabled={submitting}
+              className="h-7 px-3 text-xs border-violet-400/60 text-violet-700 hover:bg-violet-200/60 dark:text-violet-300"
+              onClick={() => void submit(opt)}
+            >
+              {opt}
+            </Button>
+          ))}
+        </div>
+      )}
+      <div className="mt-2 flex items-center gap-2">
+        <Input
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={options.length > 0 ? '或输入自定义回答…' : '输入你的回答…'}
+          className="h-8 text-xs"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && value.trim()) void submit(value.trim())
+          }}
+        />
+        <Button
+          size="sm"
+          className="h-8 shrink-0 text-xs"
+          disabled={!value.trim() || submitting}
+          onClick={() => void submit(value.trim())}
+        >
+          {submitting ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+          提交
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function EventContent({ event, taskId, onAnswered }: { event: Event; taskId?: string; onAnswered?: () => void }) {
   const todoTitle = event.metadata.todo_title as string | undefined
   const taskTitle = event.metadata.task_title as string | undefined
   const markdownContent = normalizeEscapedText(event.content ?? '', { preserveMarkdownCode: true })
@@ -229,15 +319,61 @@ function EventContent({ event }: { event: Event }) {
   }
 
   if (event.event_type === 'planning_reply') {
-    return plainContent ? (
-      <QuoteBlock color="border-info/30">
-        <div className={proseSmall}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-            {markdownContent}
-          </ReactMarkdown>
-        </div>
-      </QuoteBlock>
-    ) : <p className="text-sm text-muted-foreground">回复了对话</p>
+    const blocks = event.metadata?.ui_blocks as UIBlock[] | undefined
+    if (!plainContent && !blocks) {
+      return <p className="text-sm text-muted-foreground">回复了对话</p>
+    }
+    return (
+      <div className="flex flex-col gap-1">
+        {plainContent && (
+          <QuoteBlock color="border-info/30">
+            <div className={proseSmall}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {markdownContent}
+              </ReactMarkdown>
+            </div>
+          </QuoteBlock>
+        )}
+        {blocks && blocks.length > 0 && (
+          <div className="rounded-lg border bg-background/60 px-3 py-2">
+            <p className="text-[11px] font-medium text-muted-foreground mb-1">需要你确认</p>
+            <UIBlockRenderer blocks={blocks} />
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  if (event.event_type === 'todo_ask_received') {
+    const questionId = event.metadata.question_id as string | undefined
+    const question = (event.metadata.question as string | undefined) || plainContent
+    const options = (event.metadata.options as string[] | undefined) ?? []
+    const metaTodoId = event.metadata.todo_id as string | undefined
+    const answered = event.metadata.answer as string | undefined
+    const timedOut = event.metadata.timed_out as boolean | undefined
+    return (
+      <div className="flex flex-col gap-1">
+        <p className="text-xs font-medium text-muted-foreground">{todoTitle}</p>
+        <p className="text-sm text-foreground">{question || 'Agent 请求你的确认'}</p>
+        {answered != null ? (
+          <div className="rounded-lg border border-success/40 bg-success/5 px-3 py-2 text-xs text-success-foreground">
+            ✅ 已回答：{answered}
+            {timedOut && <span className="ml-1 text-muted-foreground">（超时未答，智能体自行决断）</span>}
+          </div>
+        ) : (
+          questionId && taskId && (
+            <InteractiveQuestionBlock
+              taskId={taskId}
+              todoId={metaTodoId ?? ''}
+              questionId={questionId}
+              question={question}
+              options={options}
+              onAnswered={onAnswered}
+            />
+          )
+        )}
+      </div>
+    )
   }
 
   if (event.event_type === 'agent_status_changed') {
@@ -363,7 +499,7 @@ function FeedActorAvatar({ event }: { event: Event }) {
   )
 }
 
-function FeedMessage({ event, showHeader }: { event: Event; showHeader: boolean }) {
+function FeedMessage({ event, showHeader, taskId, onAnswered }: { event: Event; showHeader: boolean; taskId?: string; onAnswered?: () => void }) {
   const roleBadge = actorRoleBadge[event.actor_type]
   const isSystem = event.actor_type === 'system'
   const platformName = usePlatformStore((s) => s.name)
@@ -373,7 +509,7 @@ function FeedMessage({ event, showHeader }: { event: Event; showHeader: boolean 
     return (
       <div className="flex gap-3 pl-11">
         <div className="flex-1 min-w-0">
-          <EventContent event={event} />
+          <EventContent event={event} taskId={taskId} onAnswered={onAnswered} />
         </div>
       </div>
     )
@@ -395,7 +531,7 @@ function FeedMessage({ event, showHeader }: { event: Event; showHeader: boolean 
             {formatRelativeTime(event.created_at)}
           </span>
         </div>
-        <EventContent event={event} />
+        <EventContent event={event} taskId={taskId} onAnswered={onAnswered} />
       </div>
     </div>
   )
@@ -408,7 +544,7 @@ interface TaskFeedProps {
 }
 
 export function TaskFeed({ taskId }: TaskFeedProps) {
-  const { data: events, isLoading } = useTaskEvents(taskId)
+  const { data: events, isLoading, refetch: refetchEvents } = useTaskEvents(taskId)
   const scrollRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const [isAtBottom, setIsAtBottom] = useState(true)
@@ -466,7 +602,7 @@ export function TaskFeed({ taskId }: TaskFeedProps) {
             return (
               <div key={event.id}>
                 <div className={cn('py-1.5 rounded-md hover:bg-accent/30 px-2 -mx-2 transition-colors', !showHeader && 'pt-0')}>
-                  <FeedMessage event={event} showHeader={showHeader} />
+                  <FeedMessage event={event} showHeader={showHeader} taskId={taskId} onAnswered={() => void refetchEvents()} />
                 </div>
               </div>
             )

@@ -48,7 +48,7 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
             <>
               <Avatar
                 fallback={task.pm_agent.name}
-                seed={task.pm_agent.id}
+                seed={task.pm_agent.node_id}
                 kind="agent"
                 role="pm"
                 size="sm"

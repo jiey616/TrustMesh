@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { subscribeSSE } from '@/lib/sse'
 import { useAuthStore } from '@/stores/authStore'
+import { emitRealtimeEvent } from './emitter'
 import type { RealtimeEvent } from './types'
 import { RealtimeStatusContext } from './context'
 import type { RealtimeStatus } from './context'
@@ -43,6 +44,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
         setStatus((current) => (current === 'connected' ? 'reconnecting' : 'disconnected'))
       },
       onMessage: (event) => {
+        emitRealtimeEvent(event)
         switch (event.type) {
           case 'notification.created':
             applyNotificationCreated(queryClient, event.payload)

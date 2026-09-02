@@ -1,18 +1,16 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { Paperclip, ChevronDown, ChevronRight, File } from 'lucide-react'
 import { ApiRequestError } from '@/api/client'
 import { useCreateTask } from '@/hooks/useTasks'
 import { useAgents } from '@/hooks/useAgents'
 import { useProjects } from '@/hooks/useProjects'
-import { useProjectFiles } from '@/hooks/useProjectFiles'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectTrigger, SelectContent, SelectItem } from '@/components/ui/select'
-import { Checkbox } from '@/components/ui/checkbox'
-import type { TaskPriority, ProjectFile } from '@/types'
+import { FileSelector } from '@/components/shared/FileSelector'
+import type { TaskPriority } from '@/types'
 
 interface Props {
   open: boolean
@@ -30,85 +28,6 @@ const priorities: { value: TaskPriority; label: string }[] = [
   { value: 'high', label: '高' },
   { value: 'urgent', label: '紧急' },
 ]
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
-function FileCheckboxItem({
-  file,
-  checked,
-  onToggle,
-}: {
-  file: ProjectFile
-  checked: boolean
-  onToggle: (id: string) => void
-}) {
-  return (
-    <label className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted/50 cursor-pointer text-sm">
-      <Checkbox checked={checked} onCheckedChange={() => onToggle(file.id)} />
-      <File className="size-3.5 shrink-0 text-muted-foreground" />
-      <span className="flex-1 truncate">{file.file_name}</span>
-      <span className="shrink-0 text-xs text-muted-foreground">{formatFileSize(file.file_size)}</span>
-    </label>
-  )
-}
-
-function FileSelector({
-  projectId,
-  selectedIds,
-  onToggle,
-}: {
-  projectId: string
-  selectedIds: string[]
-  onToggle: (id: string) => void
-}) {
-  const [expanded, setExpanded] = useState(false)
-  const { data: files, isLoading } = useProjectFiles(projectId, { source: 'user_upload' })
-
-  const fileList = (files ?? []).filter((f) => !f.is_folder)
-  const selectedCount = selectedIds.filter((id) => fileList.some((f) => f.id === id)).length
-
-  return (
-    <div className="flex flex-col gap-2">
-      <button
-        type="button"
-        className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-        onClick={() => setExpanded(!expanded)}
-      >
-        {expanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
-        <Paperclip className="size-3.5" />
-        <span>附加项目文件</span>
-        {selectedCount > 0 && (
-          <span className="text-xs text-primary">({selectedCount} 个已选)</span>
-        )}
-      </button>
-
-      {expanded && (
-        <div className="rounded-md border bg-muted/30 max-h-48 overflow-y-auto">
-          {isLoading ? (
-            <p className="px-3 py-4 text-xs text-muted-foreground text-center">加载中...</p>
-          ) : fileList.length === 0 ? (
-            <p className="px-3 py-4 text-xs text-muted-foreground text-center">
-              暂无文件，请先在项目文件管理中上传
-            </p>
-          ) : (
-            fileList.map((file) => (
-              <FileCheckboxItem
-                key={file.id}
-                file={file}
-                checked={selectedIds.includes(file.id)}
-                onToggle={onToggle}
-              />
-            ))
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
 
 export function CreateTaskDialog({ open, onOpenChange, projectId: fixedProjectId, defaultAgentId, onCreated }: Props) {
   const dialogKey = `${fixedProjectId ?? 'project'}:${defaultAgentId ?? 'agent'}:${open ? 'open' : 'closed'}`

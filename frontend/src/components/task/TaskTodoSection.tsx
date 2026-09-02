@@ -12,6 +12,7 @@ interface TaskTodoSectionProps {
   onAddTodo?: () => void
   onEditTodo?: (todo: Todo) => void
   onDeleteTodo?: (todo: Todo) => void
+  onReviewTodo?: (todo: Todo, action: 'approve' | 'reject') => void
 }
 
 function summarizeTodos(todos: Todo[]) {
@@ -59,6 +60,7 @@ export function TaskTodoSection({
   onAddTodo,
   onEditTodo,
   onDeleteTodo,
+  onReviewTodo,
 }: TaskTodoSectionProps) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed)
   const summary = summarizeTodos(todos)
@@ -88,6 +90,7 @@ export function TaskTodoSection({
             artifacts={artifacts}
             onEditTodo={editable ? onEditTodo : undefined}
             onDeleteTodo={editable ? onDeleteTodo : undefined}
+            onReviewTodo={onReviewTodo}
           />
           {editable && onAddTodo && (
             <Button

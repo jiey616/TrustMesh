@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { MessageSquarePlus, MoreHorizontal, Pencil, Archive, Loader2, FolderOpen } from 'lucide-react'
+import { MessageSquarePlus, MoreHorizontal, Pencil, Archive, Loader2, FolderOpen, Video, ListChecks, Workflow as WorkflowIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
 import { AgentStatusDot, ProjectStatusBadge, ProjectWorkStatusBadge } from '@/components/shared/StatusBadge'
@@ -10,6 +10,9 @@ import { TaskWorkspace } from '@/components/task/TaskWorkspace'
 import { EditProjectDialog } from '@/components/project/EditProjectDialog'
 import { ArchiveProjectDialog } from '@/components/project/ArchiveProjectDialog'
 import { FileExplorer } from '@/components/project/FileExplorer'
+import { ActionItemsPanel } from '@/components/project/ActionItemsPanel'
+import { WorkflowListPanel } from '@/components/project/WorkflowListPanel'
+import MeetingListPage from '@/pages/MeetingListPage'
 import { useProject } from '@/hooks/useProjects'
 import { useTasks } from '@/hooks/useTasks'
 import { formatDateTime, formatRelativeTime } from '@/lib/utils'
@@ -27,7 +30,7 @@ type WorkspaceState =
   | { kind: 'draft'; projectId: string }
   | null
 
-type ProjectTab = 'tasks' | 'files'
+type ProjectTab = 'tasks' | 'files' | 'meetings' | 'todos' | 'workflows'
 
 export function ProjectBoardPage() {
   const navigate = useNavigate()
@@ -118,7 +121,7 @@ export function ProjectBoardPage() {
               <div className="flex items-center gap-1.5">
                 <Avatar
                   fallback={project.pm_agent.name}
-                  seed={project.pm_agent.id}
+                  seed={project.pm_agent.node_id}
                   kind="agent"
                   role="pm"
                   size="sm"
@@ -199,12 +202,57 @@ export function ProjectBoardPage() {
           <FolderOpen className="size-4" />
           文件
         </button>
+        <button
+          onClick={() => setActiveTab('meetings')}
+          className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'meetings'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <Video className="size-4" />
+          会议室
+        </button>
+        <button
+          onClick={() => setActiveTab('todos')}
+          className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'todos'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <ListChecks className="size-4" />
+          待办
+        </button>
+        <button
+          onClick={() => setActiveTab('workflows')}
+          className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'workflows'
+              ? 'border-primary text-primary'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <WorkflowIcon className="size-4" />
+          工作流
+        </button>
       </div>
 
       {/* Content */}
       {activeTab === 'files' ? (
         <div className="flex-1 min-h-0">
           <FileExplorer projectId={projectId!} />
+        </div>
+      ) : activeTab === 'meetings' ? (
+        <div className="flex-1 min-h-0">
+          <MeetingListPage />
+        </div>
+      ) : activeTab === 'todos' ? (
+        <div className="flex-1 min-h-0">
+          <ActionItemsPanel projectId={projectId!} />
+        </div>
+      ) : activeTab === 'workflows' ? (
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4">
+          <WorkflowListPanel project={project} />
         </div>
       ) : isLoading ? (
         <div className="flex flex-1 items-center justify-center">

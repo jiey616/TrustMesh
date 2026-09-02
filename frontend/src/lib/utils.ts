@@ -38,6 +38,8 @@ export function formatDateTime(dateStr: string): string {
 
 interface NormalizeEscapedTextOptions {
   preserveMarkdownCode?: boolean
+  /** 单换行（非段落分隔）转 GFM 软换行（行尾两空格），渲染为 <br> */
+  softBreak?: boolean
 }
 
 function decodeEscapedControlChars(value: string) {
@@ -48,13 +50,25 @@ function decodeEscapedControlChars(value: string) {
     .replace(/\\t/g, '\t')
 }
 
+// 单换行（前后都不是换行）转 GFM 软换行（行尾两空格），渲染为 <br>；
+// 连续的 \n\n 视为段落分隔，保持不变。
+function toSoftBreaks(value: string): string {
+  return value.replace(/(^|[^\n])\n(?=[^\n])/g, '$1  \n')
+}
+
 export function normalizeEscapedText(value: string | null | undefined, options: NormalizeEscapedTextOptions = {}) {
   if (!value) {
     return ''
   }
 
+  const proc = (s: string): string => {
+    let r = decodeEscapedControlChars(s)
+    if (options.softBreak) r = toSoftBreaks(r)
+    return r
+  }
+
   if (!options.preserveMarkdownCode) {
-    return decodeEscapedControlChars(value)
+    return proc(value)
   }
 
   const markdownCodePattern = /```[\s\S]*?```|`[^`\n]*`/g
@@ -63,12 +77,12 @@ export function normalizeEscapedText(value: string | null | undefined, options: 
 
   for (const match of value.matchAll(markdownCodePattern)) {
     const index = match.index ?? 0
-    result += decodeEscapedControlChars(value.slice(lastIndex, index))
+    result += proc(value.slice(lastIndex, index))
     result += match[0]
     lastIndex = index + match[0].length
   }
 
-  result += decodeEscapedControlChars(value.slice(lastIndex))
+  result += proc(value.slice(lastIndex))
   return result
 }
 

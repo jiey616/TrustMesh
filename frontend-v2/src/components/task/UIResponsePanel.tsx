@@ -1,0 +1,396 @@
+import { useState, useMemo } from 'react'
+import { Button } from 'antd'
+import { LeftOutlined, RightOutlined, SendOutlined } from '@ant-design/icons'
+import type { UIBlock, UIBlockResponse, UIResponse } from '@/types'
+
+interface UIResponsePanelProps {
+  blocks: UIBlock[]
+  onSubmit: (content: string, uiResponse: UIResponse) => void
+  disabled?: boolean
+}
+
+/** 逐步交互面板：逐个呈现 ui_blocks，用户逐步回答，最后确认提交。 */
+export function UIResponsePanel({ blocks, onSubmit, disabled }: UIResponsePanelProps) {
+  const [currentStep, setCurrentStep] = useState(0)
+  const [responses, setResponses] = useState<Record<string, UIBlockResponse>>({})
+
+  const interactiveBlocks = useMemo(() => blocks.filter((b) => b.type !== 'info'), [blocks])
+  const totalSteps = interactiveBlocks.length
+  const isReviewStep = currentStep >= totalSteps
+  const currentBlock = interactiveBlocks[currentStep]
+
+  const updateResponse = (blockId: string, response: UIBlockResponse) => {
+    setResponses((prev) => ({ ...prev, [blockId]: response }))
+  }
+
+  const canProceed = (): boolean => {
+    if (isReviewStep) return true
+    if (!currentBlock) return false
+    const resp = responses[currentBlock.id]
+    switch (currentBlock.type) {
+      case 'single_select':
+        return (resp?.selected?.length ?? 0) > 0
+      case 'text_input':
+        return currentBlock.required !== true || (resp?.text?.trim().length ?? 0) > 0
+      case 'confirm':
+        return resp?.confirmed != null
+      default:
+        return true
+    }
+  }
+
+  const handleNext = () => {
+    if (canProceed() && currentStep < totalSteps) setCurrentStep(currentStep + 1)
+  }
+
+  const handleSubmit = () => {
+    const content = generateSummary(blocks, responses)
+    onSubmit(content, { blocks: responses })
+  }
+
+  const steps = interactiveBlocks.map((_, i) => i)
+  const allSteps = [...steps, steps.length] // +1 确认步骤
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 12,
+        borderRadius: 16,
+        border: '1px solid rgba(109,95,245,0.2)',
+        background: 'rgba(109,95,245,0.04)',
+        padding: 14,
+      }}
+    >
+      {/* 步骤指示器 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {allSteps.map((i) => {
+          const active = i === currentStep
+          const done = i < currentStep
+          const isConfirmDot = i === steps.length
+          return (
+            <span
+              key={i}
+              onClick={() => i < currentStep && setCurrentStep(i)}
+              style={{
+                height: 6,
+                width: active ? 22 : 16,
+                borderRadius: 999,
+                background: active ? '#6d5ff5' : done || isConfirmDot ? 'rgba(109,95,245,0.5)' : 'rgba(255,255,255,0.12)',
+                transition: 'all 0.2s',
+                cursor: i < currentStep ? 'pointer' : 'default',
+              }}
+            />
+          )
+        })}
+      </div>
+
+      {isReviewStep ? (
+        <ReviewStep blocks={blocks} responses={responses} onEdit={setCurrentStep} interactiveBlocks={interactiveBlocks} />
+      ) : currentBlock ? (
+        <StepContent
+          block={currentBlock}
+          response={responses[currentBlock.id]}
+          onUpdate={(resp) => updateResponse(currentBlock.id, resp)}
+          stepIndex={currentStep}
+          totalSteps={totalSteps}
+        />
+      ) : null}
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Button
+          size="small"
+          type="text"
+          icon={<LeftOutlined />}
+          disabled={currentStep === 0}
+          onClick={() => currentStep > 0 && setCurrentStep(currentStep - 1)}
+        >
+          上一步
+        </Button>
+        {isReviewStep ? (
+          <Button
+            size="small"
+            type="primary"
+            icon={<SendOutlined />}
+            disabled={disabled}
+            onClick={handleSubmit}
+          >
+            提交
+          </Button>
+        ) : (
+          <Button size="small" type="primary" disabled={!canProceed()} onClick={handleNext}>
+            下一步
+            <RightOutlined />
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function StepContent({
+  block,
+  response,
+  onUpdate,
+  stepIndex,
+  totalSteps,
+}: {
+  block: UIBlock
+  response?: UIBlockResponse
+  onUpdate: (resp: UIBlockResponse) => void
+  stepIndex: number
+  totalSteps: number
+}) {
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{block.label}</span>
+        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{stepIndex + 1} / {totalSteps}</span>
+      </div>
+      {block.type === 'single_select' && <SelectBlockInteractive block={block} response={response} onUpdate={onUpdate} />}
+      {block.type === 'text_input' && <TextInputBlockInteractive block={block} response={response} onUpdate={onUpdate} />}
+      {block.type === 'confirm' && <ConfirmBlockInteractive block={block} response={response} onUpdate={onUpdate} />}
+    </div>
+  )
+}
+
+function SelectBlockInteractive({
+  block,
+  response,
+  onUpdate,
+}: {
+  block: UIBlock
+  response?: UIBlockResponse
+  onUpdate: (resp: UIBlockResponse) => void
+}) {
+  const selected = response?.selected ?? block.default ?? []
+  const toggle = (value: string) => {
+    if (block.multiple) {
+      onUpdate({
+        selected: selected.includes(value) ? selected.filter((v) => v !== value) : [...selected, value],
+      })
+    } else {
+      onUpdate({ selected: [value] })
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {block.multiple && <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>可多选</span>}
+      {block.options?.map((opt) => {
+        const isSelected = selected.includes(opt.value)
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => toggle(opt.value)}
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 10,
+              borderRadius: 10,
+              border: `1px solid ${isSelected ? 'rgba(109,95,245,0.6)' : 'rgba(255,255,255,0.1)'}`,
+              background: isSelected ? 'rgba(109,95,245,0.1)' : 'rgba(255,255,255,0.02)',
+              padding: '8px 12px',
+              textAlign: 'left',
+              cursor: 'pointer',
+              transition: 'all 0.15s',
+              fontFamily: 'inherit',
+            }}
+          >
+            <span
+              style={{
+                flexShrink: 0,
+                width: 16,
+                height: 16,
+                marginTop: 2,
+                borderRadius: '50%',
+                border: `2px solid ${isSelected ? '#6d5ff5' : 'rgba(255,255,255,0.3)'}`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: isSelected ? '#6d5ff5' : 'transparent',
+              }}
+            >
+              {isSelected && <span style={{ color: '#fff', fontSize: 10, lineHeight: 1 }}>✓</span>}
+            </span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: 'block', fontSize: 13, color: isSelected ? '#fff' : 'rgba(255,255,255,0.85)', fontWeight: isSelected ? 500 : 400 }}>
+                {opt.label}
+              </span>
+              {opt.description && (
+                <span style={{ display: 'block', fontSize: 12, color: 'rgba(255,255,255,0.5)', marginTop: 2 }}>
+                  {opt.description}
+                </span>
+              )}
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function TextInputBlockInteractive({
+  block,
+  response,
+  onUpdate,
+}: {
+  block: UIBlock
+  response?: UIBlockResponse
+  onUpdate: (resp: UIBlockResponse) => void
+}) {
+  return (
+    <div>
+      {block.required === false && (
+        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginBottom: 6, display: 'block' }}>选填</span>
+      )}
+      <textarea
+        value={response?.text ?? ''}
+        onChange={(e) => onUpdate({ text: e.target.value })}
+        placeholder={block.placeholder ?? '请输入...'}
+        rows={3}
+        style={{
+          width: '100%',
+          background: 'rgba(0,0,0,0.25)',
+          border: '1px solid rgba(255,255,255,0.12)',
+          borderRadius: 10,
+          padding: '8px 12px',
+          color: '#fff',
+          fontSize: 13,
+          lineHeight: 1.6,
+          resize: 'none',
+          outline: 'none',
+          fontFamily: 'inherit',
+        }}
+      />
+    </div>
+  )
+}
+
+function ConfirmBlockInteractive({
+  block,
+  response,
+  onUpdate,
+}: {
+  block: UIBlock
+  response?: UIBlockResponse
+  onUpdate: (resp: UIBlockResponse) => void
+}) {
+  const confirmed = response?.confirmed
+  return (
+    <div style={{ display: 'flex', gap: 10 }}>
+      <button
+        type="button"
+        onClick={() => onUpdate({ confirmed: true })}
+        style={{
+          flex: 1,
+          borderRadius: 10,
+          border: `2px solid ${confirmed === true ? '#10b981' : 'rgba(255,255,255,0.12)'}`,
+          background: confirmed === true ? 'rgba(16,185,129,0.1)' : 'transparent',
+          padding: '10px 12px',
+          color: confirmed === true ? '#34d399' : 'rgba(255,255,255,0.8)',
+          fontSize: 13,
+          fontWeight: 500,
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+        }}
+      >
+        {block.confirm_label ?? '确认'}
+      </button>
+      <button
+        type="button"
+        onClick={() => onUpdate({ confirmed: false })}
+        style={{
+          flex: 1,
+          borderRadius: 10,
+          border: `2px solid ${confirmed === false ? '#f59e0b' : 'rgba(255,255,255,0.12)'}`,
+          background: confirmed === false ? 'rgba(245,158,11,0.1)' : 'transparent',
+          padding: '10px 12px',
+          color: confirmed === false ? '#fbbf24' : 'rgba(255,255,255,0.8)',
+          fontSize: 13,
+          fontWeight: 500,
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+        }}
+      >
+        {block.cancel_label ?? '取消'}
+      </button>
+    </div>
+  )
+}
+
+function ReviewStep({
+  blocks,
+  responses,
+  onEdit,
+  interactiveBlocks,
+}: {
+  blocks: UIBlock[]
+  responses: Record<string, UIBlockResponse>
+  onEdit: (step: number) => void
+  interactiveBlocks: UIBlock[]
+}) {
+  return (
+    <div>
+      <div style={{ fontSize: 13, fontWeight: 600, color: '#fff', marginBottom: 10 }}>确认你的选择</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {blocks.map((block) => {
+          const resp = responses[block.id]
+          const editIndex = interactiveBlocks.findIndex((b) => b.id === block.id)
+          return (
+            <div key={block.id} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.04)', borderRadius: 8, padding: '6px 10px' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{block.label}</div>
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {formatBlockResponse(block, resp)}
+                </div>
+              </div>
+              {editIndex >= 0 && (
+                <button
+                  type="button"
+                  onClick={() => onEdit(editIndex)}
+                  style={{ fontSize: 11, color: '#6d5ff5', background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0 }}
+                >
+                  修改
+                </button>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function formatBlockResponse(block: UIBlock, response?: UIBlockResponse): string {
+  if (!response) return '未填写'
+  switch (block.type) {
+    case 'single_select': {
+      const labels = (response.selected ?? [])
+        .map((v) => block.options?.find((o) => o.value === v)?.label ?? v)
+      return labels.length > 0 ? labels.join('、') : '未选择'
+    }
+    case 'text_input':
+      return response.text?.trim() || '未填写'
+    case 'confirm':
+      if (response.confirmed === true) return block.confirm_label ?? '已确认'
+      if (response.confirmed === false) return block.cancel_label ?? '已取消'
+      return '未确认'
+    default:
+      return ''
+  }
+}
+
+function generateSummary(blocks: UIBlock[], responses: Record<string, UIBlockResponse>): string {
+  const parts: string[] = []
+  for (const block of blocks) {
+    if (block.type === 'info') continue
+    const text = formatBlockResponse(block, responses[block.id])
+    if (text && text !== '未填写' && text !== '未选择') {
+      parts.push(`${block.label}：${text}`)
+    }
+  }
+  return parts.join('；')
+}

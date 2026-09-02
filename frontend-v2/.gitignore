@@ -1,0 +1,8 @@
+node_modules
+dist
+dist-v2
+dist-v2-*
+.vite-cache*
+*.local
+.DS_Store
+tmp/

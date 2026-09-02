@@ -9,6 +9,7 @@ import { FileTable } from './FileTable'
 import { FilePreview } from './FilePreview'
 import { UploadFileDialog } from './UploadFileDialog'
 import { RenameDialog } from './RenameDialog'
+import { downloadProjectFile } from '@/api/projectFiles'
 
 interface Props {
   projectId: string
@@ -111,8 +112,22 @@ export function FileExplorer({ projectId }: Props) {
   }, [])
 
   // ─── file download ───
-  const handleDownload = useCallback((file: ProjectFile) => {
-    window.open(`/api/v1/projects/${projectId}/files/${file.id}/content`, '_blank')
+  const handleDownload = useCallback(async (file: ProjectFile) => {
+    if (file.is_folder) return
+    try {
+      const blob = await downloadProjectFile(projectId, file.id)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = file.file_name
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    } catch (e) {
+      console.error('download failed', e)
+      toast.error('下载失败')
+    }
   }, [projectId])
 
   // ─── delete ───

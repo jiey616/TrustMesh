@@ -7,6 +7,7 @@ import * as authApi from '@/api/auth'
 import { ApiRequestError } from '@/api/client'
 import agentNetworkSvg from '@/assets/agent-network.svg'
 import { TrustMeshLogo } from '@/components/shared/TrustMeshLogo'
+import { PlatformName } from '@/components/shared/PlatformName'
 import { usePlatformStore } from '@/stores/platformStore'
 
 const MIN_PASSWORD_LENGTH = 8
@@ -62,7 +63,7 @@ export function RegisterPage() {
 
         <div className="relative z-10 flex flex-col items-center px-12 max-w-lg">
           <TrustMeshLogo size={56} className="mb-6" platformName={platformName} />
-          <h2 className="text-3xl font-bold text-white mb-3 text-center">{platformName}</h2>
+          <PlatformName size="lg" className="mb-3" />
           <p className="text-base text-[#a1a1aa] text-center mb-10 leading-relaxed">
             多个 AI Agent 汇聚在同一工作空间，协同编排任务、驱动项目交付
           </p>
@@ -86,7 +87,7 @@ export function RegisterPage() {
           {/* Mobile logo */}
           <div className="mb-8 flex flex-col items-center lg:hidden">
             <TrustMeshLogo size={48} className="mb-3" platformName={platformName} />
-            <h1 className="text-xl font-bold">{platformName}</h1>
+            <PlatformName size="md" />
           </div>
 
           <div className="mb-8">

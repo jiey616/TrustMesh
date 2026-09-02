@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MainLayout } from '@/components/layout/MainLayout'
@@ -13,6 +13,12 @@ import { InboxPage } from '@/pages/InboxPage'
 import { KnowledgePage } from '@/pages/KnowledgePage'
 import { MarketPage } from '@/pages/MarketPage'
 import { RoleDetailPage } from '@/pages/RoleDetailPage'
+import MeetingListPage from '@/pages/MeetingListPage'
+import MeetingRoomPage from '@/pages/MeetingRoomPage'
+import { ExternalAppsPage } from '@/pages/ExternalAppsPage'
+
+// 办公室可视化页路由级懒加载，pixi.js 独立打包
+const OfficePage = lazy(() => import('@/pages/OfficePage'))
 import { useAuthStore } from '@/stores/authStore'
 import { Toaster } from '@/components/ui/sonner'
 import { RealtimeProvider } from '@/realtime/provider'
@@ -89,14 +95,25 @@ export default function App() {
                 }
               >
                 <Route path="/dashboard" element={<DashboardPage />} />
+                <Route
+                  path="/office"
+                  element={
+                    <Suspense fallback={null}>
+                      <OfficePage />
+                    </Suspense>
+                  }
+                />
                 <Route path="/inbox" element={<InboxPage />} />
                 <Route path="/projects" element={<ProjectListPage />} />
                 <Route path="/projects/:projectId" element={<ProjectBoardPage />} />
+                <Route path="/projects/:projectId/meetings" element={<MeetingListPage />} />
+                <Route path="/projects/:projectId/meetings/:meetingId" element={<MeetingRoomPage />} />
                 <Route path="/agent-invite" element={<AgentInvitePage />} />
                 <Route path="/agents/:id" element={<AgentDetailPage />} />
                 <Route path="/knowledge" element={<KnowledgePage />} />
                 <Route path="/market" element={<MarketPage />} />
                 <Route path="/market/roles/:id" element={<RoleDetailPage />} />
+                <Route path="/external-apps" element={<ExternalAppsPage />} />
               </Route>
 
               {/* Redirect */}

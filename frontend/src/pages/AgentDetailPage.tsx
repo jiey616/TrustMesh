@@ -25,6 +25,7 @@ import { AgentTaskList } from '@/components/agent/AgentTaskList'
 import { AgentConfigDialog } from '@/components/agent/AgentConfigDialog'
 import { ArchiveAgentDialog } from '@/components/agent/ArchiveAgentDialog'
 import { AgentChatPanel } from '@/components/agent/AgentChatPanel'
+import { HermesJobsTab, HermesSkillsTab, HermesModelsTab } from '@/components/agent/HermesCapabilityTab'
 import { CreateTaskDialog } from '@/components/task/CreateTaskDialog'
 import { Avatar } from '@/components/ui/avatar'
 import type { EventType } from '@/types'
@@ -41,6 +42,24 @@ function CopyIcon({ value }: { value: string }) {
     >
       {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
     </button>
+  )
+}
+
+// 产品标识徽章：显示 Agent 的产品归属（trustmesh 平台原生 / hermes / opc / 其他）
+const productBadgeStyle: Record<string, 'secondary' | 'info' | 'success' | 'warning' | 'outline'> = {
+  trustmesh: 'secondary',
+  hermes: 'info',
+  opc: 'success',
+  openclaw: 'warning',
+}
+
+function ProductBadge({ product }: { product: string }) {
+  const value = product || 'trustmesh'
+  const variant = productBadgeStyle[value] ?? 'outline'
+  return (
+    <Badge variant={variant} className="text-xs" title={`产品标识: ${value}`}>
+      {value}
+    </Badge>
   )
 }
 
@@ -111,7 +130,7 @@ export function AgentDetailPage() {
           <div className="relative flex items-center gap-3">
             <Avatar
               fallback={agent.name}
-              seed={agent.id}
+              seed={agent.node_id}
               kind="agent"
               role={agent.role}
               size="lg"
@@ -120,6 +139,7 @@ export function AgentDetailPage() {
               <div className="flex items-center gap-2">
                 <h1 className="text-lg font-bold truncate">{agent.name}</h1>
                 <AgentStatusBadge status={agent.status} />
+                <ProductBadge product={agent.product} />
                 {agent.archived && (
                   <Badge variant="secondary" className="text-xs">已离职</Badge>
                 )}
@@ -157,6 +177,13 @@ export function AgentDetailPage() {
                 <TabsTrigger value="chat">对话</TabsTrigger>
                 <TabsTrigger value="tasks">工作记录</TabsTrigger>
                 <TabsTrigger value="activity">活动日志</TabsTrigger>
+                {agent.product === 'hermes' && (
+                  <>
+                    <TabsTrigger value="capability-skills">技能</TabsTrigger>
+                    <TabsTrigger value="capability-models">模型</TabsTrigger>
+                    <TabsTrigger value="capability-jobs">定时任务</TabsTrigger>
+                  </>
+                )}
               </TabsList>
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -246,6 +273,17 @@ export function AgentDetailPage() {
               loading={eventsLoading}
               emptyText="暂无活动记录"
             />
+          </TabsContent>
+
+          {/* Tab: Hermes 定时任务 / 技能 / 模型（仅 hermes 产品节点） */}
+          <TabsContent value="capability-jobs" className="min-h-0 flex-1 overflow-y-auto">
+            {id && <HermesJobsTab agentId={id} />}
+          </TabsContent>
+          <TabsContent value="capability-skills" className="min-h-0 flex-1 overflow-y-auto">
+            {id && <HermesSkillsTab agentId={id} />}
+          </TabsContent>
+          <TabsContent value="capability-models" className="min-h-0 flex-1 overflow-y-auto">
+            {id && <HermesModelsTab agentId={id} />}
           </TabsContent>
         </div>
       </Tabs>

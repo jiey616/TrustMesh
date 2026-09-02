@@ -163,7 +163,7 @@ export function AgentChatPanel({ agent }: AgentChatPanelProps) {
                     {!isUser && (
                       <Avatar
                         fallback={agent.name}
-                        seed={agent.id}
+                        seed={agent.node_id}
                         kind="agent"
                         role={agent.role}
                         size="sm"

@@ -6,10 +6,21 @@ import { TaskResultView } from './TaskResult'
 import { TaskDescription } from './TaskDescription'
 import { TaskTodoSection } from './TaskTodoSection'
 import { useTask } from '@/hooks/useTasks'
+import { reviewTodo } from '@/api/tasks'
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { toast } from 'sonner'
 import { useState } from 'react'
-import type { TaskDetail } from '@/types'
+import type { TaskDetail, Todo } from '@/types'
 
 interface TaskSheetProps {
   taskId: string | null
@@ -32,6 +43,44 @@ export function TaskSheet({ taskId, onClose }: TaskSheetProps) {
 
 function TaskSheetBody({ task }: { task: TaskDetail }) {
   const [tab, setTab] = useState('feed')
+  const [rejectTodo, setRejectTodo] = useState<Todo | null>(null)
+  const [rejectReason, setRejectReason] = useState('')
+  const [reviewing, setReviewing] = useState(false)
+
+  const handleReview = async (todo: Todo, action: 'approve' | 'reject') => {
+    if (action === 'reject') {
+      setRejectTodo(todo)
+      setRejectReason('')
+      return
+    }
+    setReviewing(true)
+    try {
+      await reviewTodo(task.id, todo.id, 'approve')
+      toast.success(`${todo.title} 已确认通过`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '操作失败，请稍后重试')
+    } finally {
+      setReviewing(false)
+    }
+  }
+
+  const handleRejectConfirm = async () => {
+    if (!rejectTodo) return
+    if (!rejectReason.trim()) {
+      toast.error('请填写退回原因')
+      return
+    }
+    setReviewing(true)
+    try {
+      await reviewTodo(task.id, rejectTodo.id, 'reject', rejectReason.trim())
+      setRejectTodo(null)
+      toast.success(`${rejectTodo.title} 已退回上一个 Todo 重做`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '操作失败，请稍后重试')
+    } finally {
+      setReviewing(false)
+    }
+  }
 
   return (
     <>
@@ -49,7 +98,11 @@ function TaskSheetBody({ task }: { task: TaskDetail }) {
       <Separator className="my-4" />
 
       <div className="flex flex-1 flex-col gap-4 px-6 pb-6">
-        <TaskTodoSection todos={task.todos} artifacts={task.artifacts} />
+        <TaskTodoSection
+          todos={task.todos}
+          artifacts={task.artifacts}
+          onReviewTodo={handleReview}
+        />
 
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
@@ -70,6 +123,32 @@ function TaskSheetBody({ task }: { task: TaskDetail }) {
           </TabsContent>
         </Tabs>
       </div>
+
+      <Dialog open={!!rejectTodo} onOpenChange={() => !reviewing && setRejectTodo(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>退回重做</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            「{rejectTodo?.title}」的产出不通过，将退回上一个 Todo 重做，并级联重置后续 Todo。退回原因会直接写入前序智能体的重做指令，请给出具体的修改项（如「M-1 第 263 行：广寒宫→广寒弓」），智能体将据此逐条修复。
+          </p>
+          <Input
+            value={rejectReason}
+            onChange={(e) => setRejectReason(e.target.value)}
+            placeholder="请填写退回原因（必填，将作为智能体的重做依据）"
+            className="mt-2"
+            disabled={reviewing}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRejectTodo(null)} disabled={reviewing}>
+              取消
+            </Button>
+            <Button variant="destructive" onClick={handleRejectConfirm} disabled={reviewing}>
+              {reviewing ? '处理中…' : '确认退回'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }
