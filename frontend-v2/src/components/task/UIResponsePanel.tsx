@@ -3,16 +3,35 @@ import { Button } from 'antd'
 import { LeftOutlined, RightOutlined, SendOutlined } from '@ant-design/icons'
 import type { UIBlock, UIBlockResponse, UIResponse } from '@/types'
 
+export interface UIResponseDraft {
+  step: number
+  responses: Record<string, UIBlockResponse>
+}
+
 interface UIResponsePanelProps {
   blocks: UIBlock[]
   onSubmit: (content: string, uiResponse: UIResponse) => void
   disabled?: boolean
+  /**
+   * 传入后由外部托管步骤与回答（受控），否则退回组件内部 state。
+   * 待确认抽屉靠它把填写进度存进全局草稿——抽屉关掉组件就卸载了，
+   * 不留外部托管的话用户收起再打开，填了一半的内容会全部蒸发。
+   */
+  draft?: UIResponseDraft
+  onDraftChange?: (draft: UIResponseDraft) => void
 }
 
 /** 逐步交互面板：逐个呈现 ui_blocks，用户逐步回答，最后确认提交。 */
-export function UIResponsePanel({ blocks, onSubmit, disabled }: UIResponsePanelProps) {
-  const [currentStep, setCurrentStep] = useState(0)
-  const [responses, setResponses] = useState<Record<string, UIBlockResponse>>({})
+export function UIResponsePanel({ blocks, onSubmit, disabled, draft, onDraftChange }: UIResponsePanelProps) {
+  const [innerStep, setInnerStep] = useState(0)
+  const [innerResponses, setInnerResponses] = useState<Record<string, UIBlockResponse>>({})
+  const currentStep = draft?.step ?? innerStep
+  const responses = draft?.responses ?? innerResponses
+
+  const goStep = (step: number) => {
+    if (onDraftChange) onDraftChange({ step, responses })
+    else setInnerStep(step)
+  }
 
   const interactiveBlocks = useMemo(() => blocks.filter((b) => b.type !== 'info'), [blocks])
   const totalSteps = interactiveBlocks.length
@@ -20,7 +39,9 @@ export function UIResponsePanel({ blocks, onSubmit, disabled }: UIResponsePanelP
   const currentBlock = interactiveBlocks[currentStep]
 
   const updateResponse = (blockId: string, response: UIBlockResponse) => {
-    setResponses((prev) => ({ ...prev, [blockId]: response }))
+    const next = { ...responses, [blockId]: response }
+    if (onDraftChange) onDraftChange({ step: currentStep, responses: next })
+    else setInnerResponses(next)
   }
 
   const canProceed = (): boolean => {
@@ -40,7 +61,7 @@ export function UIResponsePanel({ blocks, onSubmit, disabled }: UIResponsePanelP
   }
 
   const handleNext = () => {
-    if (canProceed() && currentStep < totalSteps) setCurrentStep(currentStep + 1)
+    if (canProceed() && currentStep < totalSteps) goStep(currentStep + 1)
   }
 
   const handleSubmit = () => {
@@ -72,7 +93,7 @@ export function UIResponsePanel({ blocks, onSubmit, disabled }: UIResponsePanelP
           return (
             <span
               key={i}
-              onClick={() => i < currentStep && setCurrentStep(i)}
+              onClick={() => i < currentStep && goStep(i)}
               style={{
                 height: 6,
                 width: active ? 22 : 16,
@@ -87,7 +108,7 @@ export function UIResponsePanel({ blocks, onSubmit, disabled }: UIResponsePanelP
       </div>
 
       {isReviewStep ? (
-        <ReviewStep blocks={blocks} responses={responses} onEdit={setCurrentStep} interactiveBlocks={interactiveBlocks} />
+        <ReviewStep blocks={blocks} responses={responses} onEdit={goStep} interactiveBlocks={interactiveBlocks} />
       ) : currentBlock ? (
         <StepContent
           block={currentBlock}
@@ -104,7 +125,7 @@ export function UIResponsePanel({ blocks, onSubmit, disabled }: UIResponsePanelP
           type="text"
           icon={<LeftOutlined />}
           disabled={currentStep === 0}
-          onClick={() => currentStep > 0 && setCurrentStep(currentStep - 1)}
+          onClick={() => currentStep > 0 && goStep(currentStep - 1)}
         >
           上一步
         </Button>

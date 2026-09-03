@@ -104,11 +104,16 @@ function truncateLines(text: string, maxLines: number): string {
 
 interface TaskTodoPanelProps {
   task: TaskDetail
-  /** 通过/退回人工确认回调 */
-  onReviewTodo?: (todo: Todo, action: 'approve' | 'reject') => void
 }
 
-export function TaskTodoPanel({ task, onReviewTodo }: TaskTodoPanelProps) {
+/**
+ * 只读的执行进度清单。
+ *
+ * 这里刻意不做任何审批动作：「通过 / 退回重做」已全部收进右上角「待确认」抽屉。
+ * 之前按钮长在 todo 行内，清单又被收进 Drawer 后，用户得点两次抽屉才能审一个
+ * todo；拆开之后本组件只负责看进度，职责清楚。
+ */
+export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
   const { message } = App.useApp()
   const { data: agents } = useAgents()
   const addTodo = useAddTaskTodo()
@@ -331,18 +336,6 @@ export function TaskTodoPanel({ task, onReviewTodo }: TaskTodoPanelProps) {
                   return text ? <TodoResultText result={todo.result} /> : null
                 })()}
               </div>
-
-              {/* Review actions */}
-              {isAwaitingReview && onReviewTodo && (
-                <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                  <Button size="small" type="primary" style={{ background: '#10b981', borderColor: '#10b981' }} onClick={() => onReviewTodo(todo, 'approve')}>
-                    通过
-                  </Button>
-                  <Button size="small" style={{ borderColor: '#f43f5e', color: '#f43f5e' }} onClick={() => onReviewTodo(todo, 'reject')}>
-                    退回重做
-                  </Button>
-                </div>
-              )}
 
               {/* Actions */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>

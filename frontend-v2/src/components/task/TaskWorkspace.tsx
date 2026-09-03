@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Tag, Typography, Space, App, Empty, Drawer, Modal, Input, Select, Skeleton, Popover } from 'antd'
+import { Badge, Button, Tag, Typography, Space, App, Empty, Drawer, Select, Skeleton, Popover } from 'antd'
 import {
   CloseOutlined,
   PlusOutlined,
@@ -20,6 +20,7 @@ import {
   DownloadOutlined,
   EyeOutlined,
   UnorderedListOutlined,
+  ExclamationCircleOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import {
@@ -30,10 +31,6 @@ import {
   useTasks,
   useAppendTaskMessage,
   useAddTaskComment,
-  useApprovePlan,
-  useRejectPlan,
-  useReviewTodo,
-  useAnswerTodo,
 } from '@/hooks/useTasks'
 import { useProject } from '@/hooks/useProjects'
 import { useAgents } from '@/hooks/useAgents'
@@ -46,12 +43,14 @@ import { TaskDescription } from '@/components/task/TaskDescription'
 import { TaskResultView } from '@/components/task/TaskResultView'
 import { TaskTodoPanel } from '@/components/task/TaskTodoPanel'
 import { UIBlockRenderer } from '@/components/task/UIBlockRenderer'
-import { UIResponsePanel } from '@/components/task/UIResponsePanel'
+import { PendingApprovalsDrawer } from '@/components/task/PendingApprovalsDrawer'
+import { collectPendingItems, findPendingUIBlocks } from '@/lib/pendingItems'
+import { usePendingStore } from '@/stores/pendingStore'
 import { ThinkingIndicator } from '@/components/task/ThinkingIndicator'
 import { TaskCommentComposer, type TaskMentionCandidate, type TaskCommentSubmitInput } from '@/components/task/TaskCommentComposer'
 import { FileViewer } from '@/components/task/FileViewer'
 import { AgentAvatar } from '@/components/shared/AgentAvatar'
-import type { Todo, TaskMessage, Workflow, Event, EventType, TaskDetail, UIResponse } from '@/types'
+import type { TaskMessage, Workflow, Event, EventType, TaskDetail, UIResponse } from '@/types'
 
 const { Title, Text } = Typography
 
@@ -526,84 +525,32 @@ function MessageBubble({ message, pmName, pmSeed, nextUserResponse, hideUIBlocks
 }
 
 /* ============================================================
- *  Plan review panel
+ *  待确认事项入口提示
  * ============================================================ */
 
-function PlanReviewPanel({
-  todos,
-  onApprove,
-  onReject,
-  isApproving,
-  isRejecting,
-  workflow,
-}: {
-  todos: Todo[]
-  onApprove: () => void
-  onReject: (feedback: string) => void
-  isApproving: boolean
-  isRejecting: boolean
-  workflow?: Workflow
-}) {
-  const [showRejectInput, setShowRejectInput] = useState(false)
-  const [feedback, setFeedback] = useState('')
-
+/**
+ * 确认类交互已统一收到右上角「待确认」抽屉，原位置只留一个入口。
+ * 留提示是为了避免用户面对一个「看着像卡住了、却不知道该点哪」的界面。
+ */
+function PendingHint({ text, onOpen }: { text: string; onOpen: () => void }) {
   return (
-    <div style={{ borderRadius: 14, border: '1px solid rgba(245,158,11,0.25)', background: 'rgba(245,158,11,0.04)', padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 15, fontWeight: 600, color: '#f4f4f8' }}>PM 已完成规划，请确认后开始执行</span>
-          {workflow && workflow.steps.length > 0 && (
-            <Tag color="gold" style={{ margin: 0, fontSize: 12 }}>工作流：{workflow.name || '未命名'}</Tag>
-          )}
-        </div>
-        <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)', marginTop: 4 }}>共 {todos.length} 个子任务</div>
+    <div
+      style={{
+        borderRadius: 12,
+        border: '1px solid rgba(245,158,11,0.25)',
+        background: 'rgba(245,158,11,0.05)',
+        padding: '10px 12px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 10,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        <ExclamationCircleOutlined style={{ color: '#fbbf24', fontSize: 14, flexShrink: 0 }} />
+        <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>{text}</span>
       </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {todos.map((todo, idx) => (
-          <div key={todo.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)', padding: '8px 10px', fontSize: 14 }}>
-            <span style={{ flexShrink: 0, fontSize: 13, color: 'rgba(255,255,255,0.45)', paddingTop: 1 }}>{idx + 1}.</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 500, color: '#f4f4f8' }}>{todo.title}</div>
-              {todo.description && (
-                <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.55)', marginTop: 2, whiteSpace: 'pre-wrap' }}>{todo.description}</div>
-              )}
-            </div>
-            <span style={{ flexShrink: 0, fontSize: 13, color: 'rgba(255,255,255,0.5)', paddingTop: 1 }}>{todo.assignee?.name ?? ''}</span>
-          </div>
-        ))}
-      </div>
-
-      {showRejectInput ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <Input.TextArea
-            value={feedback}
-            onChange={(e) => setFeedback(e.target.value)}
-            placeholder="说明需要调整的地方..."
-            rows={3}
-            style={{ background: 'rgba(0,0,0,0.25)', borderColor: 'rgba(255,255,255,0.12)', color: '#fff', resize: 'none', fontSize: 14 }}
-            autoFocus
-          />
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Button
-              size="small"
-              danger
-              type="primary"
-              disabled={!feedback.trim() || isRejecting}
-              loading={isRejecting}
-              onClick={() => onReject(feedback.trim())}
-            >
-              提交修改意见
-            </Button>
-            <Button size="small" onClick={() => { setShowRejectInput(false); setFeedback('') }}>取消</Button>
-          </div>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Button size="small" type="primary" loading={isApproving} onClick={onApprove}>确认执行</Button>
-          <Button size="small" onClick={() => setShowRejectInput(true)}>修改规划</Button>
-        </div>
-      )}
+      <Button size="small" type="primary" onClick={onOpen} style={{ flexShrink: 0 }}>去处理</Button>
     </div>
   )
 }
@@ -663,122 +610,11 @@ function shouldGroupWithPrev(current: Event, prev: Event | undefined): boolean {
   return diffMs < 2 * 60 * 1000 // 2 分钟内
 }
 
-/* ---------- todo.ask 用户确认交互（执行页面） ---------- */
-
-/** 可交互确认块：选项按钮 + 自由文本输入，提交后展示已提交状态 */
-function InteractiveQuestionBlock({ taskId, todoId, questionId, options }: {
-  taskId: string
-  todoId: string
-  questionId: string
-  options: string[]
-}) {
-  const { message } = App.useApp()
-  const answerTodo = useAnswerTodo()
-  const [value, setValue] = useState('')
-  const [submitted, setSubmitted] = useState(false)
-
-  const submit = async (answer: string) => {
-    if (!answer.trim() || answerTodo.isPending) return
-    try {
-      await answerTodo.mutateAsync({ taskId, todoId, questionId, answer: answer.trim() })
-      setSubmitted(true)
-      setValue('')
-      message.success('已提交，数字员工继续执行中')
-    } catch (err) {
-      message.error(err instanceof Error ? err.message : '提交失败，请稍后重试')
-    }
-  }
-
-  if (submitted) {
-    return (
-      <div
-        style={{
-          marginTop: 6,
-          borderRadius: 10,
-          border: '1px solid rgba(39,166,68,0.35)',
-          background: 'rgba(39,166,68,0.08)',
-          padding: '6px 10px',
-          fontSize: 13,
-          color: '#6dc67f',
-        }}
-      >
-        <CheckCircleOutlined /> 已提交，数字员工继续执行中
-      </div>
-    )
-  }
-
-  return (
-    <div
-      style={{
-        marginTop: 6,
-        borderRadius: 12,
-        border: '1px solid rgba(109,95,245,0.35)',
-        background: 'rgba(109,95,245,0.06)',
-        padding: 12,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 8,
-      }}
-    >
-      <div style={{ fontSize: 12, fontWeight: 600, color: '#a5b4fc', letterSpacing: 0.5 }}>需要你确认</div>
-      {options.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {options.map((opt) => (
-            <button
-              key={opt}
-              type="button"
-              disabled={answerTodo.isPending}
-              onClick={() => void submit(opt)}
-              style={{
-                height: 28,
-                padding: '0 12px',
-                borderRadius: 8,
-                border: '1px solid rgba(109,95,245,0.5)',
-                background: 'rgba(109,95,245,0.1)',
-                color: '#a5b4fc',
-                fontSize: 13,
-                cursor: 'pointer',
-                transition: 'background 0.12s ease',
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(109,95,245,0.2)' }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(109,95,245,0.1)' }}
-            >
-              {opt}
-            </button>
-          ))}
-        </div>
-      )}
-      <div style={{ display: 'flex', gap: 8 }}>
-        <Input
-          size="small"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onPressEnter={() => void submit(value.trim())}
-          disabled={answerTodo.isPending}
-          placeholder={options.length > 0 ? '或输入自定义回答…' : '输入你的回答…'}
-          style={{ flex: 1 }}
-        />
-        <Button
-          size="small"
-          type="primary"
-          icon={<SendOutlined />}
-          disabled={!value.trim() || answerTodo.isPending}
-          loading={answerTodo.isPending}
-          onClick={() => void submit(value.trim())}
-        >
-          提交
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-/** todo_ask_received 事件：已回答 → 展示答案；未回答 → 可交互确认块 */
+/** todo_ask_received 事件：已回答 → 展示答案；未回答 → 提示去右上角待确认抽屉 */
 function TodoAskBlock({ event }: { event: Event }) {
+  const setPendingOpen = usePendingStore((s) => s.setOpen)
   const questionId = event.metadata?.question_id as string | undefined
   const question = (event.metadata?.question as string | undefined) || event.content || '数字员工请求你的确认'
-  const options = (event.metadata?.options as string[] | undefined) ?? []
-  const todoId = (event.metadata?.todo_id as string | undefined) || event.todo_id || ''
   const answer = event.metadata?.answer as string | undefined
   const timedOut = event.metadata?.timed_out as boolean | undefined
 
@@ -805,17 +641,9 @@ function TodoAskBlock({ event }: { event: Event }) {
           <CheckCircleOutlined /> 已确认：{answer}
           {timedOut && <span style={{ color: 'rgba(255,255,255,0.45)', marginLeft: 4 }}>（超时未答，数字员工自行决断）</span>}
         </div>
-      ) : (
-        questionId &&
-        event.task_id && (
-          <InteractiveQuestionBlock
-            taskId={event.task_id}
-            todoId={todoId}
-            questionId={questionId}
-            options={options}
-          />
-        )
-      )}
+      ) : questionId ? (
+        <PendingHint text="数字员工正在等待你的回复" onOpen={() => setPendingOpen(true)} />
+      ) : null}
     </div>
   )
 }
@@ -1017,15 +845,10 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
   const cancelTask = useCancelTask()
   const appendMessage = useAppendTaskMessage()
   const addComment = useAddTaskComment()
-  const approvePlan = useApprovePlan()
-  const rejectPlan = useRejectPlan()
-  const reviewTodo = useReviewTodo()
   const [input, setInput] = useState('')
   const [showCancel, setShowCancel] = useState(false)
   const [resultOpen, setResultOpen] = useState(false)
   const [todoOpen, setTodoOpen] = useState(false)
-  const [rejectTodo, setRejectTodo] = useState<Todo | null>(null)
-  const [rejectReason, setRejectReason] = useState('')
   const feedRef = useRef<HTMLDivElement>(null)
 
   const isPlanningMode = task ? ['planning', 'review'].includes(task.status) : false
@@ -1036,23 +859,13 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
     return { done: todos.filter((t) => t.status === 'done').length, total: todos.length }
   }, [task])
 
-  const pendingUIBlocks = useMemo(() => {
-    if (!task || task.status !== 'planning' || !task.messages?.length) return null
-    // 从最新消息向前找「最近一条未被用户回复的」pm_agent ui_blocks 消息。
-    // 不能只看最后一条：PM 发出结构化提问后，常会再补一条无 blocks 的状态
-    // 消息（如「已发送澄清请求…WAITING」），旧逻辑会让回复面板被顶掉，
-    // 用户从此无法通过 UI 回复（实测卡死规划澄清阶段）。
-    for (let i = task.messages.length - 1; i >= 0; i--) {
-      const msg = task.messages[i]
-      if (!msg) continue
-      if (msg.role === 'user') return null // 用户已回复 → 该轮提问已解决
-      if (msg.role === 'pm_agent' && msg.ui_blocks && msg.ui_blocks.length > 0) {
-        return msg.ui_blocks
-      }
-      // 其他消息（pm 的状态跟进 / system 等）：继续向前找
-    }
-    return null
-  }, [task])
+  // 从最新消息向前找「最近一条未被用户回复的」pm_agent ui_blocks 消息。
+  // 判定逻辑与待确认抽屉共用 lib/pendingItems 的同一份实现，避免两处漂移。
+  const pendingUIBlocks = useMemo(() => findPendingUIBlocks(task)?.blocks ?? null, [task])
+  const pendingItems = useMemo(() => collectPendingItems(task, events), [task, events])
+
+  const pendingOpen = usePendingStore((s) => s.open)
+  const setPendingOpen = usePendingStore((s) => s.setOpen)
 
   useEffect(() => {
     feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: 'smooth' })
@@ -1097,54 +910,6 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
       setShowCancel(false)
     } catch {
       message.error('取消失败')
-    }
-  }
-
-  const handleApprovePlan = async () => {
-    if (!taskId) return
-    try {
-      await approvePlan.mutateAsync({ taskId })
-    } catch {
-      message.error('确认规划失败')
-    }
-  }
-
-  const handleRejectPlan = async (feedback: string) => {
-    if (!taskId) return
-    try {
-      await rejectPlan.mutateAsync({ taskId, feedback })
-    } catch {
-      message.error('提交修改意见失败')
-    }
-  }
-
-  const handleReviewTodo = async (todo: Todo, action: 'approve' | 'reject') => {
-    if (!taskId) return
-    if (action === 'reject') {
-      setRejectTodo(todo)
-      setRejectReason('')
-      return
-    }
-    try {
-      await reviewTodo.mutateAsync({ taskId, todoId: todo.id, action: 'approve' })
-      message.success(`${todo.title} 已确认通过`)
-    } catch (err) {
-      message.error(err instanceof Error ? err.message : '操作失败，请稍后重试')
-    }
-  }
-
-  const handleRejectConfirm = async () => {
-    if (!taskId || !rejectTodo) return
-    if (!rejectReason.trim()) {
-      message.error('请填写退回原因')
-      return
-    }
-    try {
-      await reviewTodo.mutateAsync({ taskId, todoId: rejectTodo.id, action: 'reject', reason: rejectReason.trim() })
-      setRejectTodo(null)
-      message.success(`${rejectTodo.title} 已退回上一个 Todo 重做`)
-    } catch (err) {
-      message.error(err instanceof Error ? err.message : '操作失败，请稍后重试')
     }
   }
 
@@ -1212,6 +977,18 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
               执行清单 {todoStats.done}/{todoStats.total}
             </Button>
           )}
+          {pendingItems.length > 0 && (
+            <Badge count={pendingItems.length} size="small">
+              <Button
+                size="small"
+                icon={<ExclamationCircleOutlined />}
+                style={{ borderColor: '#f59e0b', color: '#fbbf24' }}
+                onClick={() => setPendingOpen(true)}
+              >
+                待确认
+              </Button>
+            </Badge>
+          )}
           <Button size="small" icon={<FileDoneOutlined />} title="查看交付成果" onClick={() => setResultOpen(true)} />
           <Button type="text" icon={<CloseOutlined />} onClick={onClose} />
         </Space>
@@ -1254,16 +1031,7 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
               </div>
             )}
             {task.status === 'planning' && messages[messages.length - 1]?.role === 'user' && <ThinkingIndicator />}
-            {isReview && (
-              <PlanReviewPanel
-                todos={task.todos}
-                onApprove={handleApprovePlan}
-                onReject={handleRejectPlan}
-                isApproving={approvePlan.isPending}
-                isRejecting={rejectPlan.isPending}
-                workflow={task.workflow}
-              />
-            )}
+            {isReview && <PendingHint text="PM 已完成规划，等待你确认方案" onOpen={() => setPendingOpen(true)} />}
             {messages.length === 0 && (
               <Empty description="等待 PM 规划需求…" image={Empty.PRESENTED_IMAGE_SIMPLE} />
             )}
@@ -1304,11 +1072,7 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
         {isPlanningMode ? (
           pendingUIBlocks ? (
             <div style={{ maxWidth: 560, margin: '0 auto' }}>
-              <UIResponsePanel
-                blocks={pendingUIBlocks}
-                onSubmit={(content, uiResponse) => handleSendPlanning(content, uiResponse)}
-                disabled={appendMessage.isPending}
-              />
+              <PendingHint text="PM 有澄清问题等你回答" onOpen={() => setPendingOpen(true)} />
             </div>
           ) : (
             <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
@@ -1373,8 +1137,15 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
         styles={{ body: { background: '#0a0a14', paddingTop: 8 } }}
         style={{ background: '#0a0a14' }}
       >
-        {task && <TaskTodoPanel task={task} onReviewTodo={handleReviewTodo} />}
+        {task && <TaskTodoPanel task={task} />}
       </Drawer>
+
+      {/* 待确认抽屉：方案确认 / 规划澄清 / 执行提问 / 成果审核 */}
+      <PendingApprovalsDrawer
+        open={pendingOpen}
+        onClose={() => setPendingOpen(false)}
+        items={pendingItems}
+      />
 
       {/* 交付成果 Drawer */}
       <Drawer
@@ -1394,27 +1165,6 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
         />
       </Drawer>
 
-      {/* 退回重做 Dialog */}
-      <Modal
-        title="退回重做"
-        open={!!rejectTodo}
-        onCancel={() => setRejectTodo(null)}
-        footer={[
-          <Button key="cancel" onClick={() => setRejectTodo(null)}>取消</Button>,
-          <Button key="ok" danger type="primary" loading={reviewTodo.isPending} onClick={handleRejectConfirm}>确认退回</Button>,
-        ]}
-      >
-        <Text type="secondary" style={{ fontSize: 14 }}>
-          「{rejectTodo?.title}」的产出不通过，将退回上一个 Todo 重做，并级联重置后续 Todo。退回原因将作为数字员工的重做依据。
-        </Text>
-        <Input.TextArea
-          value={rejectReason}
-          onChange={(e) => setRejectReason(e.target.value)}
-          placeholder="请填写退回原因（必填，将作为数字员工的重做依据）"
-          rows={3}
-          style={{ marginTop: 12, background: 'rgba(0,0,0,0.25)', borderColor: 'rgba(255,255,255,0.12)', color: '#fff', resize: 'none', fontSize: 14 }}
-        />
-      </Modal>
     </div>
   )
 }

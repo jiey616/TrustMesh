@@ -698,6 +698,14 @@ export interface TodoQuestion {
   timed_out?: boolean
 }
 
+/** Todo 实际产出、并已绑定到工作流步骤输出位的文件。字段对齐后端 model.TodoOutput */
+export interface TodoOutput {
+  /** 匹配该步骤 StepOutput.name */
+  output_name: string
+  artifact_id?: string
+  file_ref?: string
+}
+
 export interface Todo {
   id: string
   task_id: string
@@ -721,6 +729,8 @@ export interface Todo {
   rework_count?: number
   max_reworks?: number
   questions?: TodoQuestion[]
+  /** agent 上传并认领了输出位的文件，下游步骤据此取「上一个流程的输出文件」 */
+  outputs?: TodoOutput[]
   created_at: string
   updated_at: string
 }
