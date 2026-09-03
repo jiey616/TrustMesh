@@ -38,7 +38,7 @@ const styles: Record<string, React.CSSProperties> = {
     margin: '0.5em 0',
   },
   code: {
-    background: 'rgba(255,255,255,0.1)',
+    background: 'var(--surface-raised)',
     borderRadius: 'var(--radius-control)',
     padding: '1px 5px',
     fontSize: '0.92em',

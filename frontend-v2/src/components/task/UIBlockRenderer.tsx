@@ -52,9 +52,9 @@ function SelectBlockReadonly({ block, response }: { block: UIBlock; response?: U
                 borderRadius: 'var(--radius-pill)',
                 padding: '2px 10px',
                 fontSize: 12,
-                background: isSelected ? 'rgba(109,95,245,0.18)' : 'rgba(255,255,255,0.06)',
-                color: isSelected ? '#8b7ff8' : 'rgba(255,255,255,0.55)',
-                border: `1px solid ${isSelected ? 'rgba(109,95,245,0.5)' : 'rgba(255,255,255,0.08)'}`,
+                background: isSelected ? 'rgba(109,95,245,0.18)' : 'var(--surface-raised)',
+                color: isSelected ? 'var(--signal-hover)' : 'var(--text-tertiary)',
+                border: `1px solid ${isSelected ? 'rgba(109,95,245,0.5)' : 'var(--line)'}`,
                 fontWeight: isSelected ? 500 : 400,
               }}
             >
@@ -99,7 +99,7 @@ function ConfirmBlockReadonly({ block, response }: { block: UIBlock; response?: 
             fontSize: 12,
             fontWeight: 500,
             background: confirmed ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)',
-            color: confirmed ? '#34d399' : '#fbbf24',
+            color: confirmed ? 'var(--success)' : 'var(--warning)',
             border: `1px solid ${confirmed ? 'rgba(16,185,129,0.4)' : 'rgba(245,158,11,0.4)'}`,
           }}
         >

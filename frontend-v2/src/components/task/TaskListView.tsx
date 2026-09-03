@@ -80,15 +80,15 @@ function InlineTodos({ taskId, status }: { taskId: string; status: string }) {
               borderRadius: 'var(--radius-avatar)',
               flexShrink: 0,
               background:
-                todo.status === 'done' ? '#10b981'
-                : todo.status === 'in_progress' ? '#22d3ee'
-                : todo.status === 'failed' ? '#ef4444'
-                : todo.status === 'waiting_user' ? '#f43f5e'
-                : 'rgba(255,255,255,0.3)',
-              boxShadow: todo.status === 'in_progress' ? '0 0 5px #22d3ee' : 'none',
+                todo.status === 'done' ? 'var(--success)'
+                : todo.status === 'in_progress' ? 'var(--cyan)'
+                : todo.status === 'failed' ? 'var(--error)'
+                : todo.status === 'waiting_user' ? 'var(--error)'
+                : 'var(--text-quaternary)',
+              boxShadow: todo.status === 'in_progress' ? '0 0 5px var(--cyan)' : 'none',
             }}
           />
-          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: todo.status === 'done' ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.7)', textDecoration: todo.status === 'done' ? 'line-through' : 'none' }}>
+          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: todo.status === 'done' ? 'var(--text-quaternary)' : 'var(--text-secondary)', textDecoration: todo.status === 'done' ? 'line-through' : 'none' }}>
             {i + 1}. {todo.title}
           </span>
           <span style={{ flexShrink: 0, fontSize: 12, color: 'var(--text-quaternary)' }}>{todo.assignee?.name ?? ''}</span>
@@ -120,8 +120,8 @@ function TaskCard({ task, selected, onTaskClick }: { task: TaskListItem; selecte
           cursor: 'pointer',
           borderRadius: 'var(--radius-control)',
           padding: '9px 12px',
-          background: selected ? 'rgba(109,95,245,0.10)' : 'rgba(255,255,255,0.02)',
-          border: `1px solid ${selected ? 'rgba(109,95,245,0.35)' : 'rgba(255,255,255,0.05)'}`,
+          background: selected ? 'rgba(109,95,245,0.10)' : 'var(--surface-sunken)',
+          border: `1px solid ${selected ? 'rgba(109,95,245,0.35)' : 'var(--line)'}`,
           transition: 'all 0.15s',
         }}
       >
@@ -159,7 +159,7 @@ function TaskCard({ task, selected, onTaskClick }: { task: TaskListItem; selecte
               whiteSpace: 'nowrap',
               fontSize: 14,
               fontWeight: selected ? 600 : 500,
-              color: selected ? '#fff' : 'rgba(255,255,255,0.88)',
+              color: selected ? '#fff' : 'var(--text-primary)',
             }}
           >
             {task.title}
@@ -190,7 +190,7 @@ function TaskCard({ task, selected, onTaskClick }: { task: TaskListItem; selecte
           <span
             style={{
               fontSize: 12,
-              color: priorityColor[task.priority] === 'red' ? '#f87171' : priorityColor[task.priority] === 'orange' ? '#fbbf24' : priorityColor[task.priority] === 'blue' ? '#60a5fa' : '#34d399',
+              color: priorityColor[task.priority] === 'red' ? 'var(--error)' : priorityColor[task.priority] === 'orange' ? 'var(--warning)' : priorityColor[task.priority] === 'blue' ? 'var(--info)' : 'var(--success)',
               background: 'var(--surface)',
               border: '1px solid var(--line)',
               borderRadius: 'var(--radius-control)',
@@ -316,9 +316,9 @@ export function TaskListView({ tasks, selectedTaskId, onTaskClick }: Props) {
                   lineHeight: '16px',
                   padding: '0 8px',
                   borderRadius: 'var(--radius-pill)',
-                  border: `1px solid ${active ? (chip.color ?? 'rgba(109,95,245,0.6)') : 'rgba(255,255,255,0.08)'}`,
+                  border: `1px solid ${active ? (chip.color ?? 'rgba(109,95,245,0.6)') : 'var(--line)'}`,
                   background: active ? (chip.color ? `${chip.color}22` : 'rgba(109,95,245,0.15)') : 'transparent',
-                  color: active ? (chip.color ?? '#8b7ff8') : 'rgba(255,255,255,0.5)',
+                  color: active ? (chip.color ?? 'var(--signal-hover)') : 'var(--text-tertiary)',
                   cursor: 'pointer',
                   fontFamily: 'inherit',
                   transition: 'all 0.15s',

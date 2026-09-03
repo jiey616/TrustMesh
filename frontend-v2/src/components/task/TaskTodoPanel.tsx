@@ -294,8 +294,8 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
             key={todo.id}
             style={{
               borderRadius: 'var(--radius-control)',
-              border: `1px solid ${isAwaitingReview ? 'rgba(245,158,11,0.4)' : 'rgba(255,255,255,0.06)'}`,
-              background: isAwaitingReview ? 'rgba(245,158,11,0.05)' : 'rgba(255,255,255,0.02)',
+              border: `1px solid ${isAwaitingReview ? 'rgba(245,158,11,0.4)' : 'var(--line)'}`,
+              background: isAwaitingReview ? 'rgba(245,158,11,0.05)' : 'var(--surface-sunken)',
               overflow: 'hidden',
               transition: 'all 0.15s',
             }}
@@ -308,13 +308,13 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
                   marginTop: 5,
                   borderRadius: 'var(--radius-avatar)',
                   flexShrink: 0,
-                  background: statusIndicatorColors[todo.status] ?? '#94a3b8',
+                  background: statusIndicatorColors[todo.status] ?? 'var(--surface-raised)',
                   boxShadow: todo.status === 'in_progress' ? `0 0 6px ${statusIndicatorColors[todo.status]}` : 'none',
                 }}
               />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: 13, fontWeight: 500, color: todo.status === 'done' ? 'rgba(255,255,255,0.4)' : '#f4f4f8', textDecoration: todo.status === 'done' ? 'line-through' : 'none' }}>
+                  <span style={{ fontSize: 13, fontWeight: 500, color: todo.status === 'done' ? 'var(--text-quaternary)' : 'var(--text-primary)', textDecoration: todo.status === 'done' ? 'line-through' : 'none' }}>
                     {todo.title}
                   </span>
                   {isAwaitingReview && <Tag color="warning" style={{ margin: 0, fontSize: 12, lineHeight: '16px', height: 18 }}>⏳ 待人工确认</Tag>}
@@ -322,7 +322,7 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
                   <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{todo.assignee?.name ?? '未指派'}</span>
-                  <span style={{ fontSize: 12, color: statusIndicatorColors[todo.status] ?? 'rgba(255,255,255,0.4)' }}>
+                  <span style={{ fontSize: 12, color: statusIndicatorColors[todo.status] ?? 'var(--text-quaternary)' }}>
                     {statusLabels[todo.status] ?? todo.status}
                   </span>
                   {isRejected && todo.review_reason && (

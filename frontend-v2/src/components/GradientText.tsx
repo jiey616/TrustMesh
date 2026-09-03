@@ -17,7 +17,7 @@ interface GradientTextProps {
 
 export function GradientText({
   children,
-  colors = ['#8b7ff8', '#818cf8', '#60a5fa', '#22d3ee'],
+  colors = ['var(--signal-hover)', 'var(--signal-hover)', 'var(--info)', 'var(--cyan)'],
   speed = 4,
   style,
   className,

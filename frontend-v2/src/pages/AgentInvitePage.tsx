@@ -228,7 +228,7 @@ export function AgentInvitePage() {
                     <div style={{ display: 'flex', gap: 12 }}>
                       <Avatar
                         size={48}
-                        style={{ flexShrink: 0, background: 'linear-gradient(135deg, #3b82f6, #22d3ee)' }}
+                        style={{ flexShrink: 0, background: 'linear-gradient(135deg, var(--info), var(--cyan))' }}
                       >
                         {jr.name.slice(0, 1).toUpperCase()}
                       </Avatar>

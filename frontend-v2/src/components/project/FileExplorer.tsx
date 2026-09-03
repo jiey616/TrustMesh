@@ -54,7 +54,7 @@ function CrumbItem({ label, onClick, active }: { label: ReactNode; onClick: () =
       }}
       onMouseEnter={(e) => {
         e.currentTarget.style.background = 'rgba(109,95,245,0.14)'
-        e.currentTarget.style.color = '#a5b4fc'
+        e.currentTarget.style.color = 'var(--signal-hover)'
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.background = 'transparent'

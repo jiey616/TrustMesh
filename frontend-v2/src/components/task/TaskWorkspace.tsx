@@ -307,7 +307,7 @@ function DraftTaskWorkspace({
                   style={{
                     padding: '10px 14px',
                     borderRadius: '14px 14px 4px 14px',
-                    background: 'linear-gradient(135deg, rgba(109,95,245,0.25), rgba(99,102,241,0.2))',
+                    background: 'var(--signal-soft)',
                     border: '1px solid rgba(109,95,245,0.3)',
                     color: 'var(--text-primary)',
                     fontSize: 14,
@@ -396,7 +396,7 @@ function DraftTaskWorkspace({
                         }}
                         title={t.title}
                       >
-                        <span style={{ width: 6, height: 6, borderRadius: 'var(--radius-avatar)', background: cfg?.color ?? '#94a3b8', flexShrink: 0 }} />
+                        <span style={{ width: 6, height: 6, borderRadius: 'var(--radius-avatar)', background: cfg?.color ?? 'var(--surface-raised)', flexShrink: 0 }} />
                         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
                       </button>
                     )
@@ -498,8 +498,8 @@ function MessageBubble({ message, pmName, pmSeed, nextUserResponse, hideUIBlocks
           style={{
             padding: '8px 12px',
             borderRadius: isUser ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
-            background: isUser ? 'linear-gradient(135deg, rgba(109,95,245,0.25), rgba(99,102,241,0.2))' : 'rgba(255,255,255,0.06)',
-            border: `1px solid ${isUser ? 'rgba(109,95,245,0.3)' : 'rgba(255,255,255,0.08)'}`,
+            background: isUser ? 'var(--signal-soft)' : 'var(--surface-raised)',
+            border: `1px solid ${isUser ? 'var(--signal-border)' : 'var(--line)'}`,
             color: 'var(--text-primary)',
             fontSize: 14,
             lineHeight: 1.6,

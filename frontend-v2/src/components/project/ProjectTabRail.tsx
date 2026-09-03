@@ -61,9 +61,9 @@ export function ProjectTabRail({ tabs, activeKey, onChange }: ProjectTabRailProp
         background: active
           ? 'rgba(109,95,245,0.2)'
           : hovered === key
-            ? 'rgba(255,255,255,0.06)'
+            ? 'var(--surface-raised)'
             : 'transparent',
-        color: active ? '#a78bfa' : 'rgba(255,255,255,0.6)',
+        color: active ? 'var(--signal)' : 'var(--text-secondary)',
         fontWeight: active ? 600 : 400,
       }}
     >
@@ -135,7 +135,7 @@ export function ProjectTabRail({ tabs, activeKey, onChange }: ProjectTabRailProp
             justifyContent: expanded ? 'flex-start' : 'center',
             paddingLeft: expanded ? 4 : 0,
             color: 'var(--text-tertiary)',
-            background: hovered === '__toggle' ? 'rgba(255,255,255,0.06)' : 'transparent',
+            background: hovered === '__toggle' ? 'var(--surface-raised)' : 'transparent',
           }}
           title={expanded ? '收起' : '展开'}
         >

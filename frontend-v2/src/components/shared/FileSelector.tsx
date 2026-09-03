@@ -44,7 +44,7 @@ export function FileSelector({
       >
         <PaperClipOutlined />
         <span>{label}</span>
-        {selectedCount > 0 && <span className="text-xs text-[#6d5ff5]">({selectedCount} 个已选)</span>}
+        {selectedCount > 0 && <span className="text-xs text-[color:var(--signal)]">({selectedCount} 个已选)</span>}
       </button>
 
       {expanded && (

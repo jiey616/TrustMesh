@@ -157,7 +157,7 @@ export function MeetingMessageList({ messages, loading, meetingStatus, hostNodeI
                   style={{
                     borderRadius: 'var(--radius-structure)',
                     padding: '12px 16px',
-                    background: isUser ? 'linear-gradient(135deg, #3b82f6, #8b5cf6)' : 'rgba(255,255,255,0.06)',
+                    background: isUser ? 'linear-gradient(135deg, var(--info), var(--signal))' : 'var(--surface-raised)',
                     border: isUser ? 'none' : '1px solid rgba(255,255,255,0.1)',
                     borderBottomRightRadius: isUser ? 6 : 16,
                     borderBottomLeftRadius: isUser ? 16 : 6,

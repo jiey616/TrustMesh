@@ -98,7 +98,7 @@ export function UIResponsePanel({ blocks, onSubmit, disabled, draft, onDraftChan
                 height: 6,
                 width: active ? 22 : 16,
                 borderRadius: 'var(--radius-pill)',
-                background: active ? '#6d5ff5' : done || isConfirmDot ? 'rgba(109,95,245,0.5)' : 'rgba(255,255,255,0.12)',
+                background: active ? 'var(--signal)' : done || isConfirmDot ? 'rgba(109,95,245,0.5)' : 'var(--surface-raised)',
                 transition: 'all 0.2s',
                 cursor: i < currentStep ? 'pointer' : 'default',
               }}
@@ -211,8 +211,8 @@ function SelectBlockInteractive({
               alignItems: 'flex-start',
               gap: 10,
               borderRadius: 'var(--radius-control)',
-              border: `1px solid ${isSelected ? 'rgba(109,95,245,0.6)' : 'rgba(255,255,255,0.1)'}`,
-              background: isSelected ? 'rgba(109,95,245,0.1)' : 'rgba(255,255,255,0.02)',
+              border: `1px solid ${isSelected ? 'rgba(109,95,245,0.6)' : 'var(--line-strong)'}`,
+              background: isSelected ? 'rgba(109,95,245,0.1)' : 'var(--surface-sunken)',
               padding: '8px 12px',
               textAlign: 'left',
               cursor: 'pointer',
@@ -227,17 +227,17 @@ function SelectBlockInteractive({
                 height: 16,
                 marginTop: 2,
                 borderRadius: 'var(--radius-avatar)',
-                border: `2px solid ${isSelected ? '#6d5ff5' : 'rgba(255,255,255,0.3)'}`,
+                border: `2px solid ${isSelected ? 'var(--signal)' : 'var(--line-strong)'}`,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                background: isSelected ? '#6d5ff5' : 'transparent',
+                background: isSelected ? 'var(--signal)' : 'transparent',
               }}
             >
               {isSelected && <span style={{ color: 'var(--text-primary)', fontSize: 10, lineHeight: 1 }}>✓</span>}
             </span>
             <span style={{ flex: 1, minWidth: 0 }}>
-              <span style={{ display: 'block', fontSize: 13, color: isSelected ? '#fff' : 'rgba(255,255,255,0.85)', fontWeight: isSelected ? 500 : 400 }}>
+              <span style={{ display: 'block', fontSize: 13, color: isSelected ? '#fff' : 'var(--text-primary)', fontWeight: isSelected ? 500 : 400 }}>
                 {opt.label}
               </span>
               {opt.description && (
@@ -308,10 +308,10 @@ function ConfirmBlockInteractive({
         style={{
           flex: 1,
           borderRadius: 'var(--radius-control)',
-          border: `2px solid ${confirmed === true ? '#10b981' : 'rgba(255,255,255,0.12)'}`,
+          border: `2px solid ${confirmed === true ? 'var(--success)' : 'var(--line-strong)'}`,
           background: confirmed === true ? 'rgba(16,185,129,0.1)' : 'transparent',
           padding: '10px 12px',
-          color: confirmed === true ? '#34d399' : 'rgba(255,255,255,0.8)',
+          color: confirmed === true ? 'var(--success)' : 'var(--text-primary)',
           fontSize: 13,
           fontWeight: 500,
           cursor: 'pointer',
@@ -326,10 +326,10 @@ function ConfirmBlockInteractive({
         style={{
           flex: 1,
           borderRadius: 'var(--radius-control)',
-          border: `2px solid ${confirmed === false ? '#f59e0b' : 'rgba(255,255,255,0.12)'}`,
+          border: `2px solid ${confirmed === false ? 'var(--warning)' : 'var(--line-strong)'}`,
           background: confirmed === false ? 'rgba(245,158,11,0.1)' : 'transparent',
           padding: '10px 12px',
-          color: confirmed === false ? '#fbbf24' : 'rgba(255,255,255,0.8)',
+          color: confirmed === false ? 'var(--warning)' : 'var(--text-primary)',
           fontSize: 13,
           fontWeight: 500,
           cursor: 'pointer',

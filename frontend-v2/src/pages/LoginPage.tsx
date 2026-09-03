@@ -18,7 +18,7 @@ function BrandHero() {
   const platformName = usePlatformStore((s) => s.name)
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '0 40px', position: 'relative' }}>
-      <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at top left, rgba(109,95,245,0.12), transparent 60%), radial-gradient(ellipse at bottom right, rgba(99,102,241,0.1), transparent 60%)', pointerEvents: 'none' }} />
+      <div style={{ position: 'absolute', inset: 0, background: 'var(--canvas-glow)', pointerEvents: 'none' }} />
       <TrustMeshLogo size={56} style={{ marginBottom: 16 }} platformName={platformName} />
       <div style={{ marginBottom: 12 }}>
         <PlatformName size="lg" />

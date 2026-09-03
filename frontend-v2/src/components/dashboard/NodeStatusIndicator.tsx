@@ -23,7 +23,7 @@ function CopyIcon({ value }: { value: string }) {
           display: 'inline-flex',
           alignItems: 'center',
           cursor: 'pointer',
-          color: copied ? '#22d3ee' : 'rgba(255,255,255,0.4)',
+          color: copied ? 'var(--cyan)' : 'var(--text-quaternary)',
           fontSize: 12,
           marginLeft: 4,
         }}
@@ -40,7 +40,7 @@ export function NodeStatusIndicator() {
   if (isLoading) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-tertiary)' }}>
-        <span style={{ width: 8, height: 8, borderRadius: 'var(--radius-avatar)', background: 'rgba(255,255,255,0.2)' }} />
+        <span style={{ width: 8, height: 8, borderRadius: 'var(--radius-avatar)', background: 'var(--surface-raised)' }} />
         <span>检测中...</span>
       </div>
     )
@@ -71,7 +71,7 @@ export function NodeStatusIndicator() {
             position: 'absolute',
             inset: 0,
             borderRadius: 'var(--radius-avatar)',
-            background: online ? '#22c55e' : '#ef4444',
+            background: online ? 'var(--success)' : 'var(--error)',
           }}
         />
       </span>

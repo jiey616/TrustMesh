@@ -101,14 +101,14 @@ const taskStatusFilters: { label: string; value: TaskStatus | 'all' }[] = [
 ]
 
 const taskStatusIcon: Record<TaskStatus, { icon: React.ComponentType<{ className?: string }>; className: string }> = {
-  planning: { icon: MessageOutlined, className: 'text-[#8b5cf6]' },
-  review: { icon: MessageOutlined, className: 'text-[#f59e0b]' },
+  planning: { icon: MessageOutlined, className: 'text-[color:var(--signal)]' },
+  review: { icon: MessageOutlined, className: 'text-[color:var(--warning)]' },
   pending: { icon: MinusCircleOutlined, className: 'text-white/40' },
-  in_progress: { icon: LoadingOutlined, className: 'text-[#3b82f6]' },
-  awaiting_review: { icon: MessageOutlined, className: 'text-[#f43f5e]' },
-  waiting_user: { icon: MessageOutlined, className: 'text-[#f59e0b]' },
-  done: { icon: CheckCircleOutlined, className: 'text-[#10b981]' },
-  failed: { icon: CloseCircleOutlined, className: 'text-[#ef4444]' },
+  in_progress: { icon: LoadingOutlined, className: 'text-[color:var(--info)]' },
+  awaiting_review: { icon: MessageOutlined, className: 'text-[color:var(--error)]' },
+  waiting_user: { icon: MessageOutlined, className: 'text-[color:var(--warning)]' },
+  done: { icon: CheckCircleOutlined, className: 'text-[color:var(--success)]' },
+  failed: { icon: CloseCircleOutlined, className: 'text-[color:var(--error)]' },
   canceled: { icon: StopOutlined, className: 'text-white/40' },
 }
 
@@ -476,5 +476,5 @@ export function AgentDetailPage() {
 }
 
 function ClockDot() {
-  return <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 'var(--radius-avatar)', background: 'rgba(255,255,255,0.4)', marginRight: 4 }} />
+  return <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 'var(--radius-avatar)', background: 'var(--surface-raised)', marginRight: 4 }} />
 }

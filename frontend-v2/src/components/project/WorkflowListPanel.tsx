@@ -473,7 +473,7 @@ export function WorkflowListPanel({ project }: Props) {
                   gap: 10,
                   transition: 'border-color 0.15s',
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#6d5ff5')}
+                onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--signal)')}
                 onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)')}
               >
                 <NodeIndexOutlined style={{ color: 'var(--signal)', fontSize: 14 }} />

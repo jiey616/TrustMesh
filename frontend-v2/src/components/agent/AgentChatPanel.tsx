@@ -121,7 +121,7 @@ export function AgentChatPanel({ agent }: Props) {
   const renderEmpty = (title: string, desc: string) => (
     <div className="flex h-full min-h-[16rem] flex-col items-center justify-center gap-3 text-center">
       <div className="flex size-12 items-center justify-center rounded-xl bg-white/5">
-        <MessageOutlined className="text-2xl text-[#6d5ff5]" />
+        <MessageOutlined className="text-2xl text-[color:var(--signal)]" />
       </div>
       <div>
         <p className="text-sm font-medium text-white/90">{title}</p>

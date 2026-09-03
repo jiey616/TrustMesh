@@ -31,12 +31,12 @@ const statusConfig: Record<
 }
 
 const rolePalette: { bg: string; color: string }[] = [
-  { bg: 'linear-gradient(135deg, #6d5ff5, #6366f1)', color: 'var(--signal-hover)' },
-  { bg: 'linear-gradient(135deg, #3b82f6, #22d3ee)', color: 'var(--info)' },
-  { bg: 'linear-gradient(135deg, #f59e0b, #f43f5e)', color: 'var(--warning)' },
-  { bg: 'linear-gradient(135deg, #10b981, #22d3ee)', color: 'var(--success)' },
-  { bg: 'linear-gradient(135deg, #ec4899, #a855f7)', color: '#f9a8d4' },
-  { bg: 'linear-gradient(135deg, #06b6d4, #3b82f6)', color: 'var(--cyan)' },
+  { bg: 'linear-gradient(135deg, var(--signal), var(--signal))', color: 'var(--signal-hover)' },
+  { bg: 'linear-gradient(135deg, var(--info), var(--cyan))', color: 'var(--info)' },
+  { bg: 'linear-gradient(135deg, var(--warning), var(--error))', color: 'var(--warning)' },
+  { bg: 'linear-gradient(135deg, var(--success), var(--cyan))', color: 'var(--success)' },
+  { bg: 'linear-gradient(135deg, var(--error), var(--signal))', color: '#f9a8d4' },
+  { bg: 'linear-gradient(135deg, var(--cyan), var(--info))', color: 'var(--cyan)' },
 ]
 
 function getBadgeChar(name?: string, role?: string, stepName?: string): string {
@@ -150,7 +150,7 @@ export function WorkflowProgressPanel({ projectId }: Props) {
               display: 'block',
               height: '100%',
               width: `${pct}%`,
-              background: 'linear-gradient(90deg, #6d5ff5, #22d3ee)',
+              background: 'linear-gradient(90deg, var(--signal), var(--cyan))',
               borderRadius: 'var(--radius-pill)',
               transition: 'width 0.4s ease',
             }}
@@ -165,12 +165,12 @@ export function WorkflowProgressPanel({ projectId }: Props) {
           const isSelected = selected === i
           const isDone = step.status === 'done'
           // 已完成节点灰度展示，未完成保持状态色
-          const nodeColor = isDone ? '#6b7280' : cfg.color
-          const nodeBorder = isDone ? 'rgba(107,114,128,0.3)' : cfg.border
-          const nodeBg = isDone ? 'rgba(107,114,128,0.06)' : isSelected ? cfg.bg : 'var(--surface)'
-          const nodeText = isDone ? 'rgba(255,255,255,0.35)' : '#f4f4f8'
+          const nodeColor = isDone ? 'var(--text-quaternary)' : cfg.color
+          const nodeBorder = isDone ? 'var(--line-strong)' : cfg.border
+          const nodeBg = isDone ? 'var(--surface-raised)' : isSelected ? cfg.bg : 'var(--surface)'
+          const nodeText = isDone ? 'var(--text-quaternary)' : 'var(--text-primary)'
           const rc = isDone
-            ? { bg: 'linear-gradient(135deg, #6b7280, #4b5563)', color: 'var(--text-tertiary)' }
+            ? { bg: 'linear-gradient(135deg, var(--text-quaternary), var(--text-quaternary))', color: 'var(--text-tertiary)' }
             : roleColor(step.role, step.agent_id)
           const badge = getBadgeChar(step.task_title, step.role, step.name)
           return (
@@ -199,7 +199,7 @@ export function WorkflowProgressPanel({ projectId }: Props) {
                       height: 26,
                       borderRadius: 'var(--radius-avatar)',
                       background: rc.bg,
-                      color: isDone ? '#9ca3af' : '#fff',
+                      color: isDone ? 'var(--text-tertiary)' : '#fff',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',

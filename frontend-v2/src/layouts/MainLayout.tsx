@@ -242,7 +242,7 @@ export function MainLayout() {
                         cursor: 'pointer',
                         fontSize: 14,
                         fontWeight: 400,
-                        color: active ? '#a99cff' : 'rgba(255,255,255,0.65)',
+                        color: active ? 'var(--signal-hover)' : 'var(--text-secondary)',
                         background: active ? 'rgba(109,95,245,0.12)' : 'transparent',
                         overflow: 'hidden',
                       }}
@@ -309,7 +309,7 @@ export function MainLayout() {
                   <Avatar
                     size={20}
                     icon={<UserOutlined />}
-                    style={{ background: 'linear-gradient(135deg, #6d5ff5, #6366f1)', flexShrink: 0 }}
+                    style={{ background: 'linear-gradient(135deg, var(--signal), var(--signal))', flexShrink: 0 }}
                   />
                   {!collapsed && (
                     <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

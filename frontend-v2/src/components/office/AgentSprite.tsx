@@ -116,7 +116,7 @@ export function AgentSprite({ visual, slot, color, onClick }: AgentSpriteProps) 
     () =>
       makeLabelTexture(visual.name, {
         fontSize: 38,
-        color: visual.presence === 'offline' ? '#8b8f9e' : '#f4f4f8',
+        color: visual.presence === 'offline' ? 'var(--text-tertiary)' : 'var(--text-primary)',
         background: 'rgba(10,10,18,0.74)',
         borderColor: 'var(--line-strong)',
         bold: true,
@@ -142,8 +142,8 @@ export function AgentSprite({ visual, slot, color, onClick }: AgentSpriteProps) 
         {
           fontSize: 30,
           color: 'var(--text-inverse)',
-          background: dimmed ? '#3f4450' : stateColor,
-          borderColor: dimmed ? '#3f4450' : stateColor,
+          background: dimmed ? 'var(--surface-raised)' : stateColor,
+          borderColor: dimmed ? 'var(--line-strong)' : stateColor,
           paddingX: 18,
           paddingY: 8,
           bold: true,
@@ -161,10 +161,10 @@ export function AgentSprite({ visual, slot, color, onClick }: AgentSpriteProps) 
     () =>
       bubbleText
         ? makeBubbleTexture(bubbleText, {
-            color: visual.bubbleKind === 'question' ? '#0a0a12' : '#e8e8f4',
+            color: visual.bubbleKind === 'question' ? 'var(--text-inverse)' : 'var(--text-primary)',
             background:
               visual.bubbleKind === 'question' ? '#f59e0b' : 'rgba(20,20,34,0.92)',
-            borderColor: visual.bubbleKind === 'question' ? '#f59e0b' : stateColor,
+            borderColor: visual.bubbleKind === 'question' ? 'var(--warning)' : stateColor,
           })
         : null,
     [bubbleText, visual.bubbleKind, stateColor],
@@ -183,9 +183,9 @@ export function AgentSprite({ visual, slot, color, onClick }: AgentSpriteProps) 
       visual.sticker
         ? makeLabelTexture(visual.sticker === 'failed' ? '！' : '✓', {
             fontSize: 64,
-            color: visual.sticker === 'failed' ? '#fecaca' : '#a7f3d0',
+            color: visual.sticker === 'failed' ? 'var(--error)' : 'var(--success)',
             background: visual.sticker === 'failed' ? '#7f1d1d' : '#065f46',
-            borderColor: visual.sticker === 'failed' ? '#ef4444' : '#10b981',
+            borderColor: visual.sticker === 'failed' ? 'var(--error)' : 'var(--success)',
           })
         : null,
     [visual.sticker],

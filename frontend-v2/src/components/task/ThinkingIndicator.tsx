@@ -14,7 +14,7 @@ export function ThinkingIndicator() {
           alignItems: 'center',
           justifyContent: 'center',
           fontSize: 13,
-          background: 'linear-gradient(135deg, #f59e0b, #f43f5e)',
+          background: 'linear-gradient(135deg, var(--warning), var(--error))',
           color: 'var(--text-primary)',
         }}
       >
@@ -28,7 +28,7 @@ export function ThinkingIndicator() {
               width: 5,
               height: 5,
               borderRadius: 'var(--radius-avatar)',
-              background: 'rgba(255,255,255,0.4)',
+              background: 'var(--surface-raised)',
               animation: `tm-blink 1.2s infinite ${i * 0.2}s`,
             }}
           />

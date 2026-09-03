@@ -32,7 +32,7 @@ const DEPT_NEON: Record<string, 'purple' | 'blue' | 'cyan' | 'green' | 'amber' |
 
 function MarkdownBody({ content }: { content: string }) {
   return (
-    <div style={{ fontSize: 14, lineHeight: 1.8, color: '#c8ccd8' }}>
+    <div style={{ fontSize: 14, lineHeight: 1.8, color: 'var(--text-secondary)' }}>
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
       <style>{`
         .role-markdown h1, .role-markdown h2, .role-markdown h3 { color: #f4f4f8; font-weight: 600; margin: 1.2em 0 0.6em; }
@@ -41,7 +41,7 @@ function MarkdownBody({ content }: { content: string }) {
         .role-markdown h3 { font-size: 1.05em; }
         .role-markdown p, .role-markdown li { color: #c8ccd8; }
         .role-markdown a { color: #8b7ff8; }
-        .role-markdown code { background: rgba(255,255,255,0.06); padding: 2px 6px; border-radius: 4px; font-size: 0.85em; color: #a78bfa; }
+        .role-markdown code { background: var(--surface-inset); padding: 2px 6px; border-radius: var(--radius-control); font-size: 0.85em; color: var(--signal); }
         .role-markdown pre { background: var(--surface-inset); border: 1px solid var(--line); padding: 12px; border-radius: var(--radius-control); overflow: auto; }
         .role-markdown pre code { background: transparent; padding: 0; color: #e2e8f0; }
         .role-markdown blockquote { border-left: 3px solid rgba(109,95,245,0.5); margin: 0.8em 0; padding-left: 12px; color: #8b8f9e; }

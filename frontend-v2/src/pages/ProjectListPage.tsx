@@ -92,7 +92,7 @@ export function ProjectListPage() {
       render: (_: unknown, record: Project) => (
         <Space size={6}>
           <span
-            style={{ width: 8, height: 8, borderRadius: 'var(--radius-avatar)', background: pmStatusColor[record.pm_agent.status] || '#6b7280', display: 'inline-block' }}
+            style={{ width: 8, height: 8, borderRadius: 'var(--radius-avatar)', background: pmStatusColor[record.pm_agent.status] || 'var(--surface-raised)', display: 'inline-block' }}
             title={record.pm_agent.status}
           />
           <span>{record.pm_agent.name}</span>

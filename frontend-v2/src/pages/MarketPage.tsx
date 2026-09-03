@@ -11,10 +11,10 @@ import type { MarketRoleListItem } from '@/types'
 const { Text } = Typography
 
 const DEPT_GRADIENTS = [
-  'linear-gradient(135deg,#6d5ff5,#6366f1)',
-  'linear-gradient(135deg,#3b82f6,#22d3ee)',
-  'linear-gradient(135deg,#f43f5e,#f59e0b)',
-  'linear-gradient(135deg,#10b981,#22d3ee)',
+  'linear-gradient(135deg,var(--signal),var(--signal))',
+  'linear-gradient(135deg,var(--info),var(--cyan))',
+  'linear-gradient(135deg,var(--error),var(--warning))',
+  'linear-gradient(135deg,var(--success),var(--cyan))',
 ]
 
 function RoleCard({ role, index }: { role: MarketRoleListItem; index: number }) {
@@ -164,7 +164,7 @@ export function MarketPage() {
               border: !activeDept ? '1px solid rgba(109,95,245,0.3)' : '1px solid transparent',
             }}
           >
-            <span style={{ fontWeight: activeDept ? 400 : 600, color: !activeDept ? '#8b7ff8' : '#c8ccd8' }}>全部</span>
+            <span style={{ fontWeight: activeDept ? 400 : 600, color: !activeDept ? 'var(--signal-hover)' : 'var(--text-secondary)' }}>全部</span>
             <Text type="secondary" style={{ fontSize: 12 }}>
               {depts?.reduce((s, d) => s + d.count, 0) ?? 0}
             </Text>
@@ -189,7 +189,7 @@ export function MarketPage() {
                   border: activeDept === dept.id ? '1px solid rgba(109,95,245,0.3)' : '1px solid transparent',
                 }}
               >
-                <span style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: activeDept === dept.id ? '#8b7ff8' : '#c8ccd8' }}>
+                <span style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: activeDept === dept.id ? 'var(--signal-hover)' : 'var(--text-secondary)' }}>
                   {dept.name}
                 </span>
                 <Text type="secondary" style={{ fontSize: 12 }}>{dept.count}</Text>

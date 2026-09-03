@@ -209,7 +209,7 @@ export function OfficePage() {
                       <Text
                         style={{
                           fontSize: 11,
-                          color: active ? 'rgba(255,255,255,0.65)' : 'rgba(255,255,255,0.38)',
+                          color: active ? 'var(--text-secondary)' : 'var(--text-quaternary)',
                         }}
                       >
                         {item.label}
@@ -220,7 +220,7 @@ export function OfficePage() {
                         fontSize: 20,
                         fontWeight: 600,
                         lineHeight: 1.1,
-                        color: active ? color : 'rgba(255,255,255,0.22)',
+                        color: active ? color : 'var(--text-quaternary)',
                         fontVariantNumeric: 'tabular-nums',
                       }}
                     >
@@ -347,7 +347,7 @@ export function OfficePage() {
                       lineHeight: 1.45,
                     }}
                     onMouseEnter={(e) => {
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.06)'
+                      e.currentTarget.style.background = 'var(--surface-raised)'
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.background = 'transparent'
@@ -361,13 +361,13 @@ export function OfficePage() {
                         flexShrink: 0,
                         marginTop: 5,
                         background:
-                          item.kind === 'question' ? STATE_COLORS.asking : 'rgba(255,255,255,0.45)',
+                          item.kind === 'question' ? STATE_COLORS.asking : 'var(--text-tertiary)',
                       }}
                     />
                     <Text
                       style={{
                         fontSize: 12,
-                        color: 'rgba(255,255,255,0.62)',
+                        color: 'var(--text-secondary)',
                         flexShrink: 0,
                       }}
                     >
@@ -376,7 +376,7 @@ export function OfficePage() {
                     <Text
                       style={{
                         fontSize: 12,
-                        color: 'rgba(255,255,255,0.78)',
+                        color: 'var(--text-secondary)',
                         flex: 1,
                         minWidth: 0,
                       }}
@@ -409,7 +409,7 @@ export function OfficePage() {
                 '点员工 — 聚焦',
                 '点空白 — 回全景',
               ].map((tip) => (
-                <Text key={tip} style={{ fontSize: 11, color: 'rgba(255,255,255,0.42)' }}>
+                <Text key={tip} style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
                   {tip}
                 </Text>
               ))}
@@ -511,7 +511,7 @@ export function OfficePage() {
                   flexShrink: 0,
                 }}
               />
-              <Text style={{ fontSize: 14, color: '#e8e8f0', fontWeight: 600 }}>
+              <Text style={{ fontSize: 14, color: 'var(--text-primary)', fontWeight: 600 }}>
                 {focused.name}
               </Text>
               <Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>

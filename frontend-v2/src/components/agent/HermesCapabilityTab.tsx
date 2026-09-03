@@ -368,7 +368,7 @@ function ExecutionResultModal({ execution, open, onClose }: { execution: Capabil
         <div className="flex items-center gap-2 text-xs text-white/50 flex-wrap">
           <Tag style={{ color: status.color, borderColor: status.color }}>{status.label}</Tag>
           {formatDuration(execution.durationMs) && <span>耗时 {formatDuration(execution.durationMs)}</span>}
-          {execution.error && <span className="text-[#ef4444]">错误: {execution.error}</span>}
+          {execution.error && <span className="text-[color:var(--error)]">错误: {execution.error}</span>}
         </div>
         {isSilent && (
           <div className="rounded-md bg-white/[0.04] px-3 py-2 text-xs text-white/50">本次执行无新内容（[SILENT]）</div>
@@ -422,7 +422,7 @@ function JobExecutionsModal({ agentId, job, open, onClose }: { agentId: string; 
                     <div className="text-xs text-white/50">
                       {formatMsTime(ex.startedAtMs)} · 耗时 {formatDuration(ex.durationMs)}
                     </div>
-                    {ex.error && <div className="text-xs text-[#ef4444] truncate">{ex.error}</div>}
+                    {ex.error && <div className="text-xs text-[color:var(--error)] truncate">{ex.error}</div>}
                   </div>
                   <span className="text-xs text-white/40 shrink-0">查看结果 ›</span>
                 </button>

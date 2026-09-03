@@ -161,9 +161,9 @@ export function CreateMeetingModal({ open, onClose, projectId }: Props) {
                           padding: '3px 10px',
                           borderRadius: 'var(--radius-structure)',
                           cursor: 'pointer',
-                          border: `1px solid ${assigned ? '#6d5ff5' : 'rgba(255,255,255,0.2)'}`,
+                          border: `1px solid ${assigned ? 'var(--signal)' : 'var(--line-strong)'}`,
                           background: assigned ? 'rgba(109,95,245,0.15)' : 'transparent',
-                          color: assigned ? '#8b7ff8' : 'rgba(255,255,255,0.6)',
+                          color: assigned ? 'var(--signal-hover)' : 'var(--text-secondary)',
                         }}
                       >
                         {agent.name}

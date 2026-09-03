@@ -41,9 +41,9 @@ export function MeetingTable({ active = false }: { active?: boolean }) {
     () =>
       makeLabelTexture(active ? '会议进行中' : '会议室', {
         fontSize: 44,
-        color: active ? '#c4b9ff' : '#9aa3b2',
+        color: active ? 'var(--signal-hover)' : 'var(--text-tertiary)',
         background: active ? 'rgba(109,95,245,0.22)' : 'rgba(10,10,18,0.7)',
-        borderColor: active ? 'rgba(109,95,245,0.65)' : 'rgba(255,255,255,0.14)',
+        borderColor: active ? 'rgba(109,95,245,0.65)' : 'var(--line-strong)',
       }),
     [active],
   )

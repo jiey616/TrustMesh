@@ -252,7 +252,7 @@ export function ProjectBoardPage() {
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--text-tertiary)' }}>
                     <AgentAvatar name={pm.name} role="pm" seed={pm.node_id} size={18} />
                     <span
-                      style={{ width: 6, height: 6, borderRadius: 'var(--radius-avatar)', background: pmStatusColor[pm.status] || '#6b7280', display: 'inline-block' }}
+                      style={{ width: 6, height: 6, borderRadius: 'var(--radius-avatar)', background: pmStatusColor[pm.status] || 'var(--surface-raised)', display: 'inline-block' }}
                       title={pm.status}
                     />
                     {pm.name}

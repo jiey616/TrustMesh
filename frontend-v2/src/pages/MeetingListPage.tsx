@@ -14,7 +14,7 @@ const { Text } = Typography
 const statusConfig: Record<MeetingStatus, { label: string; color: string; borderColor: string; icon: React.ReactNode }> = {
   waiting: { label: '待开始', color: 'var(--warning)', borderColor: 'var(--warning)', icon: <ClockCircleOutlined /> },
   in_progress: { label: '进行中', color: 'var(--success)', borderColor: 'var(--success)', icon: <MessageOutlined /> },
-  completed: { label: '已结束', color: 'var(--text-quaternary)', borderColor: '#6b7280', icon: <CheckCircleOutlined /> },
+  completed: { label: '已结束', color: 'var(--text-quaternary)', borderColor: 'var(--line-strong)', icon: <CheckCircleOutlined /> },
 }
 
 function formatRelativeTime(dateStr: string): string {
@@ -159,8 +159,8 @@ export function MeetingListPage({ projectId }: Props) {
                                   size="small"
                                   style={{
                                     background: p.agent_id === m.host_agent_id
-                                      ? 'linear-gradient(135deg, #f59e0b, #f43f5e)'
-                                      : 'linear-gradient(135deg, #3b82f6, #22d3ee)',
+                                      ? 'linear-gradient(135deg, var(--warning), var(--error))'
+                                      : 'linear-gradient(135deg, var(--info), var(--cyan))',
                                     color: 'var(--text-primary)',
                                     fontSize: 11,
                                   }}
