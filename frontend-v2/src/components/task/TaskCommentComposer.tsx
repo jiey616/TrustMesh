@@ -164,14 +164,14 @@ export function TaskCommentComposer({
             bottom: '100%',
             marginBottom: 8,
             overflow: 'hidden',
-            borderRadius: 12,
-            border: '1px solid rgba(255,255,255,0.12)',
-            background: 'rgba(20,20,34,0.98)',
+            borderRadius: 'var(--radius-control)',
+            border: '1px solid var(--line-strong)',
+            background: 'var(--canvas-elevated)',
             boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
             zIndex: 10,
           }}
         >
-          <div style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', padding: '6px 12px', fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>
+          <div style={{ borderBottom: '1px solid var(--line)', padding: '6px 12px', fontSize: 12, color: 'var(--text-tertiary)' }}>
             选择要提及的任务参与 Agent
           </div>
           {filteredCandidates.length > 0 ? (
@@ -189,11 +189,11 @@ export function TaskCommentComposer({
                     width: '100%',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    borderRadius: 8,
+                    borderRadius: 'var(--radius-control)',
                     padding: '8px 10px',
                     textAlign: 'left',
                     background: index === Math.min(activeIndex, filteredCandidates.length - 1) ? 'rgba(109,95,245,0.15)' : 'transparent',
-                    color: '#fff',
+                    color: 'var(--text-primary)',
                     border: 'none',
                     cursor: 'pointer',
                     fontFamily: 'inherit',
@@ -201,14 +201,14 @@ export function TaskCommentComposer({
                 >
                   <span>
                     <span style={{ display: 'block', fontSize: 13, fontWeight: 500 }}>@{candidate.name}</span>
-                    <span style={{ display: 'block', fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{candidate.roleLabel}</span>
+                    <span style={{ display: 'block', fontSize: 11, color: 'var(--text-quaternary)' }}>{candidate.roleLabel}</span>
                   </span>
-                  <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>@</span>
+                  <span style={{ color: 'var(--text-quaternary)', fontSize: 12 }}>@</span>
                 </button>
               ))}
             </div>
           ) : (
-            <div style={{ padding: '12px', fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>没有匹配的数字员工</div>
+            <div style={{ padding: '12px', fontSize: 13, color: 'var(--text-quaternary)' }}>没有匹配的数字员工</div>
           )}
         </div>
       )}
@@ -218,9 +218,9 @@ export function TaskCommentComposer({
           display: 'flex',
           alignItems: 'center',
           gap: 8,
-          borderRadius: 12,
-          border: '1px solid rgba(255,255,255,0.1)',
-          background: 'rgba(0,0,0,0.25)',
+          borderRadius: 'var(--radius-control)',
+          border: '1px solid var(--line-strong)',
+          background: 'var(--surface-inset)',
           padding: '8px 8px 8px 12px',
           transition: 'border-color 0.2s',
         }}
@@ -236,7 +236,7 @@ export function TaskCommentComposer({
             background: 'transparent',
             border: 'none',
             outline: 'none',
-            color: '#fff',
+            color: 'var(--text-primary)',
             fontSize: 13,
             lineHeight: 1.6,
             padding: '4px 0',

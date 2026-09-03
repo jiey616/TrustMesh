@@ -385,14 +385,14 @@ function InsightsSummaryCard({ insights }: { insights: AgentInsights }) {
       {insights.summary && <p className="mb-3 text-sm text-white/80">{insights.summary}</p>}
       <Row gutter={[16, 16]}>
         <Col xs={24} md={12}>
-          <Typography.Text strong style={{ color: '#10b981' }}>优势</Typography.Text>
-          <ul style={{ color: 'rgba(255,255,255,0.8)', paddingLeft: 18 }}>
+          <Typography.Text strong style={{ color: 'var(--success)' }}>优势</Typography.Text>
+          <ul style={{ color: 'var(--text-primary)', paddingLeft: 18 }}>
             {(insights.strengths ?? []).map((s, i) => <li key={i}>{s}</li>)}
           </ul>
         </Col>
         <Col xs={24} md={12}>
-          <Typography.Text strong style={{ color: '#f59e0b' }}>改进空间</Typography.Text>
-          <ul style={{ color: 'rgba(255,255,255,0.8)', paddingLeft: 18 }}>
+          <Typography.Text strong style={{ color: 'var(--warning)' }}>改进空间</Typography.Text>
+          <ul style={{ color: 'var(--text-primary)', paddingLeft: 18 }}>
             {(insights.weaknesses ?? []).map((s, i) => <li key={i}>{s}</li>)}
           </ul>
         </Col>

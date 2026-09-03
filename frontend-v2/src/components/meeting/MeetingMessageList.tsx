@@ -69,7 +69,7 @@ export function MeetingMessageList({ messages, loading, meetingStatus, hostNodeI
 
   if (loading && messages.length === 0) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.5)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-tertiary)' }}>
         加载中...
       </div>
     )
@@ -79,11 +79,11 @@ export function MeetingMessageList({ messages, loading, meetingStatus, hostNodeI
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
         <div style={{ textAlign: 'center' }}>
-          <div style={{ borderRadius: 16, background: 'rgba(109,95,245,0.15)', padding: 16, display: 'inline-flex', marginBottom: 8 }}>
-            <MessageOutlined style={{ fontSize: 32, color: '#6d5ff5' }} />
+          <div style={{ borderRadius: 'var(--radius-structure)', background: 'rgba(109,95,245,0.15)', padding: 16, display: 'inline-flex', marginBottom: 8 }}>
+            <MessageOutlined style={{ fontSize: 32, color: 'var(--signal)' }} />
           </div>
           <p style={{ fontSize: 14, fontWeight: 500 }}>暂无消息</p>
-          <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>开始你的第一个议题，数字员工会自动参与讨论</p>
+          <p style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>开始你的第一个议题，数字员工会自动参与讨论</p>
         </div>
       </div>
     )
@@ -116,7 +116,7 @@ export function MeetingMessageList({ messages, loading, meetingStatus, hostNodeI
           if (isSystem) {
             return (
               <div key={msg.id} style={{ display: 'flex', justifyContent: 'center' }}>
-                <div style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.6)', fontSize: 12, fontStyle: 'italic', borderRadius: 8, padding: '6px 12px', maxWidth: '90%', textAlign: 'center' }}>
+                <div style={{ background: 'var(--surface-raised)', color: 'var(--text-secondary)', fontSize: 12, fontStyle: 'italic', borderRadius: 'var(--radius-control)', padding: '6px 12px', maxWidth: '90%', textAlign: 'center' }}>
                   {stripReplyPrefix(msg.content)}
                 </div>
               </div>
@@ -139,14 +139,14 @@ export function MeetingMessageList({ messages, loading, meetingStatus, hostNodeI
               <div style={{ display: 'flex', flexDirection: 'column', maxWidth: '80%', alignItems: isUser ? 'flex-end' : 'flex-start' }}>
                 {!isUser && (
                   <span style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, padding: '0 4px' }}>
-                    <span style={{ fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.6)' }}>{msg.sender_name}</span>
+                    <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)' }}>{msg.sender_name}</span>
                     {msg.phase && PHASE_LABELS[msg.phase] && (
-                      <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 10, background: 'rgba(109,95,245,0.2)', color: '#8b7ff8', border: '1px solid rgba(109,95,245,0.3)' }}>
+                      <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 'var(--radius-control)', background: 'rgba(109,95,245,0.2)', color: 'var(--signal-hover)', border: '1px solid rgba(109,95,245,0.3)' }}>
                         {PHASE_LABELS[msg.phase]}
                       </span>
                     )}
                     {msg.target && msg.target !== 'all' && msg.target !== 'host' && (
-                      <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 10, background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.12)' }}>
+                      <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 'var(--radius-control)', background: 'var(--surface-raised)', color: 'var(--text-secondary)', border: '1px solid var(--line-strong)' }}>
                         → {targetName ? `@${targetName}` : '定向'}
                       </span>
                     )}
@@ -155,7 +155,7 @@ export function MeetingMessageList({ messages, loading, meetingStatus, hostNodeI
 
                 <div
                   style={{
-                    borderRadius: 16,
+                    borderRadius: 'var(--radius-structure)',
                     padding: '12px 16px',
                     background: isUser ? 'linear-gradient(135deg, #3b82f6, #8b5cf6)' : 'rgba(255,255,255,0.06)',
                     border: isUser ? 'none' : '1px solid rgba(255,255,255,0.1)',
@@ -164,29 +164,29 @@ export function MeetingMessageList({ messages, loading, meetingStatus, hostNodeI
                   }}
                 >
                   {!isUser && msg.context_brief && msg.context_brief.trim() !== '' && (
-                    <details style={{ marginBottom: 8, borderRadius: 8, background: 'rgba(0,0,0,0.2)', padding: '6px 10px' }}>
-                      <summary style={{ fontSize: 11, fontWeight: 500, color: 'rgba(255,255,255,0.6)', cursor: 'pointer', listStyle: 'none' }}>
+                    <details style={{ marginBottom: 8, borderRadius: 'var(--radius-control)', background: 'var(--surface-inset)', padding: '6px 10px' }}>
+                      <summary style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-secondary)', cursor: 'pointer', listStyle: 'none' }}>
                         ? 上下文摘要（主持人提炼）
                       </summary>
-                      <p style={{ fontSize: 11, lineHeight: 1.5, color: 'rgba(255,255,255,0.7)', marginTop: 6, whiteSpace: 'pre-wrap' }}>{msg.context_brief}</p>
+                      <p style={{ fontSize: 11, lineHeight: 1.5, color: 'var(--text-secondary)', marginTop: 6, whiteSpace: 'pre-wrap' }}>{msg.context_brief}</p>
                     </details>
                   )}
 
                   {isUser ? (
-                    <p style={{ margin: 0, fontSize: 13, whiteSpace: 'pre-wrap', color: '#fff' }}>{displayContent}</p>
+                    <p style={{ margin: 0, fontSize: 13, whiteSpace: 'pre-wrap', color: 'var(--text-primary)' }}>{displayContent}</p>
                   ) : (
-                    <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.9)' }}>
+                    <div style={{ fontSize: 13, color: 'var(--text-primary)' }}>
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayContent}</ReactMarkdown>
                     </div>
                   )}
 
                   {!isCompleted && msg.ui_blocks && msg.ui_blocks.length > 0 && onEndMeeting && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--line-strong)' }}>
                       {msg.ui_blocks.map((block) => {
                         if (block.type === 'confirm') {
                           return (
                             <div key={block.id}>
-                              {block.label && <p style={{ fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.6)', marginBottom: 6 }}>{block.label}</p>}
+                              {block.label && <p style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 6 }}>{block.label}</p>}
                               <div style={{ display: 'flex', gap: 8 }}>
                                 <Button type="primary" size="small" onClick={onEndMeeting}><CheckOutlined />{block.confirm_label ?? '确认结束'}</Button>
                                 {block.cancel_label && (
@@ -202,7 +202,7 @@ export function MeetingMessageList({ messages, loading, meetingStatus, hostNodeI
                   )}
                 </div>
 
-                <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 4, padding: '0 4px' }}>
+                <span style={{ fontSize: 10, color: 'var(--text-quaternary)', marginTop: 4, padding: '0 4px' }}>
                   {formatRelativeTime(msg.created_at)}
                 </span>
               </div>

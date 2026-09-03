@@ -51,9 +51,9 @@ const workStatusMap: Record<string, { color: string; label: string }> = {
 }
 
 const pmStatusColor: Record<string, string> = {
-  online: '#10b981',
-  busy: '#f59e0b',
-  offline: '#6b7280',
+  online: 'var(--success)',
+  busy: 'var(--warning)',
+  offline: 'var(--text-quaternary)',
 }
 
 export function ProjectBoardPage() {
@@ -182,7 +182,7 @@ export function ProjectBoardPage() {
   }
 
   if (!project) {
-    return <div style={{ padding: 24, color: 'rgba(255,255,255,0.5)' }}>项目不存在</div>
+    return <div style={{ padding: 24, color: 'var(--text-tertiary)' }}>项目不存在</div>
   }
 
   const ts = project.task_summary
@@ -228,7 +228,7 @@ export function ProjectBoardPage() {
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ padding: '8px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)', backdropFilter: 'blur(12px)', flexShrink: 0 }}>
+      <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--line)', background: 'var(--surface)', backdropFilter: 'var(--glass-blur)', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
             <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/projects')} style={{ flexShrink: 0 }} />
@@ -236,7 +236,7 @@ export function ProjectBoardPage() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                 <Title
                   level={5}
-                  style={{ margin: 0, color: '#fff', fontSize: 16 }}
+                  style={{ margin: 0, color: 'var(--text-primary)', fontSize: 16 }}
                   ellipsis={{ tooltip: project.name }}
                 >
                   {project.name}
@@ -249,15 +249,15 @@ export function ProjectBoardPage() {
                 </Tag>
                 <span style={{ flex: 1 }} />
                 <Space size={12} style={{ flexShrink: 0, fontSize: 12 }}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'rgba(255,255,255,0.55)' }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--text-tertiary)' }}>
                     <AgentAvatar name={pm.name} role="pm" seed={pm.node_id} size={18} />
                     <span
-                      style={{ width: 6, height: 6, borderRadius: '50%', background: pmStatusColor[pm.status] || '#6b7280', display: 'inline-block' }}
+                      style={{ width: 6, height: 6, borderRadius: 'var(--radius-avatar)', background: pmStatusColor[pm.status] || '#6b7280', display: 'inline-block' }}
                       title={pm.status}
                     />
                     {pm.name}
                   </span>
-                  <span style={{ color: 'rgba(255,255,255,0.45)' }}>
+                  <span style={{ color: 'var(--text-tertiary)' }}>
                     任务: {total}
                     {inProgress > 0 && ` · ${inProgress} 执行中`}
                     {failed > 0 && ` · ${failed} 失败`}
@@ -353,8 +353,8 @@ export function ProjectBoardPage() {
               style={{
                 width: 320,
                 flexShrink: 0,
-                borderLeft: '1px solid rgba(255,255,255,0.08)',
-                background: 'rgba(255,255,255,0.02)',
+                borderLeft: '1px solid var(--line)',
+                background: 'var(--surface-sunken)',
                 borderRadius: '12px 12px 0 0',
                 padding: 10,
                 display: 'flex',

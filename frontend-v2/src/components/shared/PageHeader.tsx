@@ -31,9 +31,9 @@ export function PageHeader({
       }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, minWidth: 0 }}>
-        <Title level={4} style={{ margin: 0, color: '#f4f4f8' }}>
+        <Title level={4} style={{ margin: 0, color: 'var(--text-primary)' }}>
           {icon && (
-            <span style={{ marginRight: 8, color: '#6d5ff5' }}>{icon}</span>
+            <span style={{ marginRight: 8, color: 'var(--signal)' }}>{icon}</span>
           )}
           {title}
         </Title>

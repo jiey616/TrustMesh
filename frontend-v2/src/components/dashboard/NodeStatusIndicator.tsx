@@ -39,8 +39,8 @@ export function NodeStatusIndicator() {
 
   if (isLoading) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>
-        <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'rgba(255,255,255,0.2)' }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-tertiary)' }}>
+        <span style={{ width: 8, height: 8, borderRadius: 'var(--radius-avatar)', background: 'rgba(255,255,255,0.2)' }} />
         <span>检测中...</span>
       </div>
     )
@@ -52,15 +52,15 @@ export function NodeStatusIndicator() {
   const trustMode = data?.trust_mode
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'rgba(255,255,255,0.55)', flexWrap: 'wrap' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-tertiary)', flexWrap: 'wrap' }}>
       <span style={{ position: 'relative', display: 'inline-block', width: 8, height: 8, flexShrink: 0 }}>
         {online && (
           <span
             style={{
               position: 'absolute',
               inset: 0,
-              borderRadius: '50%',
-              background: '#22c55e',
+              borderRadius: 'var(--radius-avatar)',
+              background: 'var(--success)',
               opacity: 0.6,
               animation: 'nodePing 1.5s ease-out infinite',
             }}
@@ -70,7 +70,7 @@ export function NodeStatusIndicator() {
           style={{
             position: 'absolute',
             inset: 0,
-            borderRadius: '50%',
+            borderRadius: 'var(--radius-avatar)',
             background: online ? '#22c55e' : '#ef4444',
           }}
         />
@@ -89,7 +89,7 @@ export function NodeStatusIndicator() {
 
           {did && (
             <>
-              <span style={{ color: 'rgba(255,255,255,0.2)' }}>|</span>
+              <span style={{ color: 'var(--text-quaternary)' }}>|</span>
               <span style={{ display: 'inline-flex', alignItems: 'center', fontFamily: 'JetBrains Mono, monospace' }} title={did}>
                 {truncateMiddle(did, 24)}
                 <CopyIcon value={did} />
@@ -99,13 +99,13 @@ export function NodeStatusIndicator() {
 
           {trustMode && (
             <>
-              <span style={{ color: 'rgba(255,255,255,0.2)' }}>|</span>
+              <span style={{ color: 'var(--text-quaternary)' }}>|</span>
               <span style={{ fontWeight: 500, textTransform: 'uppercase' }}>{trustMode}</span>
             </>
           )}
         </>
       ) : (
-        <span style={{ color: '#f43f5e' }}>节点离线</span>
+        <span style={{ color: 'var(--error)' }}>节点离线</span>
       )}
 
       <style>{`

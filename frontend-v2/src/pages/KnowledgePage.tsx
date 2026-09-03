@@ -16,10 +16,10 @@ const STATUS_FILTERS = [
 ] as const
 
 function StatusIcon({ status }: { status: string }) {
-  if (status === 'ready') return <CheckCircleOutlined style={{ color: '#10b981' }} />
-  if (status === 'processing') return <LoadingOutlined style={{ color: '#3b82f6' }} spin />
-  if (status === 'failed') return <CloseCircleOutlined style={{ color: '#f43f5e' }} />
-  return <ClockCircleOutlined style={{ color: 'rgba(255,255,255,0.5)' }} />
+  if (status === 'ready') return <CheckCircleOutlined style={{ color: 'var(--success)' }} />
+  if (status === 'processing') return <LoadingOutlined style={{ color: 'var(--info)' }} spin />
+  if (status === 'failed') return <CloseCircleOutlined style={{ color: 'var(--error)' }} />
+  return <ClockCircleOutlined style={{ color: 'var(--text-tertiary)' }} />
 }
 
 function formatFileSize(bytes: number): string {
@@ -33,9 +33,9 @@ function DocRow({ doc, onDelete, onReprocess }: { doc: KnowledgeDocument; onDele
   const { data: chunks, isLoading: chunksLoading } = useKnowledgeChunks(expanded ? doc.id : undefined)
 
   return (
-    <div style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+    <div style={{ borderBottom: '1px solid var(--line)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', cursor: 'pointer' }} onClick={() => setExpanded(!expanded)}>
-        <FileTextOutlined style={{ color: 'rgba(255,255,255,0.5)' }} />
+        <FileTextOutlined style={{ color: 'var(--text-tertiary)' }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
           <Text strong style={{ flexShrink: 0, maxWidth: '40%' }} ellipsis>{doc.title}</Text>
           <StatusIcon status={doc.status} />
@@ -48,7 +48,7 @@ function DocRow({ doc, onDelete, onReprocess }: { doc: KnowledgeDocument; onDele
             </span>
           )}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12, color: 'rgba(255,255,255,0.5)', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12, color: 'var(--text-tertiary)', flexShrink: 0 }}>
           <span>{formatFileSize(doc.file_size)}</span>
           <span>{doc.chunk_count} 块</span>
           <span>{dayjs(doc.created_at).fromNow()}</span>
@@ -60,7 +60,7 @@ function DocRow({ doc, onDelete, onReprocess }: { doc: KnowledgeDocument; onDele
         </div>
       </div>
       {expanded && (
-        <div style={{ padding: '0 16px 12px', background: 'rgba(255,255,255,0.03)' }}>
+        <div style={{ padding: '0 16px 12px', background: 'var(--surface)' }}>
           {chunksLoading ? (
             <Skeleton active paragraph={{ rows: 2 }} />
           ) : !chunks || chunks.length === 0 ? (
@@ -69,7 +69,7 @@ function DocRow({ doc, onDelete, onReprocess }: { doc: KnowledgeDocument; onDele
             <Collapse ghost items={chunks.map((chunk) => ({
               key: chunk.id,
               label: <Text type="secondary" style={{ fontSize: 12 }}>#{chunk.chunk_index} · {chunk.token_count} tokens</Text>,
-              children: <Paragraph style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)' }}>{chunk.content}</Paragraph>,
+              children: <Paragraph style={{ fontSize: 12, color: 'var(--text-primary)' }}>{chunk.content}</Paragraph>,
             }))} />
           )}
         </div>
@@ -103,13 +103,13 @@ function SearchPanel() {
       {results.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {results.map((result) => (
-            <Card key={result.chunk_id} size="small" bordered={false} style={{ background: 'rgba(255,255,255,0.03)' }}>
+            <Card key={result.chunk_id} size="small" bordered={false} style={{ background: 'var(--surface)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                 <Text strong>{result.document_title}</Text>
                 <Tag>#{result.chunk_index}</Tag>
                 <Text type="secondary" style={{ marginLeft: 'auto', fontSize: 12 }}>相似度 {(result.score * 100).toFixed(1)}%</Text>
               </div>
-              <Paragraph style={{ fontSize: 13, color: 'rgba(255,255,255,0.8)', margin: 0 }} ellipsis={{ rows: 4 }}>{result.content}</Paragraph>
+              <Paragraph style={{ fontSize: 13, color: 'var(--text-primary)', margin: 0 }} ellipsis={{ rows: 4 }}>{result.content}</Paragraph>
             </Card>
           ))}
         </div>
@@ -227,7 +227,7 @@ export function KnowledgePage() {
               <Button type="primary" icon={<UploadOutlined />} onClick={() => setShowUpload(true)}>上传文档</Button>
             </Empty>
           ) : (
-            <Card bordered={false} style={{ padding: 0, overflow: 'hidden', background: 'rgba(255,255,255,0.03)' }}>
+            <Card bordered={false} style={{ padding: 0, overflow: 'hidden', background: 'var(--surface)' }}>
               {docs.map((doc) => (
                 <DocRow key={doc.id} doc={doc} onDelete={handleDelete} onReprocess={handleReprocess} />
               ))}

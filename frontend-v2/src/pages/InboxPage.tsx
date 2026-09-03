@@ -84,7 +84,7 @@ export function InboxPage() {
       />
 
       {isLoading ? (
-        <div style={{ padding: '40px 0', textAlign: 'center', color: 'rgba(255,255,255,0.45)' }}>加载中...</div>
+        <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-tertiary)' }}>加载中...</div>
       ) : groups.length === 0 ? (
         <Empty
           description={filter === 'unread' ? '没有未读通知' : '暂无通知'}
@@ -96,9 +96,9 @@ export function InboxPage() {
             <div
               key={group.label}
               style={{
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid rgba(255,255,255,0.07)',
-                borderRadius: 12,
+                background: 'var(--surface)',
+                border: '1px solid var(--line)',
+                borderRadius: 'var(--radius-control)',
                 overflow: 'hidden',
               }}
             >
@@ -107,11 +107,11 @@ export function InboxPage() {
                   padding: '8px 16px',
                   fontSize: 12,
                   fontWeight: 600,
-                  color: 'rgba(255,255,255,0.55)',
+                  color: 'var(--text-tertiary)',
                   textTransform: 'uppercase',
                   letterSpacing: '0.5px',
-                  background: 'rgba(255,255,255,0.02)',
-                  borderBottom: '1px solid rgba(255,255,255,0.04)',
+                  background: 'var(--surface-sunken)',
+                  borderBottom: '1px solid var(--line)',
                 }}
               >
                 {group.label} <Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>{group.items.length}</Text>
@@ -122,7 +122,7 @@ export function InboxPage() {
                   <List.Item
                     style={{
                       padding: '12px 16px',
-                      borderBottom: '1px solid rgba(255,255,255,0.04)',
+                      borderBottom: '1px solid var(--line)',
                       opacity: item.is_read ? 0.6 : 1,
                       background: item.is_read ? 'transparent' : 'rgba(109,95,245,0.04)',
                       cursor: 'pointer',
@@ -134,7 +134,7 @@ export function InboxPage() {
                     actions={
                       item.is_read
                         ? [
-                            <span key="read" style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <span key="read" style={{ color: 'var(--text-quaternary)', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                               <CheckCircleOutlined /> 已读
                             </span>,
                           ]
@@ -158,8 +158,8 @@ export function InboxPage() {
                     <List.Item.Meta
                       title={
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                          {!item.is_read && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#6d5ff5', display: 'inline-block' }} />}
-                          <span style={{ color: '#f4f4f8', fontWeight: item.is_read ? 400 : 600 }}>{item.title.replace(/智能体/g, '数字员工')}</span>
+                          {!item.is_read && <span style={{ width: 6, height: 6, borderRadius: 'var(--radius-avatar)', background: 'var(--signal)', display: 'inline-block' }} />}
+                          <span style={{ color: 'var(--text-primary)', fontWeight: item.is_read ? 400 : 600 }}>{item.title.replace(/智能体/g, '数字员工')}</span>
                           {item.category && (
                             <Tag color={typeColor[item.category] || 'default'} style={{ marginInlineStart: 0 }}>
                               {typeLabel[item.category] ?? item.category}
@@ -172,11 +172,11 @@ export function InboxPage() {
                       }
                       description={
                         <span style={{ display: 'inline-flex', gap: 12, flexWrap: 'wrap' }}>
-                          <span style={{ color: 'rgba(255,255,255,0.65)' }}>{item.body.replace(/\bAgent\b/g, '数字员工')}</span>
+                          <span style={{ color: 'var(--text-secondary)' }}>{item.body.replace(/\bAgent\b/g, '数字员工')}</span>
                           {item.actor_name && item.category === 'agent' && (
-                            <span style={{ color: 'rgba(255,255,255,0.45)' }}>来自 {item.actor_name}</span>
+                            <span style={{ color: 'var(--text-tertiary)' }}>来自 {item.actor_name}</span>
                           )}
-                          <span style={{ color: 'rgba(255,255,255,0.4)' }}>{dayjs(item.created_at).fromNow()}</span>
+                          <span style={{ color: 'var(--text-quaternary)' }}>{dayjs(item.created_at).fromNow()}</span>
                         </span>
                       }
                     />

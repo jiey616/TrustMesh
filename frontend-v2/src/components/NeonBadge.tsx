@@ -10,12 +10,12 @@ interface NeonBadgeProps {
 }
 
 const COLORS: Record<Variant, { bg: string; border: string; text: string; glow: string }> = {
-  purple: { bg: 'rgba(109,95,245,0.15)', border: 'rgba(109,95,245,0.4)', text: '#8b7ff8', glow: '#a855f' },
-  blue: { bg: 'rgba(59,130,246,0.15)', border: 'rgba(59,130,246,0.4)', text: '#93c5fd', glow: '#3b82f6' },
-  cyan: { bg: 'rgba(34,211,238,0.15)', border: 'rgba(34,211,238,0.4)', text: '#67e8f9', glow: '#22d3ee' },
-  green: { bg: 'rgba(16,185,129,0.15)', border: 'rgba(16,185,129,0.4)', text: '#6ee7b7', glow: '#10b981' },
-  amber: { bg: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.4)', text: '#fcd34d', glow: '#f59e0b' },
-  rose: { bg: 'rgba(244,63,94,0.15)', border: 'rgba(244,63,94,0.4)', text: '#fda4af', glow: '#f43f5e' },
+  purple: { bg: 'rgba(109,95,245,0.15)', border: 'rgba(109,95,245,0.4)', text: 'var(--signal-hover)', glow: '#a855f' },
+  blue: { bg: 'rgba(59,130,246,0.15)', border: 'rgba(59,130,246,0.4)', text: 'var(--info)', glow: 'var(--info)' },
+  cyan: { bg: 'rgba(34,211,238,0.15)', border: 'rgba(34,211,238,0.4)', text: 'var(--cyan)', glow: 'var(--cyan)' },
+  green: { bg: 'rgba(16,185,129,0.15)', border: 'rgba(16,185,129,0.4)', text: 'var(--success)', glow: 'var(--success)' },
+  amber: { bg: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.4)', text: 'var(--warning)', glow: 'var(--warning)' },
+  rose: { bg: 'rgba(244,63,94,0.15)', border: 'rgba(244,63,94,0.4)', text: 'var(--error)', glow: 'var(--error)' },
 }
 
 export function NeonBadge({ label, variant = 'purple', pulse = false, size = 'md' }: NeonBadgeProps) {
@@ -30,7 +30,7 @@ export function NeonBadge({ label, variant = 'purple', pulse = false, size = 'md
         alignItems: 'center',
         gap: 6,
         padding: pad,
-        borderRadius: 20,
+        borderRadius: 'var(--radius-structure)',
         background: c.bg,
         border: `1px solid ${c.border}`,
         color: c.text,
@@ -48,7 +48,7 @@ export function NeonBadge({ label, variant = 'purple', pulse = false, size = 'md
           style={{
             width: 7,
             height: 7,
-            borderRadius: '50%',
+            borderRadius: 'var(--radius-avatar)',
             background: c.glow,
             boxShadow: `0 0 6px ${c.glow}`,
             display: 'inline-block',

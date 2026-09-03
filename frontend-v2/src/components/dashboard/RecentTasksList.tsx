@@ -7,15 +7,15 @@ import type { TaskListItem, TaskStatus } from '@/types'
 const { Text } = Typography
 
 const statusMap: Record<TaskStatus, { color: string; label: string }> = {
-  planning: { color: '#8b5cf6', label: '规划中' },
-  review: { color: '#f59e0b', label: '待确认' },
-  pending: { color: '#3b82f6', label: '待处理' },
-  in_progress: { color: '#22d3ee', label: '进行中' },
-  awaiting_review: { color: '#f43f5e', label: '待人工确认' },
-  waiting_user: { color: '#f59e0b', label: '等待用户' },
-  done: { color: '#10b981', label: '已完成' },
-  failed: { color: '#ef4444', label: '失败' },
-  canceled: { color: '#6b7280', label: '已取消' },
+  planning: { color: 'var(--signal)', label: '规划中' },
+  review: { color: 'var(--warning)', label: '待确认' },
+  pending: { color: 'var(--info)', label: '待处理' },
+  in_progress: { color: 'var(--cyan)', label: '进行中' },
+  awaiting_review: { color: 'var(--error)', label: '待人工确认' },
+  waiting_user: { color: 'var(--warning)', label: '等待用户' },
+  done: { color: 'var(--success)', label: '已完成' },
+  failed: { color: 'var(--error)', label: '失败' },
+  canceled: { color: 'var(--text-quaternary)', label: '已取消' },
 }
 
 interface Props {
@@ -44,9 +44,9 @@ export function RecentTasksList({ tasks, loading }: Props) {
               alignItems: 'flex-start',
               gap: 10,
               padding: 10,
-              borderRadius: 10,
-              background: 'rgba(255,255,255,0.02)',
-              border: '1px solid rgba(255,255,255,0.04)',
+              borderRadius: 'var(--radius-control)',
+              background: 'var(--surface-sunken)',
+              border: '1px solid var(--line)',
               textDecoration: 'none',
               transition: 'background 0.15s',
             }}
@@ -57,7 +57,7 @@ export function RecentTasksList({ tasks, loading }: Props) {
             <div style={{ flex: 1, minWidth: 0 }}>
               <Text
                 style={{
-                  color: '#f4f4f8',
+                  color: 'var(--text-primary)',
                   fontSize: 13,
                   fontWeight: 500,
                   display: 'block',
@@ -76,7 +76,7 @@ export function RecentTasksList({ tasks, loading }: Props) {
                   · {dayjs(task.updated_at).fromNow()}
                 </Text>
                 {task.todo_count > 0 && (
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text-tertiary)' }}>
                     ·
                     <Progress
                       percent={Math.round((task.completed_todo_count / task.todo_count) * 100)}

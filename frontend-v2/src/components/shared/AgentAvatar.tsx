@@ -9,16 +9,16 @@ import type { AgentRole, AgentStatus } from '@/types'
  */
 
 const roleGradients: Record<AgentRole, { from: string; to: string }> = {
-  pm: { from: '#f59e0b', to: '#f43f5e' },
-  developer: { from: '#3b82f6', to: '#22d3ee' },
-  reviewer: { from: '#10b981', to: '#34d399' },
-  custom: { from: '#6d5ff5', to: '#8b7ff8' },
+  pm: { from: 'var(--warning)', to: 'var(--error)' },
+  developer: { from: 'var(--info)', to: 'var(--cyan)' },
+  reviewer: { from: 'var(--success)', to: 'var(--success)' },
+  custom: { from: 'var(--signal)', to: 'var(--signal-hover)' },
 }
 
 const statusColors: Record<AgentStatus, string> = {
-  online: '#4ade80',
-  busy: '#60a5fa',
-  offline: '#71717a',
+  online: 'var(--success)',
+  busy: 'var(--info)',
+  offline: 'var(--text-quaternary)',
 }
 
 /** 确定性字符串哈希（32 位） */
@@ -65,7 +65,7 @@ export function AgentAvatar({
         alignItems: 'center',
         justifyContent: 'center',
         background: `linear-gradient(${angle}deg, ${g.from} 0%, ${g.to} 100%)`,
-        color: '#fff',
+        color: 'var(--text-primary)',
         fontSize: size * 0.42,
         fontWeight: 600,
         letterSpacing: '-0.3px',
@@ -86,7 +86,7 @@ export function AgentAvatar({
             bottom: -Math.round(dot * 0.15),
             width: dot,
             height: dot,
-            borderRadius: '50%',
+            borderRadius: 'var(--radius-avatar)',
             background: statusColors[status] ?? statusColors.offline,
             border: `2px solid #0a0a12`,
             boxShadow: status === 'online' ? `0 0 ${Math.max(4, size * 0.12)}px ${statusColors.online}` : 'none',

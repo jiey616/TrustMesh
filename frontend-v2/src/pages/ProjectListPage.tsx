@@ -22,9 +22,9 @@ const workStatusMap: Record<ProjectWorkStatus, { color: string; label: string }>
 }
 
 const pmStatusColor: Record<AgentStatus, string> = {
-  online: '#10b981',
-  busy: '#f59e0b',
-  offline: '#6b7280',
+  online: 'var(--success)',
+  busy: 'var(--warning)',
+  offline: 'var(--text-quaternary)',
 }
 
 export function ProjectListPage() {
@@ -92,7 +92,7 @@ export function ProjectListPage() {
       render: (_: unknown, record: Project) => (
         <Space size={6}>
           <span
-            style={{ width: 8, height: 8, borderRadius: '50%', background: pmStatusColor[record.pm_agent.status] || '#6b7280', display: 'inline-block' }}
+            style={{ width: 8, height: 8, borderRadius: 'var(--radius-avatar)', background: pmStatusColor[record.pm_agent.status] || '#6b7280', display: 'inline-block' }}
             title={record.pm_agent.status}
           />
           <span>{record.pm_agent.name}</span>
@@ -111,7 +111,7 @@ export function ProjectListPage() {
         const canceled = ts.canceled_count
         return (
           <Space size={4} wrap>
-            <span style={{ color: 'rgba(255,255,255,0.7)' }}>{total} 个</span>
+            <span style={{ color: 'var(--text-secondary)' }}>{total} 个</span>
             {inProgress > 0 && <Tag color="cyan">{inProgress} 执行中</Tag>}
             {pending > 0 && <Tag color="blue">{pending} 待处理</Tag>}
             {failed > 0 && <Tag color="red">{failed} 失败</Tag>}
@@ -248,7 +248,7 @@ export function ProjectListPage() {
           <>
             <Input
               allowClear
-              prefix={<SearchOutlined style={{ color: 'rgba(255,255,255,0.35)' }} />}
+              prefix={<SearchOutlined style={{ color: 'var(--text-quaternary)' }} />}
               placeholder="搜索项目名称或描述"
               value={archivedKeyword}
               onChange={(e) => setArchivedKeyword(e.target.value)}

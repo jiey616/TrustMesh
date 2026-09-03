@@ -4,6 +4,7 @@
  */
 import { motion } from 'framer-motion'
 import type { CSSProperties } from 'react'
+import { useTheme } from '@/theme/ThemeProvider'
 
 interface Orb {
   size: number
@@ -29,6 +30,11 @@ interface FloatingOrbsProps {
 }
 
 export function FloatingOrbs({ orbs = DEFAULT_ORBS }: FloatingOrbsProps) {
+  const { theme } = useTheme()
+
+  // 近白主题（Quiet Signal）明令禁止装饰性气氛场 —— 整个背景层不渲染
+  if (theme === 'quiet') return null
+
   const containerStyle: CSSProperties = {
     position: 'fixed',
     inset: 0,
@@ -48,7 +54,7 @@ export function FloatingOrbs({ orbs = DEFAULT_ORBS }: FloatingOrbsProps) {
             top: orb.y,
             width: orb.size,
             height: orb.size,
-            borderRadius: '50%',
+            borderRadius: 'var(--radius-avatar)',
             background: `radial-gradient(circle, ${orb.color}, transparent 70%)`,
             filter: `blur(${orb.blur}px)`,
             opacity: orb.opacity,

@@ -36,10 +36,10 @@ function applyWritebackResult(result: SetCapabilityResult, okLabel: string) {
 }
 
 const executionStatusStyle: Record<CapabilityExecution['status'], { label: string; color: string }> = {
-  completed: { label: '成功', color: '#10b981' },
-  failed: { label: '失败', color: '#ef4444' },
-  running: { label: '执行中', color: '#3b82f6' },
-  unknown: { label: '未知', color: 'rgba(255,255,255,0.4)' },
+  completed: { label: '成功', color: 'var(--success)' },
+  failed: { label: '失败', color: 'var(--error)' },
+  running: { label: '执行中', color: 'var(--info)' },
+  unknown: { label: '未知', color: 'var(--text-quaternary)' },
 }
 
 function formatMsTime(ms: number): string {
@@ -146,7 +146,7 @@ function HermesSkillsTab({ agentId }: Props) {
   if (!data?.available)
     return (
       <Empty
-        image={<WifiOutlined style={{ fontSize: 32, color: 'rgba(255,255,255,0.3)' }} />}
+        image={<WifiOutlined style={{ fontSize: 32, color: 'var(--text-quaternary)' }} />}
         description={`能力信息暂不可用${data?.reason ? `：${data.reason}` : '，节点未响应能力查询'}`}
       />
     )
@@ -267,7 +267,7 @@ function HermesModelsTab({ agentId }: Props) {
   if (!data?.available)
     return (
       <Empty
-        image={<WifiOutlined style={{ fontSize: 32, color: 'rgba(255,255,255,0.3)' }} />}
+        image={<WifiOutlined style={{ fontSize: 32, color: 'var(--text-quaternary)' }} />}
         description={`能力信息暂不可用${data?.reason ? `：${data.reason}` : '，节点未响应能力查询'}`}
       />
     )
@@ -563,7 +563,7 @@ function HermesJobsTab({ agentId }: Props) {
   if (!data?.available)
     return (
       <Empty
-        image={<WifiOutlined style={{ fontSize: 32, color: 'rgba(255,255,255,0.3)' }} />}
+        image={<WifiOutlined style={{ fontSize: 32, color: 'var(--text-quaternary)' }} />}
         description={`能力信息暂不可用${data?.reason ? `：${data.reason}` : '，节点未响应能力查询'}`}
       />
     )

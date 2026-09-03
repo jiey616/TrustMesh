@@ -78,7 +78,7 @@ ${role.agents_content}
   }
 
   return (
-    <Card bordered={false} style={{ background: 'rgba(255,255,255,0.03)' }}>
+    <Card bordered={false} style={{ background: 'var(--surface)' }}>
       <Tabs
         defaultActiveKey="openclaw"
         items={[

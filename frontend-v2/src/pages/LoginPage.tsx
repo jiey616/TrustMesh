@@ -23,10 +23,10 @@ function BrandHero() {
       <div style={{ marginBottom: 12 }}>
         <PlatformName size="lg" />
       </div>
-      <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 16, marginBottom: 32 }}>多个 AI Agent 汇聚在同一工作空间，协同编排任务、驱动项目交付</Text>
+      <Text style={{ color: 'var(--text-tertiary)', fontSize: 16, marginBottom: 32 }}>多个 AI Agent 汇聚在同一工作空间，协同编排任务、驱动项目交付</Text>
       <img src={agentNetworkSvg} alt="数字员工 Network" style={{ width: '100%', maxWidth: 420 }} />
-      <div style={{ marginTop: 32, display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'rgba(255,255,255,0.5)' }}>
-        <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#22c55e', animation: 'pulse 2s infinite' }} />
+      <div style={{ marginTop: 32, display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-tertiary)' }}>
+        <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 'var(--radius-avatar)', background: 'var(--success)', animation: 'pulse 2s infinite' }} />
         多 Agent 协作网络
       </div>
     </div>
@@ -59,16 +59,16 @@ export function LoginPage() {
   }
 
   return (
-    <div style={{ display: 'flex', width: '100%', maxWidth: 1100, minHeight: '80vh', background: 'rgba(255,255,255,0.03)', backdropFilter: 'blur(40px)', borderRadius: 24, border: '1px solid rgba(255,255,255,0.08)', boxShadow: '0 8px 32px rgba(0,0,0,0.3), 0 0 40px rgba(109,95,245,0.05)', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', width: '100%', maxWidth: 1100, minHeight: '80vh', background: 'var(--surface)', backdropFilter: 'var(--glass-blur)', borderRadius: 'var(--radius-structure)', border: '1px solid var(--line)', boxShadow: '0 8px 32px rgba(0,0,0,0.3), 0 0 40px rgba(109,95,245,0.05)', overflow: 'hidden' }}>
       {/* Left: Brand hero */}
       <div className="auth-brand-hero" style={{ flex: 1, display: 'flex' }}>
         <BrandHero />
       </div>
 
       {/* Right: Login form */}
-      <div style={{ width: 420, padding: '48px 40px', display: 'flex', flexDirection: 'column', justifyContent: 'center', borderLeft: '1px solid rgba(255,255,255,0.06)' }}>
+      <div style={{ width: 420, padding: '48px 40px', display: 'flex', flexDirection: 'column', justifyContent: 'center', borderLeft: '1px solid var(--line)' }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <Title level={3} style={{ color: '#fff', marginBottom: 8 }}>欢迎回来</Title>
+          <Title level={3} style={{ color: 'var(--text-primary)', marginBottom: 8 }}>欢迎回来</Title>
           <Text type="secondary">登录你的账号以继续</Text>
         </div>
         <Form size="large" onFinish={handleSubmit} layout="vertical" requiredMark={false}>

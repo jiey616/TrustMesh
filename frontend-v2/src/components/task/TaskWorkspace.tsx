@@ -55,15 +55,15 @@ import type { TaskMessage, Workflow, Event, EventType, TaskDetail, UIResponse } 
 const { Title, Text } = Typography
 
 const statusMap: Record<string, { color: string; label: string }> = {
-  planning: { color: '#8b5cf6', label: '规划中' },
-  review: { color: '#f59e0b', label: '待确认' },
-  pending: { color: '#3b82f6', label: '待处理' },
-  in_progress: { color: '#22d3ee', label: '进行中' },
-  awaiting_review: { color: '#f43f5e', label: '待人工确认' },
-  waiting_user: { color: '#f43f5e', label: '等待用户' },
-  done: { color: '#10b981', label: '已完成' },
-  failed: { color: '#ef4444', label: '失败' },
-  canceled: { color: '#6b7280', label: '已取消' },
+  planning: { color: 'var(--signal)', label: '规划中' },
+  review: { color: 'var(--warning)', label: '待确认' },
+  pending: { color: 'var(--info)', label: '待处理' },
+  in_progress: { color: 'var(--cyan)', label: '进行中' },
+  awaiting_review: { color: 'var(--error)', label: '待人工确认' },
+  waiting_user: { color: 'var(--error)', label: '等待用户' },
+  done: { color: 'var(--success)', label: '已完成' },
+  failed: { color: 'var(--error)', label: '失败' },
+  canceled: { color: 'var(--text-quaternary)', label: '已取消' },
 }
 
 const priorityLabel: Record<string, string> = {
@@ -76,19 +76,19 @@ const priorityLabel: Record<string, string> = {
 // Partial：后端实际事件类型多于此处列举（如 todo_review_* / todo_timeout_* 等），
 // 未覆盖的类型走消费处的 fallback，不强制穷尽。
 const eventConfig: Partial<Record<EventType, { icon: React.ReactNode; color: string; label: string }>> = {
-  task_created: { icon: <PlusOutlined />, color: '#3b82f6', label: '任务创建' },
-  task_plan_ready: { icon: <RobotOutlined />, color: '#3b82f6', label: '规划完成' },
-  task_status_changed: { icon: <SwapOutlined />, color: '#f59e0b', label: '状态变更' },
-  todo_assigned: { icon: <UserOutlined />, color: '#3b82f6', label: '分配 Todo' },
-  todo_started: { icon: <PlayCircleOutlined />, color: '#22d3ee', label: '开始执行' },
-  todo_progress: { icon: <LoadingOutlined />, color: '#22d3ee', label: '执行中' },
-  todo_completed: { icon: <CheckCircleOutlined />, color: '#10b981', label: 'Todo 完成' },
-  todo_failed: { icon: <CloseCircleOutlined />, color: '#ef4444', label: 'Todo 失败' },
-  task_comment: { icon: <MessageOutlined />, color: '#8b8f9e', label: '评论' },
-  planning_reply: { icon: <MessageOutlined />, color: '#6d5ff5', label: 'PM 规划回复' },
-  agent_status_changed: { icon: <RobotOutlined />, color: '#f59e0b', label: '数字员工状态' },
-  artifact_received: { icon: <PaperClipOutlined />, color: '#10b981', label: '交付文件' },
-  todo_ask_received: { icon: <QuestionCircleOutlined />, color: '#f59e0b', label: '请求确认' },
+  task_created: { icon: <PlusOutlined />, color: 'var(--info)', label: '任务创建' },
+  task_plan_ready: { icon: <RobotOutlined />, color: 'var(--info)', label: '规划完成' },
+  task_status_changed: { icon: <SwapOutlined />, color: 'var(--warning)', label: '状态变更' },
+  todo_assigned: { icon: <UserOutlined />, color: 'var(--info)', label: '分配 Todo' },
+  todo_started: { icon: <PlayCircleOutlined />, color: 'var(--cyan)', label: '开始执行' },
+  todo_progress: { icon: <LoadingOutlined />, color: 'var(--cyan)', label: '执行中' },
+  todo_completed: { icon: <CheckCircleOutlined />, color: 'var(--success)', label: 'Todo 完成' },
+  todo_failed: { icon: <CloseCircleOutlined />, color: 'var(--error)', label: 'Todo 失败' },
+  task_comment: { icon: <MessageOutlined />, color: 'var(--text-tertiary)', label: '评论' },
+  planning_reply: { icon: <MessageOutlined />, color: 'var(--signal)', label: 'PM 规划回复' },
+  agent_status_changed: { icon: <RobotOutlined />, color: 'var(--warning)', label: '数字员工状态' },
+  artifact_received: { icon: <PaperClipOutlined />, color: 'var(--success)', label: '交付文件' },
+  todo_ask_received: { icon: <QuestionCircleOutlined />, color: 'var(--warning)', label: '请求确认' },
 }
 
 function formatFileSize(bytes: number | undefined): string {
@@ -227,7 +227,7 @@ function DraftTaskWorkspace({
     <div style={{ width: 260 }}>
       {projectId && (
         <>
-          <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)' }}>参考文件</Text>
+          <Text style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>参考文件</Text>
           <div style={{ marginTop: 8 }}>
             <FileSelector
               projectId={projectId}
@@ -241,9 +241,9 @@ function DraftTaskWorkspace({
       {workflows.length > 0 && (
         <>
           {projectId && (
-            <div style={{ height: 1, background: 'rgba(255,255,255,0.08)', margin: '12px 0' }} />
+            <div style={{ height: 1, background: 'var(--surface-raised)', margin: '12px 0' }} />
           )}
-          <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)' }}>工作流</Text>
+          <Text style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>工作流</Text>
           <Select
             style={{ width: '100%', marginTop: 8 }}
             value={workflowName}
@@ -257,7 +257,7 @@ function DraftTaskWorkspace({
           />
           {isPrimaryWorkflow && primarySteps.length > 0 && (
             <>
-              <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginTop: 10, display: 'block' }}>
+              <Text style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 10, display: 'block' }}>
                 负责总流程步骤
               </Text>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
@@ -289,9 +289,9 @@ function DraftTaskWorkspace({
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)', flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--line)', flexShrink: 0 }}>
         <Space>
-          <Title level={5} style={{ margin: 0, color: '#fff' }}>新任务</Title>
+          <Title level={5} style={{ margin: 0, color: 'var(--text-primary)' }}>新任务</Title>
           <Tag color="cyan">Planning</Tag>
         </Space>
         {closable && <Button type="text" icon={<CloseOutlined />} onClick={onClose} />}
@@ -309,7 +309,7 @@ function DraftTaskWorkspace({
                     borderRadius: '14px 14px 4px 14px',
                     background: 'linear-gradient(135deg, rgba(109,95,245,0.25), rgba(99,102,241,0.2))',
                     border: '1px solid rgba(109,95,245,0.3)',
-                    color: 'rgba(255,255,255,0.9)',
+                    color: 'var(--text-primary)',
                     fontSize: 14,
                     lineHeight: 1.6,
                     whiteSpace: 'pre-wrap',
@@ -320,24 +320,24 @@ function DraftTaskWorkspace({
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <Tag color="purple" style={{ margin: 0 }}>标题</Tag>
-                  <Text style={{ color: '#f4f4f8', fontWeight: 600, fontSize: 15 }}>{deriveTitlePreview(content)}</Text>
+                  <Text style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: 15 }}>{deriveTitlePreview(content)}</Text>
                 </div>
               </div>
             </div>
-            <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.3)', fontSize: 13, marginTop: 4 }}>
+            <div style={{ textAlign: 'center', color: 'var(--text-quaternary)', fontSize: 13, marginTop: 4 }}>
               PM 数字员工将基于以上需求规划执行方案
             </div>
           </>
         ) : (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 18, padding: '0 24px' }}>
             <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.75)' }}>描述你的需求，开始创建任务</div>
-              <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)', marginTop: 4 }}>由 PM 数字员工规划执行方案；输入 @ 可直接指派执行数字员工</div>
+              <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-secondary)' }}>描述你的需求，开始创建任务</div>
+              <div style={{ fontSize: 13, color: 'var(--text-quaternary)', marginTop: 4 }}>由 PM 数字员工规划执行方案；输入 @ 可直接指派执行数字员工</div>
             </div>
 
             {/* 示例需求模板 */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%', maxWidth: 480 }}>
-              <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', textAlign: 'center' }}>示例需求</div>
+              <div style={{ fontSize: 12, color: 'var(--text-quaternary)', textAlign: 'center' }}>示例需求</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'center' }}>
                 {EXAMPLE_TEMPLATES.map((tpl) => (
                   <button
@@ -348,10 +348,10 @@ function DraftTaskWorkspace({
                       fontSize: 13,
                       lineHeight: '20px',
                       padding: '3px 12px',
-                      borderRadius: 999,
+                      borderRadius: 'var(--radius-pill)',
                       border: '1px solid rgba(109,95,245,0.3)',
                       background: 'rgba(109,95,245,0.08)',
-                      color: '#8b7ff8',
+                      color: 'var(--signal-hover)',
                       cursor: 'pointer',
                       fontFamily: 'inherit',
                       transition: 'all 0.15s',
@@ -370,7 +370,7 @@ function DraftTaskWorkspace({
             {/* 最近任务快捷入口 */}
             {recentTaskItems.length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%', maxWidth: 480 }}>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', textAlign: 'center' }}>最近任务</div>
+                <div style={{ fontSize: 12, color: 'var(--text-quaternary)', textAlign: 'center' }}>最近任务</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'center' }}>
                   {recentTaskItems.map((t) => {
                     const cfg = statusMap[t.status]
@@ -386,17 +386,17 @@ function DraftTaskWorkspace({
                           fontSize: 13,
                           lineHeight: '22px',
                           padding: '2px 10px',
-                          borderRadius: 8,
-                          border: '1px solid rgba(255,255,255,0.1)',
-                          background: 'rgba(255,255,255,0.03)',
-                          color: 'rgba(255,255,255,0.7)',
+                          borderRadius: 'var(--radius-control)',
+                          border: '1px solid var(--line-strong)',
+                          background: 'var(--surface)',
+                          color: 'var(--text-secondary)',
                           cursor: 'pointer',
                           fontFamily: 'inherit',
                           maxWidth: 240,
                         }}
                         title={t.title}
                       >
-                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: cfg?.color ?? '#94a3b8', flexShrink: 0 }} />
+                        <span style={{ width: 6, height: 6, borderRadius: 'var(--radius-avatar)', background: cfg?.color ?? '#94a3b8', flexShrink: 0 }} />
                         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
                       </button>
                     )
@@ -409,7 +409,7 @@ function DraftTaskWorkspace({
       </div>
 
       {/* 输入区:Codex 风格 Composer */}
-      <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)', padding: '12px 16px', flexShrink: 0 }}>
+      <div style={{ borderTop: '1px solid var(--line)', background: 'var(--surface)', padding: '12px 16px', flexShrink: 0 }}>
         <TaskCommentComposer
           candidates={executorCandidates}
           disabled={createFromText.isPending}
@@ -500,7 +500,7 @@ function MessageBubble({ message, pmName, pmSeed, nextUserResponse, hideUIBlocks
             borderRadius: isUser ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
             background: isUser ? 'linear-gradient(135deg, rgba(109,95,245,0.25), rgba(99,102,241,0.2))' : 'rgba(255,255,255,0.06)',
             border: `1px solid ${isUser ? 'rgba(109,95,245,0.3)' : 'rgba(255,255,255,0.08)'}`,
-            color: 'rgba(255,255,255,0.9)',
+            color: 'var(--text-primary)',
             fontSize: 14,
             lineHeight: 1.6,
             whiteSpace: 'pre-wrap',
@@ -536,7 +536,7 @@ function PendingHint({ text, onOpen }: { text: string; onOpen: () => void }) {
   return (
     <div
       style={{
-        borderRadius: 12,
+        borderRadius: 'var(--radius-control)',
         border: '1px solid rgba(245,158,11,0.25)',
         background: 'rgba(245,158,11,0.05)',
         padding: '10px 12px',
@@ -547,8 +547,8 @@ function PendingHint({ text, onOpen }: { text: string; onOpen: () => void }) {
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-        <ExclamationCircleOutlined style={{ color: '#fbbf24', fontSize: 14, flexShrink: 0 }} />
-        <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)' }}>{text}</span>
+        <ExclamationCircleOutlined style={{ color: 'var(--warning)', fontSize: 14, flexShrink: 0 }} />
+        <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{text}</span>
       </div>
       <Button size="small" type="primary" onClick={onOpen} style={{ flexShrink: 0 }}>去处理</Button>
     </div>
@@ -620,26 +620,26 @@ function TodoAskBlock({ event }: { event: Event }) {
 
   return (
     <div style={{ marginTop: 4 }}>
-      <div style={{ fontSize: 14, color: 'rgba(255,255,255,0.85)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+      <div style={{ fontSize: 14, color: 'var(--text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
         {question}
       </div>
       {answer != null ? (
         <div
           style={{
             marginTop: 6,
-            borderRadius: 10,
+            borderRadius: 'var(--radius-control)',
             border: '1px solid rgba(39,166,68,0.35)',
             background: 'rgba(39,166,68,0.08)',
             padding: '6px 10px',
             fontSize: 13,
-            color: '#6dc67f',
+            color: 'var(--success)',
             display: 'inline-flex',
             alignItems: 'center',
             gap: 4,
           }}
         >
           <CheckCircleOutlined /> 已确认：{answer}
-          {timedOut && <span style={{ color: 'rgba(255,255,255,0.45)', marginLeft: 4 }}>（超时未答，数字员工自行决断）</span>}
+          {timedOut && <span style={{ color: 'var(--text-tertiary)', marginLeft: 4 }}>（超时未答，数字员工自行决断）</span>}
         </div>
       ) : questionId ? (
         <PendingHint text="数字员工正在等待你的回复" onOpen={() => setPendingOpen(true)} />
@@ -666,14 +666,14 @@ function ActorAvatar({ event, size = 28 }: { event: Event; size?: number }) {
         style={{
           width: size,
           height: size,
-          borderRadius: '50%',
+          borderRadius: 'var(--radius-avatar)',
           flexShrink: 0,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           background: 'rgba(109,95,245,0.2)',
           border: '1px solid rgba(109,95,245,0.35)',
-          color: '#8b7ff8',
+          color: 'var(--signal-hover)',
           fontSize: size * 0.5,
         }}
       >
@@ -686,14 +686,14 @@ function ActorAvatar({ event, size = 28 }: { event: Event; size?: number }) {
       style={{
         width: size,
         height: size,
-        borderRadius: '50%',
+        borderRadius: 'var(--radius-avatar)',
         flexShrink: 0,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'rgba(255,255,255,0.06)',
-        border: '1px solid rgba(255,255,255,0.1)',
-        color: 'rgba(255,255,255,0.5)',
+        background: 'var(--surface-raised)',
+        border: '1px solid var(--line-strong)',
+        color: 'var(--text-tertiary)',
         fontSize: size * 0.5,
       }}
     >
@@ -703,7 +703,7 @@ function ActorAvatar({ event, size = 28 }: { event: Event; size?: number }) {
 }
 
 function ExecutionEventItem({ event, showHeader = true }: { event: Event; showHeader?: boolean }) {
-  const cfg = eventConfig[event.event_type] ?? { icon: <MessageOutlined />, color: '#8b8f9e', label: event.event_type }
+  const cfg = eventConfig[event.event_type] ?? { icon: <MessageOutlined />, color: 'var(--text-tertiary)', label: event.event_type }
   const fromStatus = event.metadata?.from as string | undefined
   const toStatus = event.metadata?.to as string | undefined
   const fileName = event.metadata?.file_name as string | undefined
@@ -720,13 +720,13 @@ function ExecutionEventItem({ event, showHeader = true }: { event: Event; showHe
     <div style={{ display: 'flex', gap: 10 }}>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
         {showHeader && <ActorAvatar event={event} />}
-        <span style={{ width: 1, flex: 1, background: 'rgba(255,255,255,0.08)', marginTop: showHeader ? 4 : 0 }} />
+        <span style={{ width: 1, flex: 1, background: 'var(--surface-raised)', marginTop: showHeader ? 4 : 0 }} />
       </div>
       <div style={{ flex: 1, minWidth: 0, paddingBottom: showHeader ? 14 : 8 }}>
         {showHeader && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ color: cfg.color, fontSize: 13 }}>{cfg.icon}</span>
-            <Text style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.75)' }}>{cfg.label}</Text>
+            <Text style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)' }}>{cfg.label}</Text>
             {event.actor_name && <Text type="secondary" style={{ fontSize: 12 }}>· {event.actor_name}</Text>}
             <Text type="secondary" style={{ fontSize: 12 }} title={dayjs(event.created_at).format('YYYY-MM-DD HH:mm:ss')}>
               · {dayjs(event.created_at).fromNow()}
@@ -741,7 +741,7 @@ function ExecutionEventItem({ event, showHeader = true }: { event: Event; showHe
         )}
 
         {!isTaskComment && !isPlanningReply && !isTodoAsk && typeof event.content === 'string' && event.content && (
-          <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', marginTop: 3, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 3, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
             {stripReplyPrefix(event.content)}
           </div>
         )}
@@ -749,28 +749,28 @@ function ExecutionEventItem({ event, showHeader = true }: { event: Event; showHe
         {isTodoAsk && <TodoAskBlock event={event} />}
 
         {todoTitle && event.event_type !== 'task_comment' && !isTodoAsk && (
-          <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.65)', marginTop: 3 }}>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 3 }}>
             {event.event_type === 'todo_completed' ? <s>{todoTitle}</s> : todoTitle}
           </div>
         )}
 
         {error && (
-          <div style={{ fontSize: 13, color: '#f87171', marginTop: 3, whiteSpace: 'pre-wrap' }}>{error}</div>
+          <div style={{ fontSize: 13, color: 'var(--error)', marginTop: 3, whiteSpace: 'pre-wrap' }}>{error}</div>
         )}
 
         {fromStatus && toStatus && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, fontSize: 12 }}>
             <Tag style={{ margin: 0 }}>{statusMap[fromStatus]?.label ?? fromStatus}</Tag>
-            <SwapOutlined style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }} />
+            <SwapOutlined style={{ color: 'var(--text-quaternary)', fontSize: 12 }} />
             <Tag color="cyan" style={{ margin: 0 }}>{statusMap[toStatus]?.label ?? toStatus}</Tag>
           </div>
         )}
 
         {fileName && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, fontSize: 13, color: '#22d3ee', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 8, padding: '6px 8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, fontSize: 13, color: 'var(--cyan)', background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 'var(--radius-control)', padding: '6px 8px' }}>
             <FileTextOutlined />
             <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fileName}</span>
-            <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>{formatFileSize(fileSize)}</span>
+            <span style={{ color: 'var(--text-quaternary)', fontSize: 12 }}>{formatFileSize(fileSize)}</span>
             {transferId && event.task_id && (
               <ArtifactActions taskId={event.task_id} transferId={transferId} fileName={fileName} />
             )}
@@ -802,11 +802,11 @@ function AttachedFileItem({ file, projectId }: { file: { id: string; file_name: 
   }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', fontSize: 14 }}>
-      <FileTextOutlined style={{ color: 'rgba(255,255,255,0.45)', flexShrink: 0 }} />
-      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'rgba(255,255,255,0.85)' }}>{file.file_name}</span>
-      <span style={{ flexShrink: 0, fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>{file.source === 'agent_artifact' ? '数字员工产物' : file.source === 'meeting_minutes' ? '会议纪要' : '上传文件'}</span>
-      <span style={{ flexShrink: 0, fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>{formatFileSize(file.file_size)}</span>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 10px', borderRadius: 'var(--radius-control)', background: 'var(--surface)', border: '1px solid var(--line)', fontSize: 14 }}>
+      <FileTextOutlined style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-primary)' }}>{file.file_name}</span>
+      <span style={{ flexShrink: 0, fontSize: 12, color: 'var(--text-quaternary)' }}>{file.source === 'agent_artifact' ? '数字员工产物' : file.source === 'meeting_minutes' ? '会议纪要' : '上传文件'}</span>
+      <span style={{ flexShrink: 0, fontSize: 12, color: 'var(--text-quaternary)' }}>{formatFileSize(file.file_size)}</span>
       <Button type="text" size="small" icon={downloading ? <LoadingOutlined /> : <DownloadOutlined />} onClick={handleDownload} title="下载文件" />
     </div>
   )
@@ -816,7 +816,7 @@ function AttachedFilesSection({ files, projectId }: { files: Array<{ id: string;
   if (!files || files.length === 0) return null
   return (
     <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'rgba(255,255,255,0.45)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--text-tertiary)' }}>
         <PaperClipOutlined style={{ fontSize: 12 }} />
         <span>附加文件 ({files.length})</span>
       </div>
@@ -919,7 +919,7 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
 
   if (!task) {
     return (
-      <div style={{ padding: 16, color: 'rgba(255,255,255,0.5)' }}>
+      <div style={{ padding: 16, color: 'var(--text-tertiary)' }}>
         任务加载失败
         <Button type="link" onClick={onClose}>关闭</Button>
       </div>
@@ -932,20 +932,20 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Header */}
-      <div style={{ padding: '10px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, flexShrink: 0 }}>
+      <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, flexShrink: 0 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span
               style={{
                 width: 8,
                 height: 8,
-                borderRadius: '50%',
+                borderRadius: 'var(--radius-avatar)',
                 background: statusMap[task.status]?.color,
                 boxShadow: task.status === 'in_progress' ? `0 0 6px ${statusMap[task.status]?.color}` : 'none',
                 flexShrink: 0,
               }}
             />
-            <Title level={5} style={{ margin: 0, color: '#fff', fontSize: 17 }} ellipsis={{ tooltip: task.title }}>{task.title}</Title>
+            <Title level={5} style={{ margin: 0, color: 'var(--text-primary)', fontSize: 17 }} ellipsis={{ tooltip: task.title }}>{task.title}</Title>
           </div>
           <Space size={6} style={{ marginTop: 6 }} wrap>
             <Tag color={statusMap[task.status]?.color} style={{ margin: 0, fontSize: 12 }}>{statusMap[task.status]?.label}</Tag>
@@ -982,7 +982,7 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
               <Button
                 size="small"
                 icon={<ExclamationCircleOutlined />}
-                style={{ borderColor: '#f59e0b', color: '#fbbf24' }}
+                style={{ borderColor: 'var(--warning)', color: 'var(--warning)' }}
                 onClick={() => setPendingOpen(true)}
               >
                 待确认
@@ -996,7 +996,7 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
 
       {/* Cancel confirm */}
       {showCancel && (
-        <div style={{ padding: '10px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)', background: 'rgba(244,63,94,0.06)', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
+        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--line)', background: 'rgba(244,63,94,0.06)', display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
           <Text type="secondary" style={{ fontSize: 13 }}>
             终止后任务将停止接收后续进度和结果回写，未完成的 Todo 会一并标记为已取消。
           </Text>
@@ -1015,8 +1015,8 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
             {messages.length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                  <MessageOutlined style={{ color: '#6d5ff5', fontSize: 13 }} />
-                  <Text style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.6)' }}>需求对话</Text>
+                  <MessageOutlined style={{ color: 'var(--signal)', fontSize: 13 }} />
+                  <Text style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>需求对话</Text>
                 </div>
                 {messages.map((m, i, arr) => (
                   <MessageBubble
@@ -1044,8 +1044,8 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
             {events && events.length > 0 && (
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-                  <PaperClipOutlined style={{ color: '#f59e0b', fontSize: 13 }} />
-                  <Text style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.6)' }}>执行过程</Text>
+                  <PaperClipOutlined style={{ color: 'var(--warning)', fontSize: 13 }} />
+                  <Text style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>执行过程</Text>
                 </div>
                 <div>
                   {events.map((ev, i) => {
@@ -1068,7 +1068,7 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
       </div>
 
       {/* Composer */}
-      <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)', padding: '10px 16px', flexShrink: 0 }}>
+      <div style={{ borderTop: '1px solid var(--line)', background: 'var(--surface)', padding: '10px 16px', flexShrink: 0 }}>
         {isPlanningMode ? (
           pendingUIBlocks ? (
             <div style={{ maxWidth: 560, margin: '0 auto' }}>
@@ -1092,11 +1092,11 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
                 }}
                 style={{
                   flex: 1,
-                  background: 'rgba(0,0,0,0.25)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  borderRadius: 12,
+                  background: 'var(--surface-inset)',
+                  border: '1px solid var(--line-strong)',
+                  borderRadius: 'var(--radius-control)',
                   padding: '8px 12px',
-                  color: '#fff',
+                  color: 'var(--text-primary)',
                   fontSize: 14,
                   lineHeight: 1.6,
                   resize: 'none',
@@ -1134,8 +1134,8 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
         open={todoOpen}
         onClose={() => setTodoOpen(false)}
         width={520}
-        styles={{ body: { background: '#0a0a14', paddingTop: 8 } }}
-        style={{ background: '#0a0a14' }}
+        styles={{ body: { background: 'var(--canvas)', paddingTop: 8 } }}
+        style={{ background: 'var(--canvas)' }}
       >
         {task && <TaskTodoPanel task={task} />}
       </Drawer>
@@ -1153,8 +1153,8 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
         open={resultOpen}
         onClose={() => setResultOpen(false)}
         width={560}
-        styles={{ body: { background: '#0a0a14', paddingTop: 8 } }}
-        style={{ background: '#0a0a14' }}
+        styles={{ body: { background: 'var(--canvas)', paddingTop: 8 } }}
+        style={{ background: 'var(--canvas)' }}
       >
         <TaskResultView
           taskId={task.id}

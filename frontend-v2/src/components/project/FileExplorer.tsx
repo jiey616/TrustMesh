@@ -37,16 +37,16 @@ function formatFileSize(bytes: number): string {
 /** 可点击的面包屑项：hover 有背景高亮反馈；active 为当前目录（不可点击） */
 function CrumbItem({ label, onClick, active }: { label: ReactNode; onClick: () => void; active?: boolean }) {
   if (active) {
-    return <span style={{ color: 'rgba(255,255,255,0.85)', fontWeight: 500 }}>{label}</span>
+    return <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{label}</span>
   }
   return (
     <span
       onClick={onClick}
       style={{
-        color: 'rgba(255,255,255,0.55)',
+        color: 'var(--text-tertiary)',
         cursor: 'pointer',
         padding: '2px 8px',
-        borderRadius: 6,
+        borderRadius: 'var(--radius-control)',
         transition: 'background 0.12s ease, color 0.12s ease',
         display: 'inline-flex',
         alignItems: 'center',
@@ -201,7 +201,7 @@ export function FileExplorer({ projectId }: Props) {
             else void handlePreview(record)
           }}
         >
-          {record.is_folder ? <FolderOutlined style={{ color: '#f59e0b', fontSize: 16 }} /> : <FileTextOutlined style={{ color: 'rgba(255,255,255,0.5)', fontSize: 15 }} />}
+          {record.is_folder ? <FolderOutlined style={{ color: 'var(--warning)', fontSize: 16 }} /> : <FileTextOutlined style={{ color: 'var(--text-tertiary)', fontSize: 15 }} />}
           <span>{text}</span>
           {record.is_folder && <Tag style={{ marginLeft: 2 }}>文件夹</Tag>}
           {!record.is_folder && record.kind === 'deliverable' && (
@@ -284,7 +284,7 @@ export function FileExplorer({ projectId }: Props) {
           <CrumbItem label={<HomeOutlined />} active={breadcrumbs.length === 0} onClick={() => setParentId('')} />
           {breadcrumbs.map((crumb, i) => (
             <Fragment key={crumb.id}>
-              <span style={{ color: 'rgba(255,255,255,0.25)' }}>/</span>
+              <span style={{ color: 'var(--text-quaternary)' }}>/</span>
               <CrumbItem label={crumb.name} active={i === breadcrumbs.length - 1} onClick={() => setParentId(crumb.id)} />
             </Fragment>
           ))}

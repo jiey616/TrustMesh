@@ -51,9 +51,9 @@ export class AppErrorBoundary extends Component<Props, State> {
                   fontSize: 12,
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-word',
-                  color: 'rgba(255,255,255,0.6)',
-                  background: 'rgba(255,255,255,0.05)',
-                  borderRadius: 8,
+                  color: 'var(--text-secondary)',
+                  background: 'var(--surface)',
+                  borderRadius: 'var(--radius-control)',
                   padding: 12,
                 }}
               >

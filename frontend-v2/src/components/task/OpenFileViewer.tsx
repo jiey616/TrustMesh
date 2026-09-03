@@ -13,6 +13,7 @@ import type { PreviewPlugin } from '@open-file-viewer/core'
 import { FileViewer as OFVFileViewer } from '@open-file-viewer/react'
 import '@open-file-viewer/core/style.css'
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.mjs?url'
+import { useTheme } from '@/theme/ThemeProvider'
 
 interface OpenFileViewerProps {
   blob: Blob
@@ -25,6 +26,7 @@ interface OpenFileViewerProps {
  * 只在需要预览 PDF / Office / 音视频 / 压缩包等格式时才加载对应 chunk。
  */
 export function OpenFileViewer({ blob, fileName }: OpenFileViewerProps) {
+  const { theme } = useTheme()
   const plugins = useMemo<PreviewPlugin[]>(
     () => [
       imagePlugin(),
@@ -48,7 +50,7 @@ export function OpenFileViewer({ blob, fileName }: OpenFileViewerProps) {
       height="62vh"
       fit="contain"
       toolbar
-      theme="dark"
+      theme={theme === 'dark' ? 'dark' : 'light'}
       plugins={plugins}
     />
   )

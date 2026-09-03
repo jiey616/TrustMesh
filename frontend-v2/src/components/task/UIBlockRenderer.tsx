@@ -10,7 +10,7 @@ interface UIBlockRendererProps {
 /** 只读渲染 PM 消息中的 ui_blocks（在消息气泡内使用）。 */
 export function UIBlockRenderer({ blocks, responses }: UIBlockRendererProps) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--line)' }}>
       {blocks.map((block) => {
         const response = responses?.[block.id]
         switch (block.type) {
@@ -31,7 +31,7 @@ export function UIBlockRenderer({ blocks, responses }: UIBlockRendererProps) {
 }
 
 function BlockLabel({ label }: { label: string }) {
-  return <div style={{ fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.5)', marginBottom: 6 }}>{label}</div>
+  return <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-tertiary)', marginBottom: 6 }}>{label}</div>
 }
 
 function SelectBlockReadonly({ block, response }: { block: UIBlock; response?: UIBlockResponse }) {
@@ -49,7 +49,7 @@ function SelectBlockReadonly({ block, response }: { block: UIBlock; response?: U
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 4,
-                borderRadius: 999,
+                borderRadius: 'var(--radius-pill)',
                 padding: '2px 10px',
                 fontSize: 12,
                 background: isSelected ? 'rgba(109,95,245,0.18)' : 'rgba(255,255,255,0.06)',
@@ -74,11 +74,11 @@ function TextInputBlockReadonly({ block, response }: { block: UIBlock; response?
     <div>
       <BlockLabel label={block.label} />
       {text ? (
-        <div style={{ fontSize: 12, background: 'rgba(255,255,255,0.06)', borderRadius: 8, padding: '6px 10px', color: 'rgba(255,255,255,0.8)' }}>
+        <div style={{ fontSize: 12, background: 'var(--surface-raised)', borderRadius: 'var(--radius-control)', padding: '6px 10px', color: 'var(--text-primary)' }}>
           {text}
         </div>
       ) : (
-        <div style={{ fontSize: 12, fontStyle: 'italic', color: 'rgba(255,255,255,0.35)' }}>{block.placeholder ?? '未填写'}</div>
+        <div style={{ fontSize: 12, fontStyle: 'italic', color: 'var(--text-quaternary)' }}>{block.placeholder ?? '未填写'}</div>
       )}
     </div>
   )
@@ -94,7 +94,7 @@ function ConfirmBlockReadonly({ block, response }: { block: UIBlock; response?: 
           style={{
             display: 'inline-flex',
             alignItems: 'center',
-            borderRadius: 999,
+            borderRadius: 'var(--radius-pill)',
             padding: '2px 10px',
             fontSize: 12,
             fontWeight: 500,
@@ -107,10 +107,10 @@ function ConfirmBlockReadonly({ block, response }: { block: UIBlock; response?: 
         </span>
       ) : (
         <div style={{ display: 'flex', gap: 6 }}>
-          <span style={{ borderRadius: 999, padding: '2px 10px', fontSize: 12, background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.5)' }}>
+          <span style={{ borderRadius: 'var(--radius-pill)', padding: '2px 10px', fontSize: 12, background: 'var(--surface-raised)', color: 'var(--text-tertiary)' }}>
             {block.confirm_label ?? '确认'}
           </span>
-          <span style={{ borderRadius: 999, padding: '2px 10px', fontSize: 12, background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.5)' }}>
+          <span style={{ borderRadius: 'var(--radius-pill)', padding: '2px 10px', fontSize: 12, background: 'var(--surface-raised)', color: 'var(--text-tertiary)' }}>
             {block.cancel_label ?? '取消'}
           </span>
         </div>
@@ -123,11 +123,11 @@ function InfoBlockReadonly({ block }: { block: UIBlock }) {
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-        <span style={{ color: '#60a5fa', fontSize: 12 }}>ℹ</span>
-        <span style={{ fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.5)' }}>{block.label}</span>
+        <span style={{ color: 'var(--info)', fontSize: 12 }}>ℹ</span>
+        <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-tertiary)' }}>{block.label}</span>
       </div>
       {block.content && (
-        <div style={{ fontSize: 12, background: 'rgba(59,130,246,0.06)', borderRadius: 8, padding: '6px 10px' }}>
+        <div style={{ fontSize: 12, background: 'rgba(59,130,246,0.06)', borderRadius: 'var(--radius-control)', padding: '6px 10px' }}>
           <Markdown content={block.content} size="small" />
         </div>
       )}

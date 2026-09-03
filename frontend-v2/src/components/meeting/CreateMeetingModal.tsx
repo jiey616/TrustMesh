@@ -127,7 +127,7 @@ export function CreateMeetingModal({ open, onClose, projectId }: Props) {
           <Input.TextArea rows={2} placeholder="描述本次会议的总体目标和背景" />
         </Form.Item>
         {pmAgent && (
-          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginBottom: 8 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 8 }}>
             主持人: <strong>{pmAgent.name}</strong> (PM Agent)
           </div>
         )}
@@ -135,7 +135,7 @@ export function CreateMeetingModal({ open, onClose, projectId }: Props) {
         <Divider style={{ margin: '12px 0' }}>议程项</Divider>
         <Space direction="vertical" style={{ width: '100%' }} size={12}>
           {agendaEntries.map((entry, i) => (
-            <div key={i} style={{ padding: 12, borderRadius: 8, border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.02)' }}>
+            <div key={i} style={{ padding: 12, borderRadius: 'var(--radius-control)', border: '1px solid var(--line)', background: 'var(--surface-sunken)' }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
                 <Input
                   value={entry.description}
@@ -148,7 +148,7 @@ export function CreateMeetingModal({ open, onClose, projectId }: Props) {
                 )}
               </div>
               <div style={{ marginTop: 8 }}>
-                <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>选择参与此议题的数字员工:</Text>
+                <Text style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>选择参与此议题的数字员工:</Text>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
                   {execAgents.filter((a) => selectedAgentIds.includes(a.id)).map((agent) => {
                     const assigned = entry.agents.find((a) => a.agent_id === agent.id)
@@ -159,7 +159,7 @@ export function CreateMeetingModal({ open, onClose, projectId }: Props) {
                         style={{
                           fontSize: 12,
                           padding: '3px 10px',
-                          borderRadius: 20,
+                          borderRadius: 'var(--radius-structure)',
                           cursor: 'pointer',
                           border: `1px solid ${assigned ? '#6d5ff5' : 'rgba(255,255,255,0.2)'}`,
                           background: assigned ? 'rgba(109,95,245,0.15)' : 'transparent',
@@ -172,7 +172,7 @@ export function CreateMeetingModal({ open, onClose, projectId }: Props) {
                     )
                   })}
                   {execAgents.filter((a) => selectedAgentIds.includes(a.id)).length === 0 && (
-                    <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>请先在下方邀请数字员工</span>
+                    <span style={{ fontSize: 12, color: 'var(--text-quaternary)' }}>请先在下方邀请数字员工</span>
                   )}
                 </div>
                 {entry.agents.length > 0 && (
@@ -181,13 +181,13 @@ export function CreateMeetingModal({ open, onClose, projectId }: Props) {
                       const agent = execAgents.find((a) => a.id === as.agent_id)
                       return (
                         <div key={as.agent_id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                          <span style={{ color: 'rgba(255,255,255,0.6)', maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <span style={{ color: 'var(--text-secondary)', maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {agent?.name ?? as.agent_id}
                           </span>
                           <select
                             value={as.weight}
                             onChange={(e) => updateAgentWeight(i, as.agent_id, Number(e.target.value))}
-                            style={{ height: 24, fontSize: 11, border: '1px solid rgba(255,255,255,0.2)', borderRadius: 4, background: 'rgba(255,255,255,0.05)', color: '#fff' }}
+                            style={{ height: 24, fontSize: 11, border: '1px solid var(--line-strong)', borderRadius: 'var(--radius-control)', background: 'var(--surface)', color: 'var(--text-primary)' }}
                           >
                             {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((w) => (
                               <option key={w} value={w} style={{ color: '#000' }}>w={w}</option>
@@ -207,8 +207,8 @@ export function CreateMeetingModal({ open, onClose, projectId }: Props) {
         </Space>
 
         <Divider style={{ margin: '12px 0' }}>参会数字员工（勾选后可分配到议程项）</Divider>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 160, overflowY: 'auto', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: 8 }}>
-          {execAgents.length === 0 && <Text style={{ fontSize: 13, padding: 8, color: 'rgba(255,255,255,0.4)' }}>暂无可用数字员工</Text>}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 160, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 'var(--radius-control)', padding: 8 }}>
+          {execAgents.length === 0 && <Text style={{ fontSize: 13, padding: 8, color: 'var(--text-quaternary)' }}>暂无可用数字员工</Text>}
           {execAgents.map((agent) => (
             <Checkbox
               key={agent.id}

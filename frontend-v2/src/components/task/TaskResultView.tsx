@@ -83,7 +83,7 @@ export function TaskResultView({ taskId, result, artifacts, workflow, todos }: T
   }, [workflow, safeTodos])
 
   if (!hasResult && !hasArtifacts) {
-    return <div style={{ padding: 32, textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>任务尚未产出结果</div>
+    return <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-quaternary)', fontSize: 13 }}>任务尚未产出结果</div>
   }
 
   const handlePreview = async (artifact: TaskArtifact) => {
@@ -150,19 +150,19 @@ export function TaskResultView({ taskId, result, artifacts, workflow, todos }: T
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       {hasResult && (
         <Card
-          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
+          style={{ background: 'var(--surface)', border: '1px solid var(--line)' }}
           styles={{ body: { padding: 16 } }}
         >
           {summaryText && (
             <div style={{ marginBottom: finalOutputText ? 14 : 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.8)', marginBottom: 6 }}>摘要</div>
-              <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', whiteSpace: 'pre-wrap' }}>{summaryText}</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>摘要</div>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap' }}>{summaryText}</div>
             </div>
           )}
           {finalOutputText && (
             <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.8)', marginBottom: 6 }}>最终产出</div>
-              <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 10, padding: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>最终产出</div>
+              <div style={{ background: 'var(--surface-inset)', borderRadius: 'var(--radius-control)', padding: 14 }}>
                 <Markdown content={finalOutputText} />
               </div>
             </div>
@@ -172,7 +172,7 @@ export function TaskResultView({ taskId, result, artifacts, workflow, todos }: T
 
       {hasArtifacts && (
         <div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.8)', marginBottom: 8 }}>交付物</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>交付物</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {safeArtifacts.map((artifact) => {
               const bindable =
@@ -181,31 +181,31 @@ export function TaskResultView({ taskId, result, artifacts, workflow, todos }: T
                 <div
                   key={artifact.transfer_id}
                   style={{
-                    borderRadius: 12,
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    background: 'rgba(255,255,255,0.03)',
+                    borderRadius: 'var(--radius-control)',
+                    border: '1px solid var(--line)',
+                    background: 'var(--surface)',
                     padding: 12,
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      <FileTextOutlined style={{ color: 'rgba(255,255,255,0.5)' }} />
+                    <div style={{ width: 32, height: 32, borderRadius: 'var(--radius-control)', background: 'var(--surface-raised)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <FileTextOutlined style={{ color: 'var(--text-tertiary)' }} />
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, color: '#fff', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}>
                         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{artifact.file_name}</span>
                         {artifact.kind === 'deliverable' && (
-                          <span style={{ flexShrink: 0, fontSize: 11, lineHeight: '18px', padding: '0 6px', borderRadius: 4, background: 'rgba(99,153,34,0.18)', color: '#97c459', border: '0.5px solid rgba(99,153,34,0.4)' }}>
+                          <span style={{ flexShrink: 0, fontSize: 11, lineHeight: '18px', padding: '0 6px', borderRadius: 'var(--radius-control)', background: 'rgba(99,153,34,0.18)', color: '#97c459', border: '0.5px solid rgba(99,153,34,0.4)' }}>
                             交付{artifact.output_name ? ` · ${artifact.output_name}` : ''}
                           </span>
                         )}
                         {artifact.kind === 'process' && (
-                          <span style={{ flexShrink: 0, fontSize: 11, lineHeight: '18px', padding: '0 6px', borderRadius: 4, background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.45)', border: '0.5px solid rgba(255,255,255,0.12)' }}>
+                          <span style={{ flexShrink: 0, fontSize: 11, lineHeight: '18px', padding: '0 6px', borderRadius: 'var(--radius-control)', background: 'var(--surface-raised)', color: 'var(--text-tertiary)', border: '0.5px solid var(--line-strong)' }}>
                             过程
                           </span>
                         )}
                       </div>
-                      <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>
+                      <div style={{ fontSize: 13, color: 'var(--text-quaternary)', marginTop: 2 }}>
                         {artifact.mime_type}{formatFileSize(artifact.file_size) ? ` · ${formatFileSize(artifact.file_size)}` : ''}
                       </div>
                     </div>
@@ -265,13 +265,13 @@ export function TaskResultView({ taskId, result, artifacts, workflow, todos }: T
       >
         {bindArtifact && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: 8 }}>
-            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>
-              文件：<span style={{ color: '#fff' }}>{bindArtifact.file_name}</span>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+              文件：<span style={{ color: 'var(--text-primary)' }}>{bindArtifact.file_name}</span>
             </div>
-            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>
-              所属步骤：<span style={{ color: '#fff' }}>{bindInfo?.stepName ?? '—'}</span>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+              所属步骤：<span style={{ color: 'var(--text-primary)' }}>{bindInfo?.stepName ?? '—'}</span>
             </div>
-            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
               选择该步骤的输出位（占位名请原样保留，不要替换）：
             </div>
             <Select

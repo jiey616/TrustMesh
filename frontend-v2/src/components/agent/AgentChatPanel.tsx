@@ -179,7 +179,7 @@ export function AgentChatPanel({ agent }: Props) {
                         {isUser ? ` · ${messageStatusText[m.status] ?? m.status}` : ''}
                       </div>
                     </div>
-                    {isUser && <Avatar size={32} icon={<UserOutlined />} style={{ background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />}
+                    {isUser && <Avatar size={32} icon={<UserOutlined />} style={{ background: 'var(--surface-raised)', flexShrink: 0 }} />}
                   </div>
                 )
               })}
@@ -204,9 +204,9 @@ export function AgentChatPanel({ agent }: Props) {
               display: 'flex',
               alignItems: 'flex-end',
               gap: 8,
-              borderRadius: 12,
-              border: '1px solid rgba(255,255,255,0.1)',
-              background: 'rgba(0,0,0,0.25)',
+              borderRadius: 'var(--radius-control)',
+              border: '1px solid var(--line-strong)',
+              background: 'var(--surface-inset)',
               padding: '8px 8px 8px 12px',
               transition: 'border-color 0.2s',
             }}
@@ -232,7 +232,7 @@ export function AgentChatPanel({ agent }: Props) {
                 background: 'transparent',
                 border: 'none',
                 outline: 'none',
-                color: '#fff',
+                color: 'var(--text-primary)',
                 fontSize: 13,
                 lineHeight: 1.6,
                 padding: '4px 0',

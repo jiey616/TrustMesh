@@ -118,7 +118,7 @@ export function AgentSprite({ visual, slot, color, onClick }: AgentSpriteProps) 
         fontSize: 38,
         color: visual.presence === 'offline' ? '#8b8f9e' : '#f4f4f8',
         background: 'rgba(10,10,18,0.74)',
-        borderColor: 'rgba(255,255,255,0.14)',
+        borderColor: 'var(--line-strong)',
         bold: true,
       }),
     [visual.name, visual.presence],
@@ -141,7 +141,7 @@ export function AgentSprite({ visual, slot, color, onClick }: AgentSpriteProps) 
           : STATUS_LABEL[visual.state],
         {
           fontSize: 30,
-          color: '#0a0a12',
+          color: 'var(--text-inverse)',
           background: dimmed ? '#3f4450' : stateColor,
           borderColor: dimmed ? '#3f4450' : stateColor,
           paddingX: 18,

@@ -12,9 +12,9 @@ import { PageHeader } from '@/components/shared/PageHeader'
 const { Text } = Typography
 
 const statusConfig: Record<MeetingStatus, { label: string; color: string; borderColor: string; icon: React.ReactNode }> = {
-  waiting: { label: '待开始', color: '#f59e0b', borderColor: '#f59e0b', icon: <ClockCircleOutlined /> },
-  in_progress: { label: '进行中', color: '#10b981', borderColor: '#10b981', icon: <MessageOutlined /> },
-  completed: { label: '已结束', color: '#6b7280', borderColor: '#6b7280', icon: <CheckCircleOutlined /> },
+  waiting: { label: '待开始', color: 'var(--warning)', borderColor: 'var(--warning)', icon: <ClockCircleOutlined /> },
+  in_progress: { label: '进行中', color: 'var(--success)', borderColor: 'var(--success)', icon: <MessageOutlined /> },
+  completed: { label: '已结束', color: 'var(--text-quaternary)', borderColor: '#6b7280', icon: <CheckCircleOutlined /> },
 }
 
 function formatRelativeTime(dateStr: string): string {
@@ -115,7 +115,7 @@ export function MeetingListPage({ projectId }: Props) {
                 <div key={status}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                     <span style={{ color: cfg.color }}>{cfg.icon}</span>
-                    <Text style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.7)' }}>{cfg.label}</Text>
+                    <Text style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)' }}>{cfg.label}</Text>
                     <Text type="secondary" style={{ fontSize: 12 }}>{list.length}</Text>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -127,7 +127,7 @@ export function MeetingListPage({ projectId }: Props) {
                         bordered={false}
                         onClick={() => navigate(`/meetings/${m.id}`)}
                         style={{
-                          background: 'rgba(255,255,255,0.03)',
+                          background: 'var(--surface)',
                           borderLeft: `3px solid ${cfg.borderColor}`,
                           cursor: 'pointer',
                         }}
@@ -135,7 +135,7 @@ export function MeetingListPage({ projectId }: Props) {
                       >
                         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                            <Text strong style={{ color: '#f4f4f8', fontSize: 14 }} ellipsis>{m.title}</Text>
+                            <Text strong style={{ color: 'var(--text-primary)', fontSize: 14 }} ellipsis>{m.title}</Text>
                             <Tag style={{ fontSize: 11, color: cfg.color, borderColor: cfg.color, background: 'transparent', margin: 0 }}>{cfg.label}</Tag>
                           </div>
                           <Text type="secondary" style={{ fontSize: 11, flexShrink: 0 }}>{formatRelativeTime(m.created_at)}</Text>
@@ -143,7 +143,7 @@ export function MeetingListPage({ projectId }: Props) {
                         {m.agenda && (
                           <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }} ellipsis>{m.agenda}</Text>
                         )}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, fontSize: 11, color: 'var(--text-tertiary)' }}>
                           <span><TeamOutlined style={{ fontSize: 12 }} /> {m.participants?.length ?? m.participant_count ?? 0} 位</span>
                           {m.attached_files && m.attached_files.length > 0 && (
                             <span><PaperClipOutlined style={{ fontSize: 12 }} /> {m.attached_files.length} 个文件</span>
@@ -161,7 +161,7 @@ export function MeetingListPage({ projectId }: Props) {
                                     background: p.agent_id === m.host_agent_id
                                       ? 'linear-gradient(135deg, #f59e0b, #f43f5e)'
                                       : 'linear-gradient(135deg, #3b82f6, #22d3ee)',
-                                    color: '#fff',
+                                    color: 'var(--text-primary)',
                                     fontSize: 11,
                                   }}
                                 >
@@ -170,7 +170,7 @@ export function MeetingListPage({ projectId }: Props) {
                               ))}
                             </Avatar.Group>
                             {(m.participants?.length ?? 0) > 5 && (
-                              <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', marginLeft: 6 }}>+{(m.participants?.length ?? 0) - 5}</span>
+                              <span style={{ fontSize: 10, color: 'var(--text-tertiary)', marginLeft: 6 }}>+{(m.participants?.length ?? 0) - 5}</span>
                             )}
                           </div>
                         )}

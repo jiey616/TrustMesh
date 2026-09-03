@@ -74,8 +74,8 @@ export function WorkflowCanvasEditor({
         placeholder="工作流名称（如：剧本制作流水线）"
         style={{
           fontWeight: 600,
-          background: 'rgba(255,255,255,0.04)',
-          borderColor: 'rgba(255,255,255,0.1)',
+          background: 'var(--surface)',
+          borderColor: 'var(--line-strong)',
         }}
       />
 
@@ -87,13 +87,13 @@ export function WorkflowCanvasEditor({
               style={{
                 width: 10,
                 height: 10,
-                borderRadius: '50%',
-                background: '#27a644',
+                borderRadius: 'var(--radius-avatar)',
+                background: 'var(--success)',
                 boxShadow: '0 0 8px rgba(39,166,68,0.8)',
               }}
             />
           </div>
-          <span style={{ fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,0.5)' }}>开始</span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-tertiary)' }}>开始</span>
         </div>
 
         {/* 步骤节点 */}
@@ -105,7 +105,7 @@ export function WorkflowCanvasEditor({
             <div key={idx} style={{ display: 'flex', flexDirection: 'column' }}>
               {/* 连线 + 插入按钮 */}
               <div style={{ width: 36, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                <span style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.12)' }} />
+                <span style={{ width: 1, height: 14, background: 'var(--surface-raised)' }} />
                 <Tooltip title="在此处插入步骤">
                   <button
                     type="button"
@@ -113,10 +113,10 @@ export function WorkflowCanvasEditor({
                     style={{
                       width: 20,
                       height: 20,
-                      borderRadius: '50%',
+                      borderRadius: 'var(--radius-avatar)',
                       border: '1px solid rgba(109,95,245,0.5)',
                       background: 'rgba(109,95,245,0.12)',
-                      color: '#8b7ff8',
+                      color: 'var(--signal-hover)',
                       fontSize: 11,
                       display: 'flex',
                       alignItems: 'center',
@@ -128,7 +128,7 @@ export function WorkflowCanvasEditor({
                     <PlusOutlined />
                   </button>
                 </Tooltip>
-                <span style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.12)' }} />
+                <span style={{ width: 1, height: 14, background: 'var(--surface-raised)' }} />
               </div>
 
               {/* 节点卡片 */}
@@ -164,7 +164,7 @@ export function WorkflowCanvasEditor({
                     alignItems: 'center',
                     justifyContent: 'center',
                     cursor: 'grab',
-                    color: 'rgba(255,255,255,0.25)',
+                    color: 'var(--text-quaternary)',
                     fontSize: 12,
                   }}
                   title="拖拽排序"
@@ -181,7 +181,7 @@ export function WorkflowCanvasEditor({
                       style={{
                         width: 36,
                         height: 36,
-                        borderRadius: '50%',
+                        borderRadius: 'var(--radius-avatar)',
                         border: `1.5px dashed ${invalid ? 'rgba(239,68,68,0.5)' : 'rgba(109,95,245,0.5)'}`,
                         background: 'rgba(109,95,245,0.08)',
                         color: invalid ? '#f87171' : '#8b7ff8',
@@ -202,9 +202,9 @@ export function WorkflowCanvasEditor({
                   style={{
                     flex: 1,
                     minWidth: 0,
-                    borderRadius: 12,
+                    borderRadius: 'var(--radius-control)',
                     border: `1px solid ${invalid ? 'rgba(239,68,68,0.4)' : 'rgba(255,255,255,0.1)'}`,
-                    background: invalid ? 'rgba(239,68,68,0.04)' : 'rgba(255,255,255,0.03)',
+                    background: invalid ? 'rgba(239,68,68,0.12)' : 'var(--surface)',
                     padding: '10px 12px',
                     display: 'flex',
                     flexDirection: 'column',
@@ -221,8 +221,8 @@ export function WorkflowCanvasEditor({
                         minWidth: 0,
                         fontSize: 13,
                         fontWeight: 500,
-                        background: 'rgba(255,255,255,0.04)',
-                        borderColor: 'rgba(255,255,255,0.1)',
+                        background: 'var(--surface)',
+                        borderColor: 'var(--line-strong)',
                       }}
                     />
                     <Tooltip title="删除步骤">
@@ -230,7 +230,7 @@ export function WorkflowCanvasEditor({
                         type="text"
                         size="small"
                         icon={<DeleteOutlined />}
-                        style={{ color: 'rgba(255,255,255,0.4)' }}
+                        style={{ color: 'var(--text-quaternary)' }}
                         onClick={() => removeStep(idx)}
                       />
                     </Tooltip>
@@ -254,7 +254,7 @@ export function WorkflowCanvasEditor({
                           label: `${a.name}（${a.role || '无角色'}）`,
                         }))}
                     />
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'rgba(255,255,255,0.55)' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-tertiary)' }}>
                       <Switch
                         size="small"
                         checked={!!step.need_review}
@@ -278,10 +278,10 @@ export function WorkflowCanvasEditor({
 
         {/* 末尾连线 + 添加按钮 */}
         <div style={{ width: 36, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <span style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.12)' }} />
+          <span style={{ width: 1, height: 14, background: 'var(--surface-raised)' }} />
           {steps.length === 0 ? (
             <div style={{ width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.12)' }} />
+              <span style={{ width: 1, height: 20, background: 'var(--surface-raised)' }} />
             </div>
           ) : (
             <Tooltip title="在末尾添加步骤">
@@ -291,10 +291,10 @@ export function WorkflowCanvasEditor({
                 style={{
                   width: 20,
                   height: 20,
-                  borderRadius: '50%',
+                  borderRadius: 'var(--radius-avatar)',
                   border: '1px solid rgba(109,95,245,0.5)',
                   background: 'rgba(109,95,245,0.12)',
-                  color: '#8b7ff8',
+                  color: 'var(--signal-hover)',
                   fontSize: 11,
                   display: 'flex',
                   alignItems: 'center',
@@ -307,7 +307,7 @@ export function WorkflowCanvasEditor({
               </button>
             </Tooltip>
           )}
-          <span style={{ width: 1, flex: 1, minHeight: 14, background: 'rgba(255,255,255,0.12)' }} />
+          <span style={{ width: 1, flex: 1, minHeight: 14, background: 'var(--surface-raised)' }} />
         </div>
 
         {/* 完成端点 */}
@@ -317,13 +317,13 @@ export function WorkflowCanvasEditor({
               style={{
                 width: 10,
                 height: 10,
-                borderRadius: '50%',
-                background: '#6dc67f',
+                borderRadius: 'var(--radius-avatar)',
+                background: 'var(--success)',
                 boxShadow: '0 0 8px rgba(109,198,127,0.8)',
               }}
             />
           </div>
-          <span style={{ fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,0.5)' }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-tertiary)' }}>
             完成
           </span>
         </div>
@@ -336,7 +336,7 @@ export function WorkflowCanvasEditor({
             marginTop: 16,
             padding: '24px 16px',
             textAlign: 'center',
-            borderRadius: 12,
+            borderRadius: 'var(--radius-control)',
             border: '1px dashed rgba(109,95,245,0.35)',
             background: 'rgba(109,95,245,0.04)',
             display: 'flex',
@@ -345,9 +345,9 @@ export function WorkflowCanvasEditor({
             gap: 10,
           }}
         >
-          <AimOutlined style={{ fontSize: 26, color: '#6d5ff5' }} />
-          <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>
-            还没有步骤。点击上方 <PlusOutlined style={{ fontSize: 10, color: '#8b7ff8' }} /> 或下方按钮开始搭建流水线
+          <AimOutlined style={{ fontSize: 26, color: 'var(--signal)' }} />
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+            还没有步骤。点击上方 <PlusOutlined style={{ fontSize: 10, color: 'var(--signal-hover)' }} /> 或下方按钮开始搭建流水线
           </div>
           <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => addStep(0)}>
             添加第一个步骤

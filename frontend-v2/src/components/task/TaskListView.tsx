@@ -12,15 +12,15 @@ interface Props {
 }
 
 const statusConfig: Record<TaskStatus, { color: string; label: string; dot: string; active: boolean }> = {
-  planning: { color: '#8b5cf6', label: '规划中', dot: '#8b5cf6', active: true },
-  review: { color: '#f59e0b', label: '待确认', dot: '#f59e0b', active: true },
-  pending: { color: '#3b82f6', label: '待处理', dot: '#3b82f6', active: true },
-  in_progress: { color: '#22d3ee', label: '进行中', dot: '#22d3ee', active: true },
-  awaiting_review: { color: '#f43f5e', label: '待人工确认', dot: '#f43f5e', active: true },
-  waiting_user: { color: '#f43f5e', label: '等待用户', dot: '#f43f5e', active: true },
-  done: { color: '#10b981', label: '已完成', dot: '#10b981', active: false },
-  failed: { color: '#ef4444', label: '失败', dot: '#ef4444', active: false },
-  canceled: { color: '#6b7280', label: '已取消', dot: '#6b7280', active: false },
+  planning: { color: 'var(--signal)', label: '规划中', dot: 'var(--signal)', active: true },
+  review: { color: 'var(--warning)', label: '待确认', dot: 'var(--warning)', active: true },
+  pending: { color: 'var(--info)', label: '待处理', dot: 'var(--info)', active: true },
+  in_progress: { color: 'var(--cyan)', label: '进行中', dot: 'var(--cyan)', active: true },
+  awaiting_review: { color: 'var(--error)', label: '待人工确认', dot: 'var(--error)', active: true },
+  waiting_user: { color: 'var(--error)', label: '等待用户', dot: 'var(--error)', active: true },
+  done: { color: 'var(--success)', label: '已完成', dot: 'var(--success)', active: false },
+  failed: { color: 'var(--error)', label: '失败', dot: 'var(--error)', active: false },
+  canceled: { color: 'var(--text-quaternary)', label: '已取消', dot: 'var(--text-quaternary)', active: false },
 }
 
 const statusGroups: TaskStatus[] = [
@@ -60,7 +60,7 @@ function InlineTodos({ taskId, status }: { taskId: string; status: string }) {
   const todos = taskDetail?.todos ?? []
   if (todos.length === 0) {
     return (
-      <div style={{ padding: '8px 4px', fontSize: 13, color: 'rgba(255,255,255,0.35)' }}>
+      <div style={{ padding: '8px 4px', fontSize: 13, color: 'var(--text-quaternary)' }}>
         {status === 'planning' ? '等待 PM 规划' : '暂无执行清单'}
       </div>
     )
@@ -68,7 +68,7 @@ function InlineTodos({ taskId, status }: { taskId: string; status: string }) {
 
   return (
     <div style={{ padding: '6px 2px', display: 'flex', flexDirection: 'column', gap: 3 }}>
-      <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginBottom: 2 }}>
+      <div style={{ fontSize: 12, color: 'var(--text-quaternary)', marginBottom: 2 }}>
         {doneCount}/{todos.length} 完成
       </div>
       {todos.map((todo, i) => (
@@ -77,7 +77,7 @@ function InlineTodos({ taskId, status }: { taskId: string; status: string }) {
             style={{
               width: 6,
               height: 6,
-              borderRadius: '50%',
+              borderRadius: 'var(--radius-avatar)',
               flexShrink: 0,
               background:
                 todo.status === 'done' ? '#10b981'
@@ -91,7 +91,7 @@ function InlineTodos({ taskId, status }: { taskId: string; status: string }) {
           <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: todo.status === 'done' ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.7)', textDecoration: todo.status === 'done' ? 'line-through' : 'none' }}>
             {i + 1}. {todo.title}
           </span>
-          <span style={{ flexShrink: 0, fontSize: 12, color: 'rgba(255,255,255,0.35)' }}>{todo.assignee?.name ?? ''}</span>
+          <span style={{ flexShrink: 0, fontSize: 12, color: 'var(--text-quaternary)' }}>{todo.assignee?.name ?? ''}</span>
         </div>
       ))}
     </div>
@@ -118,7 +118,7 @@ function TaskCard({ task, selected, onTaskClick }: { task: TaskListItem; selecte
         onClick={() => onTaskClick(task.id)}
         style={{
           cursor: 'pointer',
-          borderRadius: 12,
+          borderRadius: 'var(--radius-control)',
           padding: '9px 12px',
           background: selected ? 'rgba(109,95,245,0.10)' : 'rgba(255,255,255,0.02)',
           border: `1px solid ${selected ? 'rgba(109,95,245,0.35)' : 'rgba(255,255,255,0.05)'}`,
@@ -133,7 +133,7 @@ function TaskCard({ task, selected, onTaskClick }: { task: TaskListItem; selecte
                 e.stopPropagation()
                 setTodosExpanded((v) => !v)
               }}
-              style={{ flexShrink: 0, cursor: 'pointer', color: 'rgba(255,255,255,0.35)', display: 'flex', alignItems: 'center' }}
+              style={{ flexShrink: 0, cursor: 'pointer', color: 'var(--text-quaternary)', display: 'flex', alignItems: 'center' }}
               title={todosExpanded ? '收起执行清单' : '展开执行清单'}
             >
               {todosExpanded ? <DownOutlined style={{ fontSize: 11 }} /> : <RightOutlined style={{ fontSize: 11 }} />}
@@ -143,7 +143,7 @@ function TaskCard({ task, selected, onTaskClick }: { task: TaskListItem; selecte
             style={{
               width: 7,
               height: 7,
-              borderRadius: '50%',
+              borderRadius: 'var(--radius-avatar)',
               background: cfg.dot,
               flexShrink: 0,
               boxShadow: task.status === 'in_progress' ? `0 0 6px ${cfg.dot}` : 'none',
@@ -164,7 +164,7 @@ function TaskCard({ task, selected, onTaskClick }: { task: TaskListItem; selecte
           >
             {task.title}
           </span>
-          <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', flexShrink: 0 }} title={dayjs(task.updated_at).format('YYYY-MM-DD HH:mm:ss')}>
+          <span style={{ fontSize: 12, color: 'var(--text-quaternary)', flexShrink: 0 }} title={dayjs(task.updated_at).format('YYYY-MM-DD HH:mm:ss')}>
             {dayjs(task.updated_at).fromNow()}
           </span>
         </div>
@@ -174,7 +174,7 @@ function TaskCard({ task, selected, onTaskClick }: { task: TaskListItem; selecte
           style={{
             marginTop: 4,
             fontSize: 13,
-            color: 'rgba(255,255,255,0.5)',
+            color: 'var(--text-tertiary)',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
@@ -191,9 +191,9 @@ function TaskCard({ task, selected, onTaskClick }: { task: TaskListItem; selecte
             style={{
               fontSize: 12,
               color: priorityColor[task.priority] === 'red' ? '#f87171' : priorityColor[task.priority] === 'orange' ? '#fbbf24' : priorityColor[task.priority] === 'blue' ? '#60a5fa' : '#34d399',
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              borderRadius: 4,
+              background: 'var(--surface)',
+              border: '1px solid var(--line)',
+              borderRadius: 'var(--radius-control)',
               padding: '0 5px',
               lineHeight: '15px',
             }}
@@ -204,15 +204,15 @@ function TaskCard({ task, selected, onTaskClick }: { task: TaskListItem; selecte
           {task.todo_count > 0 ? (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               <Progress percent={pct} size="small" showInfo={false} strokeColor={cfg.color} style={{ width: 48, margin: 0 }} />
-              <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
+              <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
                 {task.completed_todo_count}/{task.todo_count}
               </span>
               {task.failed_todo_count > 0 && (
-                <span style={{ fontSize: 12, color: '#ef4444' }}>{task.failed_todo_count}!</span>
+                <span style={{ fontSize: 12, color: 'var(--error)' }}>{task.failed_todo_count}!</span>
               )}
             </span>
           ) : (
-            <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.35)' }}>
+            <span style={{ fontSize: 13, color: 'var(--text-quaternary)' }}>
               {task.status === 'planning' ? '等待规划' : '—'}
             </span>
           )}
@@ -221,7 +221,7 @@ function TaskCard({ task, selected, onTaskClick }: { task: TaskListItem; selecte
 
       {/* Inline todos */}
       {todosExpanded && canExpandTodos && (
-        <div style={{ marginLeft: 22, marginTop: 4, paddingLeft: 10, borderLeft: '1px solid rgba(255,255,255,0.08)' }}>
+        <div style={{ marginLeft: 22, marginTop: 4, paddingLeft: 10, borderLeft: '1px solid var(--line)' }}>
           <InlineTodos taskId={task.id} status={task.status} />
         </div>
       )}
@@ -231,14 +231,14 @@ function TaskCard({ task, selected, onTaskClick }: { task: TaskListItem; selecte
 
 const filterChips: { key: TaskStatus | 'all' | 'active'; label: string; color?: string }[] = [
   { key: 'all', label: '全部' },
-  { key: 'active', label: '活跃', color: '#22d3ee' },
-  { key: 'in_progress', label: '进行中', color: '#22d3ee' },
-  { key: 'awaiting_review', label: '待人工确认', color: '#f43f5e' },
-  { key: 'waiting_user', label: '等待用户', color: '#f43f5e' },
-  { key: 'pending', label: '待处理', color: '#3b82f6' },
-  { key: 'done', label: '已完成', color: '#10b981' },
-  { key: 'failed', label: '失败', color: '#ef4444' },
-  { key: 'canceled', label: '已取消', color: '#6b7280' },
+  { key: 'active', label: '活跃', color: 'var(--cyan)' },
+  { key: 'in_progress', label: '进行中', color: 'var(--cyan)' },
+  { key: 'awaiting_review', label: '待人工确认', color: 'var(--error)' },
+  { key: 'waiting_user', label: '等待用户', color: 'var(--error)' },
+  { key: 'pending', label: '待处理', color: 'var(--info)' },
+  { key: 'done', label: '已完成', color: 'var(--success)' },
+  { key: 'failed', label: '失败', color: 'var(--error)' },
+  { key: 'canceled', label: '已取消', color: 'var(--text-quaternary)' },
 ]
 
 export function TaskListView({ tasks, selectedTaskId, onTaskClick }: Props) {
@@ -297,11 +297,11 @@ export function TaskListView({ tasks, selectedTaskId, onTaskClick }: Props) {
         <Input
           allowClear
           size="small"
-          prefix={<SearchOutlined style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13 }} />}
+          prefix={<SearchOutlined style={{ color: 'var(--text-quaternary)', fontSize: 13 }} />}
           placeholder="搜索任务标题…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          style={{ background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.1)', color: '#fff' }}
+          style={{ background: 'var(--surface)', borderColor: 'var(--line-strong)', color: 'var(--text-primary)' }}
         />
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
           {filterChips.map((chip) => {
@@ -315,7 +315,7 @@ export function TaskListView({ tasks, selectedTaskId, onTaskClick }: Props) {
                   fontSize: 12,
                   lineHeight: '16px',
                   padding: '0 8px',
-                  borderRadius: 999,
+                  borderRadius: 'var(--radius-pill)',
                   border: `1px solid ${active ? (chip.color ?? 'rgba(109,95,245,0.6)') : 'rgba(255,255,255,0.08)'}`,
                   background: active ? (chip.color ? `${chip.color}22` : 'rgba(109,95,245,0.15)') : 'transparent',
                   color: active ? (chip.color ?? '#8b7ff8') : 'rgba(255,255,255,0.5)',
@@ -333,7 +333,7 @@ export function TaskListView({ tasks, selectedTaskId, onTaskClick }: Props) {
 
       <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', paddingRight: 2, display: 'flex', flexDirection: 'column', gap: 4 }}>
         {groups.length === 0 && (
-          <div style={{ padding: '40px 0', textAlign: 'center', color: 'rgba(255,255,255,0.35)', fontSize: 13 }}>
+          <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-quaternary)', fontSize: 13 }}>
             {hasAnyActiveFilter ? '没有匹配的任务' : '暂无任务'}
           </div>
         )}
@@ -354,12 +354,12 @@ export function TaskListView({ tasks, selectedTaskId, onTaskClick }: Props) {
                   padding: '6px 8px',
                   cursor: 'pointer',
                   userSelect: 'none',
-                  borderRadius: 8,
+                  borderRadius: 'var(--radius-control)',
                 }}
               >
-                {isCollapsed ? <RightOutlined style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }} /> : <DownOutlined style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }} />}
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: group.dot, flexShrink: 0 }} />
-                <span style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.6)' }}>{group.label}</span>
+                {isCollapsed ? <RightOutlined style={{ fontSize: 11, color: 'var(--text-quaternary)' }} /> : <DownOutlined style={{ fontSize: 11, color: 'var(--text-quaternary)' }} />}
+                <span style={{ width: 6, height: 6, borderRadius: 'var(--radius-avatar)', background: group.dot, flexShrink: 0 }} />
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>{group.label}</span>
                 <span
                   style={{
                     display: 'inline-flex',
@@ -367,12 +367,12 @@ export function TaskListView({ tasks, selectedTaskId, onTaskClick }: Props) {
                     justifyContent: 'center',
                     minWidth: 16,
                     height: 16,
-                    borderRadius: 999,
+                    borderRadius: 'var(--radius-pill)',
                     padding: '0 5px',
                     fontSize: 12,
                     fontWeight: 500,
-                    background: 'rgba(255,255,255,0.08)',
-                    color: 'rgba(255,255,255,0.5)',
+                    background: 'var(--surface-raised)',
+                    color: 'var(--text-tertiary)',
                   }}
                 >
                   {group.tasks.length}
@@ -391,7 +391,7 @@ export function TaskListView({ tasks, selectedTaskId, onTaskClick }: Props) {
                       onClick={() => setExpandedAll((prev) => ({ ...prev, [group.status]: true }))}
                       style={{
                         fontSize: 13,
-                        color: 'rgba(255,255,255,0.45)',
+                        color: 'var(--text-tertiary)',
                         background: 'none',
                         border: 'none',
                         cursor: 'pointer',

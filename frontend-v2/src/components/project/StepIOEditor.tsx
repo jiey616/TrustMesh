@@ -44,8 +44,8 @@ export function StepIOEditor({ step, steps, stepIndex, onChange }: StepIOEditorP
   }
 
   const inputStyle = {
-    background: 'rgba(255,255,255,0.04)',
-    borderColor: 'rgba(255,255,255,0.1)',
+    background: 'var(--surface)',
+    borderColor: 'var(--line-strong)',
   } as const
 
   return (
@@ -54,27 +54,27 @@ export function StepIOEditor({ step, steps, stepIndex, onChange }: StepIOEditorP
         display: 'flex',
         flexDirection: 'column',
         gap: 10,
-        borderRadius: 10,
-        border: '1px dashed rgba(255,255,255,0.16)',
-        background: 'rgba(255,255,255,0.02)',
+        borderRadius: 'var(--radius-control)',
+        border: '1px dashed var(--line-strong)',
+        background: 'var(--surface-sunken)',
         padding: '8px 10px',
       }}
     >
       {/* ===== 输出 ===== */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.45)' }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-tertiary)' }}>
             <FileTextOutlined style={{ marginRight: 4 }} />
             输出文件
           </span>
           <Tooltip title="声明本步骤会产出的文件，供后续步骤作为输入引用">
-            <Button type="text" size="small" icon={<PlusOutlined />} onClick={addOutput} style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>
+            <Button type="text" size="small" icon={<PlusOutlined />} onClick={addOutput} style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
               添加输出
             </Button>
           </Tooltip>
         </div>
         {outputs.length === 0 && (
-          <p style={{ margin: 0, fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>
+          <p style={{ margin: 0, fontSize: 11, color: 'var(--text-quaternary)' }}>
             该步骤产出的文件（供后续步骤作为输入引用）。
           </p>
         )}
@@ -106,7 +106,7 @@ export function StepIOEditor({ step, steps, stepIndex, onChange }: StepIOEditorP
                 type="text"
                 size="small"
                 icon={<DeleteOutlined />}
-                style={{ color: 'rgba(255,255,255,0.35)' }}
+                style={{ color: 'var(--text-quaternary)' }}
                 onClick={() => removeOutput(i)}
               />
             </Tooltip>
@@ -117,7 +117,7 @@ export function StepIOEditor({ step, steps, stepIndex, onChange }: StepIOEditorP
       {/* ===== 输入 ===== */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.45)' }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-tertiary)' }}>
             输入文件（关联上游输出）
           </span>
           <Tooltip
@@ -129,14 +129,14 @@ export function StepIOEditor({ step, steps, stepIndex, onChange }: StepIOEditorP
               icon={<PlusOutlined />}
               onClick={addInput}
               disabled={upstreamSteps.length === 0}
-              style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}
+              style={{ fontSize: 11, color: 'var(--text-tertiary)' }}
             >
               添加输入
             </Button>
           </Tooltip>
         </div>
         {upstreamSteps.length === 0 && (
-          <p style={{ margin: 0, fontSize: 11, color: 'rgba(255,255,255,0.3)' }}>
+          <p style={{ margin: 0, fontSize: 11, color: 'var(--text-quaternary)' }}>
             第一个步骤没有上游，无法引用输入。
           </p>
         )}
@@ -180,7 +180,7 @@ export function StepIOEditor({ step, steps, stepIndex, onChange }: StepIOEditorP
                   type="text"
                   size="small"
                   icon={<DeleteOutlined />}
-                  style={{ color: 'rgba(255,255,255,0.35)' }}
+                  style={{ color: 'var(--text-quaternary)' }}
                   onClick={() => removeInput(i)}
                 />
               </Tooltip>

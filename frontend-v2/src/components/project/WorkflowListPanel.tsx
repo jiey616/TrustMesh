@@ -221,7 +221,7 @@ export function WorkflowListPanel({ project }: Props) {
         {workflows.length === 0 ? (
           <Empty
             description={
-              <span style={{ color: 'rgba(255,255,255,0.5)' }}>
+              <span style={{ color: 'var(--text-tertiary)' }}>
                 还没有工作流，创建一条流水线让 PM 按固定步骤规划任务
               </span>
             }
@@ -237,9 +237,9 @@ export function WorkflowListPanel({ project }: Props) {
               <div
                 key={idx}
                 style={{
-                  borderRadius: 12,
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  background: 'rgba(255,255,255,0.03)',
+                  borderRadius: 'var(--radius-control)',
+                  border: '1px solid var(--line)',
+                  background: 'var(--surface)',
                   padding: '14px 16px',
                   display: 'flex',
                   flexDirection: 'column',
@@ -247,16 +247,16 @@ export function WorkflowListPanel({ project }: Props) {
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <NodeIndexOutlined style={{ color: '#6d5ff5', fontSize: 15 }} />
-                  <Text strong style={{ color: '#f4f4f8', fontSize: 14, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <NodeIndexOutlined style={{ color: 'var(--signal)', fontSize: 15 }} />
+                  <Text strong style={{ color: 'var(--text-primary)', fontSize: 14, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {wf.name || '未命名工作流'}
                   </Text>
                   <span
                     style={{
                       fontSize: 11,
-                      color: 'rgba(255,255,255,0.45)',
-                      background: 'rgba(255,255,255,0.06)',
-                      borderRadius: 999,
+                      color: 'var(--text-tertiary)',
+                      background: 'var(--surface-raised)',
+                      borderRadius: 'var(--radius-pill)',
                       padding: '1px 8px',
                       flexShrink: 0,
                     }}
@@ -267,9 +267,9 @@ export function WorkflowListPanel({ project }: Props) {
                     <span
                       style={{
                         fontSize: 11,
-                        color: '#f59e0b',
+                        color: 'var(--warning)',
                         background: 'rgba(245,158,11,0.12)',
-                        borderRadius: 999,
+                        borderRadius: 'var(--radius-pill)',
                         padding: '1px 8px',
                         flexShrink: 0,
                       }}
@@ -281,9 +281,9 @@ export function WorkflowListPanel({ project }: Props) {
                     <span
                       style={{
                         fontSize: 11,
-                        color: '#6d5ff5',
+                        color: 'var(--signal)',
                         background: 'rgba(109,95,245,0.15)',
-                        borderRadius: 999,
+                        borderRadius: 'var(--radius-pill)',
                         padding: '1px 8px',
                         flexShrink: 0,
                       }}
@@ -296,9 +296,9 @@ export function WorkflowListPanel({ project }: Props) {
                     <span
                       style={{
                         fontSize: 11,
-                        color: '#10b981',
+                        color: 'var(--success)',
                         background: 'rgba(16,185,129,0.12)',
-                        borderRadius: 999,
+                        borderRadius: 'var(--radius-pill)',
                         padding: '1px 8px',
                         flexShrink: 0,
                       }}
@@ -308,28 +308,28 @@ export function WorkflowListPanel({ project }: Props) {
                   )}
                   {primaryIndex === idx ? (
                     <Tooltip title="取消总流程标记">
-                      <Button type="text" size="small" icon={<FlagOutlined />} style={{ color: '#f59e0b' }} onClick={() => handleSetPrimary(-1)} />
+                      <Button type="text" size="small" icon={<FlagOutlined />} style={{ color: 'var(--warning)' }} onClick={() => handleSetPrimary(-1)} />
                     </Tooltip>
                   ) : (
                     <Tooltip title="设为项目总流程（项目详情顶部展示整体进度）">
-                      <Button type="text" size="small" icon={<FlagOutlined />} style={{ color: 'rgba(255,255,255,0.35)' }} onClick={() => handleSetPrimary(idx)} />
+                      <Button type="text" size="small" icon={<FlagOutlined />} style={{ color: 'var(--text-quaternary)' }} onClick={() => handleSetPrimary(idx)} />
                     </Tooltip>
                   )}
                   {wf.parent_template_id && hasUpdate(wf) && (
                     <Tooltip title="同步模板更新">
-                      <Button type="text" size="small" icon={<SyncOutlined />} style={{ color: '#10b981' }} onClick={() => openSync(wf.id!)} />
+                      <Button type="text" size="small" icon={<SyncOutlined />} style={{ color: 'var(--success)' }} onClick={() => openSync(wf.id!)} />
                     </Tooltip>
                   )}
                   {wf.parent_template_id && (
                     <Tooltip title="解除继承">
-                      <Button type="text" size="small" icon={<DisconnectOutlined />} style={{ color: 'rgba(255,255,255,0.4)' }} onClick={() => handleDetach(wf.id!)} />
+                      <Button type="text" size="small" icon={<DisconnectOutlined />} style={{ color: 'var(--text-quaternary)' }} onClick={() => handleDetach(wf.id!)} />
                     </Tooltip>
                   )}
                   <Tooltip title="编辑">
-                    <Button type="text" size="small" icon={<EditOutlined />} style={{ color: 'rgba(255,255,255,0.5)' }} onClick={() => setEditing({ index: idx, wf: cloneWorkflow(wf) })} />
+                    <Button type="text" size="small" icon={<EditOutlined />} style={{ color: 'var(--text-tertiary)' }} onClick={() => setEditing({ index: idx, wf: cloneWorkflow(wf) })} />
                   </Tooltip>
                   <Tooltip title="删除">
-                    <Button type="text" size="small" icon={<DeleteOutlined />} style={{ color: 'rgba(255,255,255,0.4)' }} onClick={() => setDeleting(idx)} />
+                    <Button type="text" size="small" icon={<DeleteOutlined />} style={{ color: 'var(--text-quaternary)' }} onClick={() => setDeleting(idx)} />
                   </Tooltip>
                 </div>
 
@@ -344,12 +344,12 @@ export function WorkflowListPanel({ project }: Props) {
                             display: 'inline-flex',
                             alignItems: 'center',
                             gap: 6,
-                            borderRadius: 8,
-                            border: '1px solid rgba(255,255,255,0.08)',
-                            background: 'rgba(255,255,255,0.03)',
+                            borderRadius: 'var(--radius-control)',
+                            border: '1px solid var(--line)',
+                            background: 'var(--surface)',
                             padding: '3px 8px 3px 3px',
                             fontSize: 12,
-                            color: 'rgba(255,255,255,0.75)',
+                            color: 'var(--text-secondary)',
                             maxWidth: 220,
                           }}
                           title={`${s.name}${agent ? ` @${agent.name}` : s.role ? ` (${s.role})` : ''}`}
@@ -361,13 +361,13 @@ export function WorkflowListPanel({ project }: Props) {
                               style={{
                                 width: 18,
                                 height: 18,
-                                borderRadius: '50%',
-                                border: '1px dashed rgba(255,255,255,0.3)',
+                                borderRadius: 'var(--radius-avatar)',
+                                border: '1px dashed var(--line-strong)',
                                 display: 'inline-flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
                                 fontSize: 10,
-                                color: 'rgba(255,255,255,0.45)',
+                                color: 'var(--text-tertiary)',
                                 flexShrink: 0,
                               }}
                             >
@@ -378,11 +378,11 @@ export function WorkflowListPanel({ project }: Props) {
                             {s.name || '未命名'}
                           </span>
                           {s.need_review && (
-                            <ClockCircleOutlined style={{ color: '#f59e0b', fontSize: 11, flexShrink: 0 }} />
+                            <ClockCircleOutlined style={{ color: 'var(--warning)', fontSize: 11, flexShrink: 0 }} />
                           )}
                         </span>
                         {si < wf.steps.length - 1 && (
-                          <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11 }}>→</span>
+                          <span style={{ color: 'var(--text-quaternary)', fontSize: 11 }}>→</span>
                         )}
                       </span>
                     )
@@ -414,7 +414,7 @@ export function WorkflowListPanel({ project }: Props) {
             agents={agents ?? []}
           />
         )}
-        <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--line)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Button icon={<CloseOutlined />} disabled={pending} onClick={() => setEditing(null)}>
             取消
           </Button>
@@ -456,16 +456,16 @@ export function WorkflowListPanel({ project }: Props) {
         </Text>
         <div style={{ maxHeight: 420, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
           {templates.length === 0 ? (
-            <Empty description={<span style={{ color: 'rgba(255,255,255,0.5)' }}>还没有全局模板，请先到"工作流"页创建</span>} />
+            <Empty description={<span style={{ color: 'var(--text-tertiary)' }}>还没有全局模板，请先到"工作流"页创建</span>} />
           ) : (
             templates.map((tpl) => (
               <div
                 key={tpl.id}
                 onClick={() => handleInherit(tpl.id)}
                 style={{
-                  borderRadius: 10,
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  background: 'rgba(255,255,255,0.03)',
+                  borderRadius: 'var(--radius-control)',
+                  border: '1px solid var(--line-strong)',
+                  background: 'var(--surface)',
                   padding: '10px 14px',
                   cursor: 'pointer',
                   display: 'flex',
@@ -476,12 +476,12 @@ export function WorkflowListPanel({ project }: Props) {
                 onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#6d5ff5')}
                 onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)')}
               >
-                <NodeIndexOutlined style={{ color: '#6d5ff5', fontSize: 14 }} />
-                <Text strong style={{ color: '#f4f4f8', fontSize: 13, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <NodeIndexOutlined style={{ color: 'var(--signal)', fontSize: 14 }} />
+                <Text strong style={{ color: 'var(--text-primary)', fontSize: 13, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {tpl.name}
                 </Text>
                 <Tag color="purple" style={{ marginInlineEnd: 0 }}>v{tpl.version}</Tag>
-                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', background: 'rgba(255,255,255,0.06)', borderRadius: 999, padding: '1px 8px', flexShrink: 0 }}>
+                <span style={{ fontSize: 11, color: 'var(--text-tertiary)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-pill)', padding: '1px 8px', flexShrink: 0 }}>
                   {tpl.steps.length} 步
                 </span>
               </div>
@@ -525,11 +525,11 @@ export function WorkflowListPanel({ project }: Props) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {syncDiff.changes.map((ch, i) => {
               const kindMeta = {
-                add: { color: '#10b981', label: '新增' },
-                update: { color: '#3b82f6', label: '更新' },
-                keep: { color: '#f59e0b', label: '保留（项目已修改）' },
-                keep_project: { color: 'rgba(255,255,255,0.45)', label: '保留（项目自定义）' },
-                remove_pending: { color: '#ef4444', label: '待确认删除' },
+                add: { color: 'var(--success)', label: '新增' },
+                update: { color: 'var(--info)', label: '更新' },
+                keep: { color: 'var(--warning)', label: '保留（项目已修改）' },
+                keep_project: { color: 'var(--text-tertiary)', label: '保留（项目自定义）' },
+                remove_pending: { color: 'var(--error)', label: '待确认删除' },
               } as const
               const meta = kindMeta[ch.kind]
               const isRemove = ch.kind === 'remove_pending'
@@ -540,9 +540,9 @@ export function WorkflowListPanel({ project }: Props) {
                     display: 'flex',
                     alignItems: 'center',
                     gap: 10,
-                    borderRadius: 8,
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    background: 'rgba(255,255,255,0.03)',
+                    borderRadius: 'var(--radius-control)',
+                    border: '1px solid var(--line)',
+                    background: 'var(--surface)',
                     padding: '8px 12px',
                   }}
                 >
@@ -555,10 +555,10 @@ export function WorkflowListPanel({ project }: Props) {
                         )
                       }
                     >
-                      <Text style={{ color: '#f4f4f8', fontSize: 13 }}>{ch.name}</Text>
+                      <Text style={{ color: 'var(--text-primary)', fontSize: 13 }}>{ch.name}</Text>
                     </Checkbox>
                   ) : (
-                    <Text style={{ color: '#f4f4f8', fontSize: 13, flex: 1 }}>{ch.name}</Text>
+                    <Text style={{ color: 'var(--text-primary)', fontSize: 13, flex: 1 }}>{ch.name}</Text>
                   )}
                   <Tag color={meta.color} style={{ marginInlineEnd: 0 }}>
                     {meta.label}

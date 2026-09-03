@@ -67,19 +67,19 @@ const productBadgeColor: Record<string, string> = {
 // Partial：后端实际事件类型多于此处列举（如 todo_review_* / todo_timeout_* 等），
 // 未覆盖的类型走消费处的 fallback，不强制穷尽。
 const eventConfig: Partial<Record<EventType, { color: string; label: string }>> = {
-  task_created: { color: '#3b82f6', label: '任务创建' },
-  task_plan_ready: { color: '#8b5cf6', label: '规划完成' },
-  task_status_changed: { color: '#f59e0b', label: '状态变更' },
-  todo_assigned: { color: '#3b82f6', label: '分配 Todo' },
-  todo_started: { color: '#22d3ee', label: '开始执行' },
-  todo_progress: { color: '#6b7280', label: '执行中' },
-  todo_completed: { color: '#10b981', label: 'Todo 完成' },
-  todo_failed: { color: '#ef4444', label: 'Todo 失败' },
-  task_comment: { color: '#6b7280', label: '评论' },
-  planning_reply: { color: '#8b5cf6', label: 'PM 规划回复' },
-  agent_status_changed: { color: '#f59e0b', label: '数字员工状态' },
-  artifact_received: { color: '#22d3ee', label: '上传了文件' },
-  todo_ask_received: { color: '#f59e0b', label: '请求确认' },
+  task_created: { color: 'var(--info)', label: '任务创建' },
+  task_plan_ready: { color: 'var(--signal)', label: '规划完成' },
+  task_status_changed: { color: 'var(--warning)', label: '状态变更' },
+  todo_assigned: { color: 'var(--info)', label: '分配 Todo' },
+  todo_started: { color: 'var(--cyan)', label: '开始执行' },
+  todo_progress: { color: 'var(--text-quaternary)', label: '执行中' },
+  todo_completed: { color: 'var(--success)', label: 'Todo 完成' },
+  todo_failed: { color: 'var(--error)', label: 'Todo 失败' },
+  task_comment: { color: 'var(--text-quaternary)', label: '评论' },
+  planning_reply: { color: 'var(--signal)', label: 'PM 规划回复' },
+  agent_status_changed: { color: 'var(--warning)', label: '数字员工状态' },
+  artifact_received: { color: 'var(--cyan)', label: '上传了文件' },
+  todo_ask_received: { color: 'var(--warning)', label: '请求确认' },
 }
 
 const eventTypeFilters: { label: string; value: EventType | 'all' }[] = [
@@ -176,7 +176,7 @@ export function AgentDetailPage() {
     return <div style={{ padding: 24 }}><Skeleton active /></div>
   }
   if (!agent) {
-    return <div style={{ padding: 24, color: 'rgba(255,255,255,0.5)' }}>数字员工未找到</div>
+    return <div style={{ padding: 24, color: 'var(--text-tertiary)' }}>数字员工未找到</div>
   }
 
   const isHermes = agent.product === 'hermes'
@@ -318,11 +318,11 @@ export function AgentDetailPage() {
                     <div style={{ marginBottom: 8 }}>
                       <Space size={8} wrap>
                         <Tag style={{ fontSize: 11, color: cfg?.color, borderColor: cfg?.color }}>{cfg?.label ?? e.event_type}</Tag>
-                        <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>{stripReplyPrefix(e.content ?? '') || e.actor_name}</Text>
+                        <Text style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{stripReplyPrefix(e.content ?? '') || e.actor_name}</Text>
                         <Text type="secondary" style={{ fontSize: 11 }}>{dayjs(e.created_at).format('MM-DD HH:mm')}</Text>
                       </Space>
                       {Boolean(e.metadata?.task_title || e.metadata?.todo_title) && (
-                        <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginTop: 4, paddingLeft: 4 }}>
+                        <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4, paddingLeft: 4 }}>
                           {String(e.metadata?.task_title ?? '')}
                           {e.metadata?.todo_title ? ` › ${String(e.metadata?.todo_title)}` : ''}
                         </div>
@@ -362,7 +362,7 @@ export function AgentDetailPage() {
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ padding: '8px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)', backdropFilter: 'blur(12px)', flexShrink: 0 }}>
+      <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--line)', background: 'var(--surface)', backdropFilter: 'var(--glass-blur)', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/agents')} style={{ flexShrink: 0 }} />
           <AgentAvatar
@@ -373,7 +373,7 @@ export function AgentDetailPage() {
           />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-              <Title level={5} style={{ margin: 0, color: '#fff', fontSize: 16 }} ellipsis={{ tooltip: agent.name }}>
+              <Title level={5} style={{ margin: 0, color: 'var(--text-primary)', fontSize: 16 }} ellipsis={{ tooltip: agent.name }}>
                 {agent.name}
               </Title>
               <NeonBadge label={statusMap[agent.status]?.label} variant={agent.status === 'online' ? 'green' : agent.status === 'busy' ? 'amber' : 'rose'} />
@@ -392,7 +392,7 @@ export function AgentDetailPage() {
                 <Button
                   type="text"
                   size="small"
-                  icon={copied ? <CheckOutlined style={{ color: '#10b981' }} /> : <CopyOutlined />}
+                  icon={copied ? <CheckOutlined style={{ color: 'var(--success)' }} /> : <CopyOutlined />}
                   onClick={() => copy(agent.node_id)}
                   title="复制节点 ID"
                   style={{ height: 20, padding: '0 4px' }}
@@ -476,5 +476,5 @@ export function AgentDetailPage() {
 }
 
 function ClockDot() {
-  return <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: 'rgba(255,255,255,0.4)', marginRight: 4 }} />
+  return <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 'var(--radius-avatar)', background: 'rgba(255,255,255,0.4)', marginRight: 4 }} />
 }

@@ -133,10 +133,10 @@ export function MainLayout() {
     gap: 10,
     padding: collapsed ? '9px 0' : '9px 12px',
     margin: '0 8px',
-    borderRadius: 8,
+    borderRadius: 'var(--radius-control)',
     cursor: 'pointer',
     fontSize: 13,
-    color: 'rgba(255,255,255,0.65)',
+    color: 'var(--text-secondary)',
     justifyContent: collapsed ? 'center' : 'flex-start',
     whiteSpace: 'nowrap',
     transition: 'background 0.15s',
@@ -162,9 +162,9 @@ export function MainLayout() {
           bottom: 0,
           zIndex: 100,
           background: 'rgba(8, 8, 18, 0.9)',
-          backdropFilter: 'blur(40px)',
-          WebkitBackdropFilter: 'blur(40px)',
-          borderRight: '1px solid rgba(255, 255, 255, 0.06)',
+          backdropFilter: 'var(--glass-blur)',
+          WebkitBackdropFilter: 'var(--glass-blur)',
+          borderRight: '1px solid var(--line)',
         }}
       >
         <style>{`
@@ -217,7 +217,7 @@ export function MainLayout() {
                   style={{
                     fontSize: 14,
                     fontWeight: 400,
-                    color: 'rgba(255,255,255,0.65)',
+                    color: 'var(--text-secondary)',
                     padding: '0 10px',
                     marginBottom: 2,
                   }}
@@ -238,7 +238,7 @@ export function MainLayout() {
                         alignItems: 'center',
                         gap: 8,
                         padding: '5px 10px',
-                        borderRadius: 8,
+                        borderRadius: 'var(--radius-control)',
                         cursor: 'pointer',
                         fontSize: 14,
                         fontWeight: 400,
@@ -247,7 +247,7 @@ export function MainLayout() {
                         overflow: 'hidden',
                       }}
                     >
-                      <ProjectOutlined style={{ fontSize: 14, color: 'rgba(255,255,255,0.35)', flexShrink: 0 }} />
+                      <ProjectOutlined style={{ fontSize: 14, color: 'var(--text-quaternary)', flexShrink: 0 }} />
                       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {p.name}
                       </span>
@@ -258,7 +258,7 @@ export function MainLayout() {
                           fontSize: 10,
                           lineHeight: '16px',
                           padding: status === 'running' ? '0 4px 0 14px' : '0 4px',
-                          borderRadius: 4,
+                          borderRadius: 'var(--radius-control)',
                           flexShrink: 0,
                           position: 'relative',
                           overflow: 'hidden',
@@ -278,7 +278,7 @@ export function MainLayout() {
           <div
             style={{
               flexShrink: 0,
-              borderTop: '1px solid rgba(255,255,255,0.06)',
+              borderTop: '1px solid var(--line)',
               padding: '8px 0 10px',
               display: 'flex',
               flexDirection: 'column',
@@ -316,7 +316,7 @@ export function MainLayout() {
                       {user?.name || '用户'}
                     </span>
                   )}
-                  {!collapsed && <DownOutlined style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)' }} />}
+                  {!collapsed && <DownOutlined style={{ fontSize: 10, color: 'var(--text-quaternary)' }} />}
                 </div>
               </Tooltip>
             </Dropdown>

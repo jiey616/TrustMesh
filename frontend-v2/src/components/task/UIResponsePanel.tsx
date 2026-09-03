@@ -78,7 +78,7 @@ export function UIResponsePanel({ blocks, onSubmit, disabled, draft, onDraftChan
         display: 'flex',
         flexDirection: 'column',
         gap: 12,
-        borderRadius: 16,
+        borderRadius: 'var(--radius-structure)',
         border: '1px solid rgba(109,95,245,0.2)',
         background: 'rgba(109,95,245,0.04)',
         padding: 14,
@@ -97,7 +97,7 @@ export function UIResponsePanel({ blocks, onSubmit, disabled, draft, onDraftChan
               style={{
                 height: 6,
                 width: active ? 22 : 16,
-                borderRadius: 999,
+                borderRadius: 'var(--radius-pill)',
                 background: active ? '#6d5ff5' : done || isConfirmDot ? 'rgba(109,95,245,0.5)' : 'rgba(255,255,255,0.12)',
                 transition: 'all 0.2s',
                 cursor: i < currentStep ? 'pointer' : 'default',
@@ -166,8 +166,8 @@ function StepContent({
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{block.label}</span>
-        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{stepIndex + 1} / {totalSteps}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{block.label}</span>
+        <span style={{ fontSize: 11, color: 'var(--text-quaternary)' }}>{stepIndex + 1} / {totalSteps}</span>
       </div>
       {block.type === 'single_select' && <SelectBlockInteractive block={block} response={response} onUpdate={onUpdate} />}
       {block.type === 'text_input' && <TextInputBlockInteractive block={block} response={response} onUpdate={onUpdate} />}
@@ -198,7 +198,7 @@ function SelectBlockInteractive({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {block.multiple && <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>可多选</span>}
+      {block.multiple && <span style={{ fontSize: 11, color: 'var(--text-quaternary)' }}>可多选</span>}
       {block.options?.map((opt) => {
         const isSelected = selected.includes(opt.value)
         return (
@@ -210,7 +210,7 @@ function SelectBlockInteractive({
               display: 'flex',
               alignItems: 'flex-start',
               gap: 10,
-              borderRadius: 10,
+              borderRadius: 'var(--radius-control)',
               border: `1px solid ${isSelected ? 'rgba(109,95,245,0.6)' : 'rgba(255,255,255,0.1)'}`,
               background: isSelected ? 'rgba(109,95,245,0.1)' : 'rgba(255,255,255,0.02)',
               padding: '8px 12px',
@@ -226,7 +226,7 @@ function SelectBlockInteractive({
                 width: 16,
                 height: 16,
                 marginTop: 2,
-                borderRadius: '50%',
+                borderRadius: 'var(--radius-avatar)',
                 border: `2px solid ${isSelected ? '#6d5ff5' : 'rgba(255,255,255,0.3)'}`,
                 display: 'flex',
                 alignItems: 'center',
@@ -234,14 +234,14 @@ function SelectBlockInteractive({
                 background: isSelected ? '#6d5ff5' : 'transparent',
               }}
             >
-              {isSelected && <span style={{ color: '#fff', fontSize: 10, lineHeight: 1 }}>✓</span>}
+              {isSelected && <span style={{ color: 'var(--text-primary)', fontSize: 10, lineHeight: 1 }}>✓</span>}
             </span>
             <span style={{ flex: 1, minWidth: 0 }}>
               <span style={{ display: 'block', fontSize: 13, color: isSelected ? '#fff' : 'rgba(255,255,255,0.85)', fontWeight: isSelected ? 500 : 400 }}>
                 {opt.label}
               </span>
               {opt.description && (
-                <span style={{ display: 'block', fontSize: 12, color: 'rgba(255,255,255,0.5)', marginTop: 2 }}>
+                <span style={{ display: 'block', fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
                   {opt.description}
                 </span>
               )}
@@ -265,7 +265,7 @@ function TextInputBlockInteractive({
   return (
     <div>
       {block.required === false && (
-        <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginBottom: 6, display: 'block' }}>选填</span>
+        <span style={{ fontSize: 11, color: 'var(--text-quaternary)', marginBottom: 6, display: 'block' }}>选填</span>
       )}
       <textarea
         value={response?.text ?? ''}
@@ -274,11 +274,11 @@ function TextInputBlockInteractive({
         rows={3}
         style={{
           width: '100%',
-          background: 'rgba(0,0,0,0.25)',
-          border: '1px solid rgba(255,255,255,0.12)',
-          borderRadius: 10,
+          background: 'var(--surface-inset)',
+          border: '1px solid var(--line-strong)',
+          borderRadius: 'var(--radius-control)',
           padding: '8px 12px',
-          color: '#fff',
+          color: 'var(--text-primary)',
           fontSize: 13,
           lineHeight: 1.6,
           resize: 'none',
@@ -307,7 +307,7 @@ function ConfirmBlockInteractive({
         onClick={() => onUpdate({ confirmed: true })}
         style={{
           flex: 1,
-          borderRadius: 10,
+          borderRadius: 'var(--radius-control)',
           border: `2px solid ${confirmed === true ? '#10b981' : 'rgba(255,255,255,0.12)'}`,
           background: confirmed === true ? 'rgba(16,185,129,0.1)' : 'transparent',
           padding: '10px 12px',
@@ -325,7 +325,7 @@ function ConfirmBlockInteractive({
         onClick={() => onUpdate({ confirmed: false })}
         style={{
           flex: 1,
-          borderRadius: 10,
+          borderRadius: 'var(--radius-control)',
           border: `2px solid ${confirmed === false ? '#f59e0b' : 'rgba(255,255,255,0.12)'}`,
           background: confirmed === false ? 'rgba(245,158,11,0.1)' : 'transparent',
           padding: '10px 12px',
@@ -355,16 +355,16 @@ function ReviewStep({
 }) {
   return (
     <div>
-      <div style={{ fontSize: 13, fontWeight: 600, color: '#fff', marginBottom: 10 }}>确认你的选择</div>
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 10 }}>确认你的选择</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {blocks.map((block) => {
           const resp = responses[block.id]
           const editIndex = interactiveBlocks.findIndex((b) => b.id === block.id)
           return (
-            <div key={block.id} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.04)', borderRadius: 8, padding: '6px 10px' }}>
+            <div key={block.id} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface)', borderRadius: 'var(--radius-control)', padding: '6px 10px' }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{block.label}</div>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <div style={{ fontSize: 11, color: 'var(--text-quaternary)' }}>{block.label}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-primary)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {formatBlockResponse(block, resp)}
                 </div>
               </div>
@@ -372,7 +372,7 @@ function ReviewStep({
                 <button
                   type="button"
                   onClick={() => onEdit(editIndex)}
-                  style={{ fontSize: 11, color: '#6d5ff5', background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0 }}
+                  style={{ fontSize: 11, color: 'var(--signal)', background: 'none', border: 'none', cursor: 'pointer', flexShrink: 0 }}
                 >
                   修改
                 </button>

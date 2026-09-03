@@ -34,16 +34,16 @@ const TASK_STATUS_META: Record<string, { color: string; label: string }> = {
   waiting_user: { color: STATE_COLORS.asking, label: '等你答复' },
   review: { color: STATE_COLORS.thinking, label: '评审中' },
   planning: { color: STATE_COLORS.thinking, label: '规划中' },
-  pending: { color: '#3b82f6', label: '排队中' },
+  pending: { color: 'var(--info)', label: '排队中' },
 }
 
 // ─── 顶部仪表盘卡片 ───
 // 与 V2 卡片规范一致：深色半透明 + 细边框 + 16 圆角。
 const cardStyle: React.CSSProperties = {
-  background: 'rgba(255, 255, 255, 0.03)',
-  border: '1px solid rgba(255, 255, 255, 0.07)',
-  backdropFilter: 'blur(24px)',
-  borderRadius: 16,
+  background: 'var(--surface)',
+  border: '1px solid var(--line)',
+  backdropFilter: 'var(--glass-blur)',
+  borderRadius: 'var(--radius-structure)',
   padding: '12px 14px',
   display: 'flex',
   flexDirection: 'column',
@@ -61,7 +61,7 @@ const cardHeaderStyle: React.CSSProperties = {
 
 const cardTitleStyle: React.CSSProperties = {
   fontSize: 12,
-  color: 'rgba(255,255,255,0.55)',
+  color: 'var(--text-tertiary)',
   fontWeight: 500,
 }
 
@@ -71,13 +71,13 @@ const chipStyle: React.CSSProperties = {
   alignItems: 'center',
   gap: 6,
   padding: '5px 9px',
-  borderRadius: 8,
+  borderRadius: 'var(--radius-control)',
   fontSize: 12,
   cursor: 'pointer',
   flexShrink: 0,
   maxWidth: 230,
-  background: 'rgba(255,255,255,0.04)',
-  border: '1px solid rgba(255,255,255,0.07)',
+  background: 'var(--surface)',
+  border: '1px solid var(--line)',
   transition: 'background 0.15s, border-color 0.15s',
 }
 
@@ -184,7 +184,7 @@ export function OfficePage() {
           <div style={cardStyle}>
             <div style={cardHeaderStyle}>
               <Text style={cardTitleStyle}>团队状态</Text>
-              <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>
+              <Text style={{ fontSize: 11, color: 'var(--text-quaternary)' }}>
                 共 {stats.total} 人
               </Text>
             </div>
@@ -200,7 +200,7 @@ export function OfficePage() {
                         style={{
                           width: 7,
                           height: 7,
-                          borderRadius: '50%',
+                          borderRadius: 'var(--radius-avatar)',
                           background: color,
                           boxShadow: active ? `0 0 8px ${color}` : undefined,
                           opacity: active ? 1 : 0.4,
@@ -236,7 +236,7 @@ export function OfficePage() {
           <div style={{ ...cardStyle, flex: 1, minWidth: 240 }}>
             <div style={cardHeaderStyle}>
               <Text style={cardTitleStyle}>执行中任务</Text>
-              <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>
+              <Text style={{ fontSize: 11, color: 'var(--text-quaternary)' }}>
                 {activeTasks.length} 个 · 点击打开
               </Text>
             </div>
@@ -251,13 +251,13 @@ export function OfficePage() {
               }}
             >
               {activeTasks.length === 0 ? (
-                <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.32)' }}>
+                <Text style={{ fontSize: 12, color: 'var(--text-quaternary)' }}>
                   暂无执行中的任务
                 </Text>
               ) : (
                 activeTasks.map((task) => {
                   const meta = TASK_STATUS_META[task.status] ?? {
-                    color: 'rgba(255,255,255,0.35)',
+                    color: 'var(--text-quaternary)',
                     label: task.status,
                   }
                   return (
@@ -279,7 +279,7 @@ export function OfficePage() {
                         style={{
                           width: 7,
                           height: 7,
-                          borderRadius: '50%',
+                          borderRadius: 'var(--radius-avatar)',
                           background: meta.color,
                           boxShadow: `0 0 6px ${meta.color}`,
                           flexShrink: 0,
@@ -287,7 +287,7 @@ export function OfficePage() {
                       />
                       <span
                         style={{
-                          color: 'rgba(255,255,255,0.75)',
+                          color: 'var(--text-secondary)',
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
                           whiteSpace: 'nowrap',
@@ -309,7 +309,7 @@ export function OfficePage() {
           <div style={{ ...cardStyle, flex: 1.4, minWidth: 300, minHeight: 0 }}>
             <div style={cardHeaderStyle}>
               <Text style={cardTitleStyle}>最新动态</Text>
-              <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>
+              <Text style={{ fontSize: 11, color: 'var(--text-quaternary)' }}>
                 {feed.length} 条 · 点击跳转任务
               </Text>
             </div>
@@ -324,7 +324,7 @@ export function OfficePage() {
               }}
             >
               {feed.length === 0 ? (
-                <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.32)' }}>
+                <Text style={{ fontSize: 12, color: 'var(--text-quaternary)' }}>
                   暂无动态
                 </Text>
               ) : (
@@ -341,7 +341,7 @@ export function OfficePage() {
                       alignItems: 'baseline',
                       gap: 6,
                       padding: '3px 6px',
-                      borderRadius: 6,
+                      borderRadius: 'var(--radius-control)',
                       cursor: item.taskId ? 'pointer' : 'default',
                       fontSize: 12,
                       lineHeight: 1.45,
@@ -357,7 +357,7 @@ export function OfficePage() {
                       style={{
                         width: 5,
                         height: 5,
-                        borderRadius: '50%',
+                        borderRadius: 'var(--radius-avatar)',
                         flexShrink: 0,
                         marginTop: 5,
                         background:
@@ -421,10 +421,10 @@ export function OfficePage() {
             <div style={cardStyle}>
               <div style={cardHeaderStyle}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <TeamOutlined style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11 }} />
+                  <TeamOutlined style={{ color: 'var(--text-tertiary)', fontSize: 11 }} />
                   <Text style={cardTitleStyle}>待命区</Text>
                 </div>
-                <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>
+                <Text style={{ fontSize: 11, color: 'var(--text-quaternary)' }}>
                   {benchedVisuals.length} 人未落座
                 </Text>
               </div>
@@ -448,14 +448,14 @@ export function OfficePage() {
                       style={{
                         width: 7,
                         height: 7,
-                        borderRadius: '50%',
+                        borderRadius: 'var(--radius-avatar)',
                         background: STATE_COLORS[visual.state],
                         flexShrink: 0,
                       }}
                     />
                     <span
                       style={{
-                        color: 'rgba(255,255,255,0.7)',
+                        color: 'var(--text-secondary)',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
@@ -475,10 +475,10 @@ export function OfficePage() {
           style={{
             flex: 1,
             minHeight: 0,
-            borderRadius: 16,
+            borderRadius: 'var(--radius-structure)',
             overflow: 'hidden',
-            border: '1px solid rgba(255, 255, 255, 0.07)',
-            background: '#0a0a12',
+            border: '1px solid var(--line)',
+            background: 'var(--canvas)',
             position: 'relative',
           }}
         >
@@ -496,17 +496,17 @@ export function OfficePage() {
                 alignItems: 'center',
                 gap: 10,
                 padding: '10px 14px',
-                borderRadius: 12,
+                borderRadius: 'var(--radius-control)',
                 background: 'rgba(12, 12, 22, 0.82)',
-                border: '1px solid rgba(255, 255, 255, 0.09)',
-                backdropFilter: 'blur(18px)',
+                border: '1px solid var(--line)',
+                backdropFilter: 'var(--glass-blur)',
               }}
             >
               <span
                 style={{
                   width: 9,
                   height: 9,
-                  borderRadius: '50%',
+                  borderRadius: 'var(--radius-avatar)',
                   background: STATE_COLORS[focused.state],
                   flexShrink: 0,
                 }}
@@ -521,7 +521,7 @@ export function OfficePage() {
                 <Text
                   style={{
                     fontSize: 12,
-                    color: 'rgba(255,255,255,0.55)',
+                    color: 'var(--text-tertiary)',
                     flex: 1,
                     minWidth: 0,
                     overflow: 'hidden',

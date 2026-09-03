@@ -22,16 +22,16 @@ import {
 const { Text } = Typography
 
 const ACCENT: Record<PendingItem['kind'], string> = {
-  plan_clarify: '#6d5ff5',
-  plan_review: '#f59e0b',
-  todo_ask: '#a5b4fc',
-  todo_review: '#f59e0b',
+  plan_clarify: 'var(--signal)',
+  plan_review: 'var(--warning)',
+  todo_ask: 'var(--signal-hover)',
+  todo_review: 'var(--warning)',
 }
 
 const inputStyle = {
-  background: 'rgba(0,0,0,0.25)',
-  borderColor: 'rgba(255,255,255,0.12)',
-  color: '#fff',
+  background: 'var(--surface-inset)',
+  borderColor: 'var(--line-strong)',
+  color: 'var(--text-primary)',
   resize: 'none' as const,
   fontSize: 14,
 }
@@ -40,7 +40,7 @@ function CardShell({ label, accent, children }: { label: string; accent: string;
   return (
     <div
       style={{
-        borderRadius: 14,
+        borderRadius: 'var(--radius-structure)',
         border: `1px solid ${accent}59`,
         background: `${accent}0f`,
         padding: 14,
@@ -128,25 +128,25 @@ function PlanReviewCard({ item }: { item: PlanReviewPending }) {
     <CardShell label={pendingKindLabel.plan_review} accent={ACCENT.plan_review}>
       <div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 15, fontWeight: 600, color: '#f4f4f8' }}>PM 已完成规划，请确认后开始执行</span>
+          <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>PM 已完成规划，请确认后开始执行</span>
           {item.workflow && item.workflow.steps.length > 0 && (
             <Tag color="gold" style={{ margin: 0, fontSize: 12 }}>工作流：{item.workflow.name || '未命名'}</Tag>
           )}
         </div>
-        <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)', marginTop: 4 }}>共 {item.todos.length} 个子任务</div>
+        <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 4 }}>共 {item.todos.length} 个子任务</div>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {item.todos.map((todo, idx) => (
-          <div key={todo.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, borderRadius: 8, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)', padding: '8px 10px', fontSize: 14 }}>
-            <span style={{ flexShrink: 0, fontSize: 13, color: 'rgba(255,255,255,0.45)', paddingTop: 1 }}>{idx + 1}.</span>
+          <div key={todo.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, borderRadius: 'var(--radius-control)', background: 'var(--surface)', border: '1px solid var(--line)', padding: '8px 10px', fontSize: 14 }}>
+            <span style={{ flexShrink: 0, fontSize: 13, color: 'var(--text-tertiary)', paddingTop: 1 }}>{idx + 1}.</span>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 500, color: '#f4f4f8' }}>{todo.title}</div>
+              <div style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{todo.title}</div>
               {todo.description && (
-                <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.55)', marginTop: 2, whiteSpace: 'pre-wrap' }}>{todo.description}</div>
+                <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginTop: 2, whiteSpace: 'pre-wrap' }}>{todo.description}</div>
               )}
             </div>
-            <span style={{ flexShrink: 0, fontSize: 13, color: 'rgba(255,255,255,0.5)', paddingTop: 1 }}>{todo.assignee?.name ?? ''}</span>
+            <span style={{ flexShrink: 0, fontSize: 13, color: 'var(--text-tertiary)', paddingTop: 1 }}>{todo.assignee?.name ?? ''}</span>
           </div>
         ))}
       </div>
@@ -203,7 +203,7 @@ function TodoAskCard({ item }: { item: TodoAskPending }) {
 
   return (
     <CardShell label={pendingKindLabel.todo_ask} accent={ACCENT.todo_ask}>
-      <div style={{ fontSize: 14, color: 'rgba(255,255,255,0.85)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+      <div style={{ fontSize: 14, color: 'var(--text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
         {item.question}
       </div>
 
@@ -215,7 +215,7 @@ function TodoAskCard({ item }: { item: TodoAskPending }) {
               size="small"
               disabled={answerTodo.isPending}
               onClick={() => void submit(opt)}
-              style={{ borderColor: 'rgba(109,95,245,0.5)', background: 'rgba(109,95,245,0.1)', color: '#a5b4fc' }}
+              style={{ borderColor: 'rgba(109,95,245,0.5)', background: 'rgba(109,95,245,0.1)', color: 'var(--signal-hover)' }}
             >
               {opt}
             </Button>
@@ -292,14 +292,14 @@ function TodoReviewCard({ item }: { item: TodoReviewPending }) {
   return (
     <CardShell label={pendingKindLabel.todo_review} accent={ACCENT.todo_review}>
       <div>
-        <div style={{ fontSize: 14, fontWeight: 500, color: '#f4f4f8' }}>{item.todoTitle}</div>
-        <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', marginTop: 2 }}>
+        <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)' }}>{item.todoTitle}</div>
+        <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
           {item.todo.assignee?.name ?? '未指派'} · 待人工确认
         </div>
       </div>
 
       {summary && (
-        <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', whiteSpace: 'pre-wrap', background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '8px 10px', maxHeight: 160, overflowY: 'auto' }}>
+        <div style={{ fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', background: 'var(--surface)', borderRadius: 'var(--radius-control)', padding: '8px 10px', maxHeight: 160, overflowY: 'auto' }}>
           {summary}
         </div>
       )}
@@ -324,10 +324,10 @@ function TodoReviewCard({ item }: { item: TodoReviewPending }) {
         </div>
       ) : (
         <div style={{ display: 'flex', gap: 8 }}>
-          <Button size="small" type="primary" style={{ background: '#10b981', borderColor: '#10b981' }} loading={reviewTodo.isPending} onClick={() => void handleApprove()}>
+          <Button size="small" type="primary" style={{ background: 'var(--success)', borderColor: 'var(--success)' }} loading={reviewTodo.isPending} onClick={() => void handleApprove()}>
             通过
           </Button>
-          <Button size="small" style={{ borderColor: '#f43f5e', color: '#f43f5e' }} onClick={() => setDraft(item.id, { rejecting: true })}>
+          <Button size="small" style={{ borderColor: 'var(--error)', color: 'var(--error)' }} onClick={() => setDraft(item.id, { rejecting: true })}>
             退回重做
           </Button>
         </div>
@@ -372,12 +372,12 @@ export function PendingApprovalsDrawer({
       open={open}
       onClose={onClose}
       width={560}
-      styles={{ body: { background: '#0a0a14', paddingTop: 8 } }}
-      style={{ background: '#0a0a14' }}
+      styles={{ body: { background: 'var(--canvas)', paddingTop: 8 } }}
+      style={{ background: 'var(--canvas)' }}
     >
       {visible.length === 0 ? (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, paddingTop: 64 }}>
-          <CheckCircleOutlined style={{ fontSize: 28, color: '#10b981' }} />
+          <CheckCircleOutlined style={{ fontSize: 28, color: 'var(--success)' }} />
           <Text type="secondary">没有待确认事项</Text>
           {dismissed.length > 0 && (
             <Button
@@ -399,7 +399,7 @@ export function PendingApprovalsDrawer({
                   type="text"
                   size="small"
                   icon={<EditOutlined />}
-                  style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)' }}
+                  style={{ fontSize: 12, color: 'var(--text-quaternary)' }}
                   onClick={() => setDismissed((prev) => [...prev, item.id])}
                 >
                   暂时忽略

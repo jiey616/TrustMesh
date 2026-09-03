@@ -26,7 +26,7 @@ export function TaskDescription({ description }: TaskDescriptionProps) {
         ref={contentRef}
         style={{
           fontSize: 13,
-          color: 'rgba(255,255,255,0.6)',
+          color: 'var(--text-secondary)',
           overflow: 'hidden',
           transition: 'max-height 0.2s',
           maxHeight: !expanded && overflows ? COLLAPSED_HEIGHT_PX : undefined,
@@ -43,7 +43,7 @@ export function TaskDescription({ description }: TaskDescriptionProps) {
             alignItems: 'center',
             gap: 4,
             fontSize: 13,
-            color: 'rgba(255,255,255,0.45)',
+            color: 'var(--text-tertiary)',
             background: 'none',
             border: 'none',
             cursor: 'pointer',

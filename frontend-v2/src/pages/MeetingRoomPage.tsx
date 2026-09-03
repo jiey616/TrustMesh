@@ -123,11 +123,11 @@ export function MeetingRoomPage() {
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
-      <div style={{ padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)', backdropFilter: 'blur(12px)', display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--line)', background: 'var(--surface)', backdropFilter: 'var(--glass-blur)', display: 'flex', alignItems: 'center', gap: 12 }}>
         <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/meetings')} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Text strong style={{ fontSize: 15, color: '#fff' }}>{meeting.title}</Text>
+            <Text strong style={{ fontSize: 15, color: 'var(--text-primary)' }}>{meeting.title}</Text>
             <NeonBadge
               label={statusLabel[meeting.status]}
               variant={meeting.status === 'in_progress' ? 'green' : meeting.status === 'waiting' ? 'amber' : 'rose'}
@@ -144,7 +144,7 @@ export function MeetingRoomPage() {
 
       {/* Agenda items */}
       {agendaItems.length > 0 && (
-        <div style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+        <div style={{ borderBottom: '1px solid var(--line)' }}>
           <button
             style={{
               display: 'flex',
@@ -155,7 +155,7 @@ export function MeetingRoomPage() {
               textAlign: 'left',
               fontSize: 12,
               fontWeight: 500,
-              color: 'rgba(255,255,255,0.6)',
+              color: 'var(--text-secondary)',
               background: 'transparent',
               border: 'none',
               cursor: 'pointer',
@@ -172,7 +172,7 @@ export function MeetingRoomPage() {
                 <div key={item.id ?? i} style={{ fontSize: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
                     <span style={{ flex: 1 }}>{item.description}</span>
-                    <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', flexShrink: 0 }}>
+                    <span style={{ fontSize: 10, color: 'var(--text-tertiary)', flexShrink: 0 }}>
                       总分{item.assignees?.reduce((s, a) => s + a.weight, 0) ?? 0}
                     </span>
                   </div>
@@ -181,7 +181,7 @@ export function MeetingRoomPage() {
                       {item.assignees.map((as) => (
                         <span
                           key={as.agent_id}
-                          style={{ fontSize: 10, padding: '2px 6px', borderRadius: 10, background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.7)' }}
+                          style={{ fontSize: 10, padding: '2px 6px', borderRadius: 'var(--radius-control)', background: 'var(--surface-raised)', color: 'var(--text-secondary)' }}
                         >
                           w{as.weight}
                         </span>
@@ -197,8 +197,8 @@ export function MeetingRoomPage() {
 
       {/* Reference files */}
       {meeting.file_ids && meeting.file_ids.length > 0 && (
-        <div style={{ padding: '10px 16px', background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'rgba(255,255,255,0.5)', marginBottom: 6 }}>
+        <div style={{ padding: '10px 16px', background: 'var(--surface)', borderBottom: '1px solid var(--line)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 6 }}>
             <PaperClipOutlined />
             <span>参考文件 ({meeting.file_ids.length})</span>
           </div>
@@ -217,18 +217,18 @@ export function MeetingRoomPage() {
                     alignItems: 'center',
                     gap: 4,
                     fontSize: 12,
-                    background: 'rgba(255,255,255,0.06)',
-                    borderRadius: 6,
+                    background: 'var(--surface-raised)',
+                    borderRadius: 'var(--radius-control)',
                     padding: '4px 8px',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    color: 'rgba(255,255,255,0.85)',
+                    border: '1px solid var(--line-strong)',
+                    color: 'var(--text-primary)',
                     textDecoration: 'none',
                   }}
                 >
                   <FileTextOutlined style={{ fontSize: 12 }} />
                   <span style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fileName}</span>
                   {file?.file_size ? (
-                    <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', flexShrink: 0 }}>
+                    <span style={{ fontSize: 10, color: 'var(--text-tertiary)', flexShrink: 0 }}>
                       {file.file_size > 1024 * 1024
                         ? `${(file.file_size / (1024 * 1024)).toFixed(1)} MB`
                         : `${(file.file_size / 1024).toFixed(0)} KB`}
@@ -243,12 +243,12 @@ export function MeetingRoomPage() {
 
       {/* Summary file link */}
       {meeting.status === 'completed' && meeting.summary_file_id && (
-        <div style={{ padding: '10px 16px', background: 'rgba(59,130,246,0.08)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+        <div style={{ padding: '10px 16px', background: 'rgba(59,130,246,0.08)', borderBottom: '1px solid var(--line)' }}>
           <a
             href={`/api/v1/projects/${meeting.project_id}/files/${meeting.summary_file_id}/content`}
             target="_blank"
             rel="noopener noreferrer"
-            style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#60a5fa', textDecoration: 'none' }}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--info)', textDecoration: 'none' }}
           >
             <FileTextOutlined />
             查看会议纪要文件
@@ -258,17 +258,17 @@ export function MeetingRoomPage() {
 
       {/* Todos after meeting ends */}
       {meeting.status === 'completed' && meeting.todos && meeting.todos.length > 0 && (
-        <div style={{ padding: '10px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'rgba(255,255,255,0.5)', marginBottom: 6 }}>
+        <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--line)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 6 }}>
             <CheckSquareOutlined />
             <span>待办事项 ({meeting.todos.length})</span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {meeting.todos.map((todo) => (
               <div key={todo.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-                <input type="checkbox" checked={todo.status === 'converted'} readOnly style={{ borderRadius: 4 }} />
+                <input type="checkbox" checked={todo.status === 'converted'} readOnly style={{ borderRadius: 'var(--radius-control)' }} />
                 <span style={{ flex: 1 }}>{todo.description}</span>
-                <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)' }}>→ {todo.responsible_agent_name}</span>
+                <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>→ {todo.responsible_agent_name}</span>
               </div>
             ))}
           </div>
@@ -295,7 +295,7 @@ export function MeetingRoomPage() {
           )}
         </div>
 
-        <div className="meeting-participant-panel" style={{ width: 220, borderLeft: '1px solid rgba(255,255,255,0.08)', flexShrink: 0, background: 'rgba(255,255,255,0.02)', display: 'none' }}>
+        <div className="meeting-participant-panel" style={{ width: 220, borderLeft: '1px solid var(--line)', flexShrink: 0, background: 'var(--surface-sunken)', display: 'none' }}>
           <MeetingParticipantPanel meeting={meeting} />
         </div>
       </div>
@@ -330,14 +330,14 @@ function MeetingComposer({ value, onChange, onSend }: ComposerProps) {
   }
 
   return (
-    <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.03)', padding: '12px 16px', flexShrink: 0 }}>
-      <div style={{ borderRadius: 16, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.2)', padding: 12 }}>
+    <div style={{ borderTop: '1px solid var(--line)', background: 'var(--surface)', padding: '12px 16px', flexShrink: 0 }}>
+      <div style={{ borderRadius: 'var(--radius-structure)', border: '1px solid var(--line-strong)', background: 'var(--surface-inset)', padding: 12 }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
           <textarea
             value={value}
             onChange={(e) => onChange(e.target.value)}
             placeholder="发送消息..."
-            style={{ flex: 1, background: 'transparent', outline: 'none', resize: 'none', fontSize: 13, minHeight: 44, maxHeight: 200, lineHeight: 1.6, color: '#fff', fontFamily: 'inherit', border: 'none' }}
+            style={{ flex: 1, background: 'transparent', outline: 'none', resize: 'none', fontSize: 13, minHeight: 44, maxHeight: 200, lineHeight: 1.6, color: 'var(--text-primary)', fontFamily: 'inherit', border: 'none' }}
             onInput={(e) => {
               const el = e.currentTarget
               el.style.height = '44px'

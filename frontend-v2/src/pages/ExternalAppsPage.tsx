@@ -160,7 +160,7 @@ export function ExternalAppsPage() {
       key: 'name',
       render: (name: string) => (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-          <AppstoreOutlined style={{ color: '#6d5ff5' }} />
+          <AppstoreOutlined style={{ color: 'var(--signal)' }} />
           <b>{name}</b>
         </span>
       ),
@@ -256,7 +256,7 @@ export function ExternalAppsPage() {
       />
 
       {isLoading ? (
-        <Card bordered={false} style={{ background: 'rgba(255,255,255,0.03)' }}>
+        <Card bordered={false} style={{ background: 'var(--surface)' }}>
           <Skeleton active paragraph={{ rows: 4 }} />
         </Card>
       ) : !apps || apps.length === 0 ? (
@@ -266,7 +266,7 @@ export function ExternalAppsPage() {
           </Button>
         </Empty>
       ) : (
-        <Card bordered={false} style={{ background: 'rgba(255,255,255,0.03)' }}>
+        <Card bordered={false} style={{ background: 'var(--surface)' }}>
           <Table
             rowKey="id"
             columns={columns}

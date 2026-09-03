@@ -10,12 +10,12 @@ interface MarkdownProps {
 const styles: Record<string, React.CSSProperties> = {
   container: {
     lineHeight: 1.7,
-    color: 'rgba(255,255,255,0.85)',
+    color: 'var(--text-primary)',
     wordBreak: 'break-word',
   },
   containerSmall: {
     lineHeight: 1.6,
-    color: 'rgba(255,255,255,0.7)',
+    color: 'var(--text-secondary)',
     wordBreak: 'break-word',
     fontSize: 12,
   },
@@ -28,9 +28,9 @@ const styles: Record<string, React.CSSProperties> = {
   ol: { margin: '0.3em 0', paddingLeft: 20 },
   li: { margin: '0.15em 0' },
   pre: {
-    background: 'rgba(0,0,0,0.4)',
-    border: '1px solid rgba(255,255,255,0.08)',
-    borderRadius: 8,
+    background: 'var(--surface-inset)',
+    border: '1px solid var(--line)',
+    borderRadius: 'var(--radius-control)',
     padding: '10px 12px',
     overflowX: 'auto',
     fontSize: 12,
@@ -39,7 +39,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   code: {
     background: 'rgba(255,255,255,0.1)',
-    borderRadius: 4,
+    borderRadius: 'var(--radius-control)',
     padding: '1px 5px',
     fontSize: '0.92em',
     fontFamily: 'Consolas, "Courier New", monospace',
@@ -48,14 +48,14 @@ const styles: Record<string, React.CSSProperties> = {
     borderLeft: '3px solid rgba(109,95,245,0.4)',
     margin: '0.4em 0',
     paddingLeft: 12,
-    color: 'rgba(255,255,255,0.6)',
+    color: 'var(--text-secondary)',
   },
-  a: { color: '#22d3ee' },
-  hr: { border: 'none', borderTop: '1px solid rgba(255,255,255,0.1)', margin: '0.6em 0' },
+  a: { color: 'var(--cyan)' },
+  hr: { border: 'none', borderTop: '1px solid var(--line-strong)', margin: '0.6em 0' },
   table: { borderCollapse: 'collapse', margin: '0.5em 0', fontSize: 12 },
-  th: { border: '1px solid rgba(255,255,255,0.15)', padding: '4px 10px', textAlign: 'left' },
-  td: { border: '1px solid rgba(255,255,255,0.15)', padding: '4px 10px' },
-  img: { maxWidth: '100%', borderRadius: 8 },
+  th: { border: '1px solid var(--line-strong)', padding: '4px 10px', textAlign: 'left' },
+  td: { border: '1px solid var(--line-strong)', padding: '4px 10px' },
+  img: { maxWidth: '100%', borderRadius: 'var(--radius-control)' },
   input: { marginRight: 4 },
 }
 

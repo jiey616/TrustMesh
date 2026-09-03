@@ -18,6 +18,8 @@ export interface ThemeTokens {
   surface: string
   surfaceSunken: string
   surfaceRaised: string
+  /** 凹陷区：深色下压黑、近白下压灰。用于代码块、内联输入、内嵌容器 */
+  surfaceInset: string
 
   // ---- 线条 ----
   line: string
@@ -62,6 +64,7 @@ export const darkTokens: ThemeTokens = {
   surface: 'rgba(255, 255, 255, 0.04)',
   surfaceSunken: 'rgba(255, 255, 255, 0.02)',
   surfaceRaised: 'rgba(255, 255, 255, 0.06)',
+  surfaceInset: 'rgba(0, 0, 0, 0.25)',
 
   line: 'rgba(255, 255, 255, 0.07)',
   lineStrong: 'rgba(255, 255, 255, 0.12)',
@@ -103,6 +106,7 @@ export const quietTokens: ThemeTokens = {
   surface: '#FFFFFF',
   surfaceSunken: '#F4F4F5',
   surfaceRaised: '#FFFFFF',
+  surfaceInset: '#F4F4F5',
 
   line: 'rgba(10, 10, 10, 0.10)',
   lineStrong: 'rgba(10, 10, 10, 0.18)',

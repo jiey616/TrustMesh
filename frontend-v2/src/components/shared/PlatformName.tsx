@@ -23,7 +23,7 @@ export function PlatformName({ size = 'md', className, style }: PlatformNameProp
       style={{
         fontSize: sz.fontSize,
         fontWeight: sz.fontWeight,
-        color: '#fff',
+        color: 'var(--text-primary)',
         letterSpacing: '-0.5px',
         ...style,
       }}

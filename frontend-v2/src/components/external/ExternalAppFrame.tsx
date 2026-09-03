@@ -63,7 +63,7 @@ export function ExternalAppFrame({
 
   if (app.status !== 'enabled') {
     return (
-      <Card bordered={false} style={{ background: 'rgba(255,255,255,0.03)' }}>
+      <Card bordered={false} style={{ background: 'var(--surface)' }}>
         <Text type="secondary">该外部平台已停用，启用后即可打开。</Text>
       </Card>
     )
@@ -95,7 +95,7 @@ export function ExternalAppFrame({
 
   if (app.frame_mode !== 'iframe') {
     return (
-      <Card bordered={false} style={{ background: 'rgba(255,255,255,0.03)' }}>
+      <Card bordered={false} style={{ background: 'var(--surface)' }}>
         <Paragraph type="secondary" style={{ marginBottom: 16 }}>
           「{app.name}」配置为新标签页打开。凭证有效期 {ttlLabel}，请尽快完成操作。
         </Paragraph>
@@ -144,9 +144,9 @@ export function ExternalAppFrame({
           flex: 1,
           minHeight: 0,
           width: '100%',
-          border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: 12,
-          background: '#fff',
+          border: '1px solid var(--line)',
+          borderRadius: 'var(--radius-control)',
+          background: 'var(--canvas-elevated)',
         }}
       />
     </div>

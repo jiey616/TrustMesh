@@ -42,7 +42,7 @@ function MarkdownBody({ content }: { content: string }) {
         .role-markdown p, .role-markdown li { color: #c8ccd8; }
         .role-markdown a { color: #8b7ff8; }
         .role-markdown code { background: rgba(255,255,255,0.06); padding: 2px 6px; border-radius: 4px; font-size: 0.85em; color: #a78bfa; }
-        .role-markdown pre { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); padding: 12px; border-radius: 8px; overflow: auto; }
+        .role-markdown pre { background: var(--surface-inset); border: 1px solid var(--line); padding: 12px; border-radius: var(--radius-control); overflow: auto; }
         .role-markdown pre code { background: transparent; padding: 0; color: #e2e8f0; }
         .role-markdown blockquote { border-left: 3px solid rgba(109,95,245,0.5); margin: 0.8em 0; padding-left: 12px; color: #8b8f9e; }
         .role-markdown table { border-collapse: collapse; margin: 0.8em 0; width: 100%; }
@@ -105,26 +105,26 @@ export function RoleDetailPage() {
         </Button>
       </div>
 
-      <div style={{ borderRadius: 16, border: '1px solid rgba(255,255,255,0.07)', background: 'rgba(255,255,255,0.03)', backdropFilter: 'blur(24px)', padding: '20px 24px', marginBottom: 16, position: 'relative', overflow: 'hidden' }}>
-        <div style={{ position: 'absolute', top: -60, right: -40, width: 220, height: 220, borderRadius: '50%', background: 'radial-gradient(circle, rgba(109,95,245,0.18), transparent 70%)', pointerEvents: 'none' }} />
+      <div style={{ borderRadius: 'var(--radius-structure)', border: '1px solid var(--line)', background: 'var(--surface)', backdropFilter: 'var(--glass-blur)', padding: '20px 24px', marginBottom: 16, position: 'relative', overflow: 'hidden' }}>
+        <div style={{ position: 'absolute', top: -60, right: -40, width: 220, height: 220, borderRadius: 'var(--radius-avatar)', background: 'radial-gradient(circle, rgba(109,95,245,0.18), transparent 70%)', pointerEvents: 'none' }} />
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ marginBottom: 8 }}><NeonBadge label={role.dept_name} variant={deptNeon} size="sm" /></div>
-            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, letterSpacing: '-0.5px', color: '#f4f4f8' }}>{role.name}</h1>
+            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, letterSpacing: '-0.5px', color: 'var(--text-primary)' }}>{role.name}</h1>
             <Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0, maxWidth: 560 }}>{role.description}</Paragraph>
           </div>
-          <div style={{ flexShrink: 0, borderRadius: 12, border: '1px solid rgba(255,255,255,0.07)', background: 'rgba(255,255,255,0.02)', padding: '12px 16px', minWidth: 260 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, fontSize: 12, color: '#8b8f9e', marginBottom: 8 }}>
+          <div style={{ flexShrink: 0, borderRadius: 'var(--radius-control)', border: '1px solid var(--line)', background: 'var(--surface-sunken)', padding: '12px 16px', minWidth: 260 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 8 }}>
               <span>ID</span>
-              <code style={{ fontFamily: 'var(--font-mono)', color: '#f4f4f8', fontSize: 11, wordBreak: 'break-all', textAlign: 'right', maxWidth: 180 }}>{role.id}</code>
+              <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', fontSize: 11, wordBreak: 'break-all', textAlign: 'right', maxWidth: 180 }}>{role.id}</code>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, fontSize: 12, color: '#8b8f9e', marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 8 }}>
               <span>部门</span>
-              <span style={{ color: '#f4f4f8' }}>{role.dept_name}</span>
+              <span style={{ color: 'var(--text-primary)' }}>{role.dept_name}</span>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, fontSize: 12, color: '#8b8f9e' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, fontSize: 12, color: 'var(--text-tertiary)' }}>
               <span>格式</span>
-              <span style={{ color: '#f4f4f8' }}>OpenClaw 数字员工</span>
+              <span style={{ color: 'var(--text-primary)' }}>OpenClaw 数字员工</span>
             </div>
           </div>
         </div>
@@ -132,7 +132,7 @@ export function RoleDetailPage() {
 
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ borderRadius: 16, border: '1px solid rgba(255,255,255,0.07)', background: 'rgba(255,255,255,0.02)', padding: '8px 24px 0' }}>
+          <div style={{ borderRadius: 'var(--radius-structure)', border: '1px solid var(--line)', background: 'var(--surface-sunken)', padding: '8px 24px 0' }}>
             <Tabs
               defaultActiveKey="soul"
               items={[

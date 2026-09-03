@@ -9,7 +9,7 @@ const OpenFileViewerLazy = lazy(() => import('./OpenFileViewer').then((m) => ({ 
 function ViewerLoading() {
   return (
     <div style={{ textAlign: 'center', padding: 48 }}>
-      <LoadingOutlined style={{ fontSize: 28, color: 'rgba(255,255,255,0.4)' }} />
+      <LoadingOutlined style={{ fontSize: 28, color: 'var(--text-quaternary)' }} />
     </div>
   )
 }
@@ -102,26 +102,26 @@ export function FileViewer({ open, onOpenChange, blob, fileName, onDownload }: F
           <Button icon={<DownloadOutlined />} onClick={onDownload}>下载</Button>
         ) : null
       }
-      title={<span style={{ color: '#fff' }}>{fileName}</span>}
+      title={<span style={{ color: 'var(--text-primary)' }}>{fileName}</span>}
       styles={{ body: { maxHeight: '70vh', overflow: 'auto' } }}
     >
       {loading ? (
         <div style={{ textAlign: 'center', padding: 48 }}>
-          <LoadingOutlined style={{ fontSize: 28, color: 'rgba(255,255,255,0.4)' }} />
+          <LoadingOutlined style={{ fontSize: 28, color: 'var(--text-quaternary)' }} />
         </div>
       ) : category === 'text' || category === 'code' ? (
         <pre
           style={{
             margin: 0,
             padding: 16,
-            borderRadius: 10,
-            background: 'rgba(0,0,0,0.4)',
+            borderRadius: 'var(--radius-control)',
+            background: 'var(--surface-inset)',
             fontSize: 12,
             lineHeight: 1.6,
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-word',
             fontFamily: 'Consolas, "Courier New", monospace',
-            color: 'rgba(255,255,255,0.85)',
+            color: 'var(--text-primary)',
           }}
         >
           {textContent}
@@ -135,7 +135,7 @@ export function FileViewer({ open, onOpenChange, blob, fileName, onDownload }: F
           <OpenFileViewerLazy blob={blob} fileName={fileName} />
         </Suspense>
       ) : (
-        <div style={{ textAlign: 'center', padding: 48, color: 'rgba(255,255,255,0.4)' }}>
+        <div style={{ textAlign: 'center', padding: 48, color: 'var(--text-quaternary)' }}>
           该文件类型不支持预览
           {onDownload && (
             <div style={{ marginTop: 12 }}>

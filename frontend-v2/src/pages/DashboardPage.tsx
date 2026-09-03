@@ -54,12 +54,12 @@ export function DashboardPage() {
   const successRate = stats?.success_rate ?? 0
 
   const statCards: StatCard[] = [
-    { title: '数字员工总数', value: stats?.agents_total || 0, icon: <RobotOutlined style={{ fontSize: 20 }} />, glowColor: '#6d5ff5', delay: 0 },
-    { title: '在线数字员工', value: stats?.agents_online || 0, icon: <CheckCircleOutlined style={{ fontSize: 20 }} />, glowColor: '#22d3ee', delay: 0.05 },
-    { title: '任务总数', value: stats?.tasks_total || 0, icon: <ThunderboltOutlined style={{ fontSize: 20 }} />, glowColor: '#f59e0b', delay: 0.1 },
-    { title: '进行中', value: stats?.tasks_in_progress || 0, icon: <ClockCircleOutlined style={{ fontSize: 20 }} />, glowColor: '#3b82f6', delay: 0.15 },
-    { title: '已完成', value: stats?.tasks_done_count || 0, icon: <CheckCircleOutlined style={{ fontSize: 20 }} />, glowColor: '#10b981', delay: 0.2 },
-    { title: '成功率', value: successRate, suffix: successRate > 0 ? '%' : '', icon: <TrophyOutlined style={{ fontSize: 20 }} />, glowColor: '#f43f5e', delay: 0.25 },
+    { title: '数字员工总数', value: stats?.agents_total || 0, icon: <RobotOutlined style={{ fontSize: 20 }} />, glowColor: 'var(--signal)', delay: 0 },
+    { title: '在线数字员工', value: stats?.agents_online || 0, icon: <CheckCircleOutlined style={{ fontSize: 20 }} />, glowColor: 'var(--cyan)', delay: 0.05 },
+    { title: '任务总数', value: stats?.tasks_total || 0, icon: <ThunderboltOutlined style={{ fontSize: 20 }} />, glowColor: 'var(--warning)', delay: 0.1 },
+    { title: '进行中', value: stats?.tasks_in_progress || 0, icon: <ClockCircleOutlined style={{ fontSize: 20 }} />, glowColor: 'var(--info)', delay: 0.15 },
+    { title: '已完成', value: stats?.tasks_done_count || 0, icon: <CheckCircleOutlined style={{ fontSize: 20 }} />, glowColor: 'var(--success)', delay: 0.2 },
+    { title: '成功率', value: successRate, suffix: successRate > 0 ? '%' : '', icon: <TrophyOutlined style={{ fontSize: 20 }} />, glowColor: 'var(--error)', delay: 0.25 },
   ]
 
   return (
@@ -70,8 +70,8 @@ export function DashboardPage() {
           flexShrink: 0,
           paddingTop: 8,
           paddingBottom: 4,
-          background: 'rgba(8,8,18,0.98)',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          background: 'var(--canvas-elevated)',
+          borderBottom: '1px solid var(--line)',
         }}
       >
         <PageHeader
@@ -93,22 +93,22 @@ export function DashboardPage() {
                 <GlowCard glowColor={card.glowColor} intensity="subtle">
                   <div style={{ padding: '8px 16px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                      <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12, fontWeight: 500 }}>{card.title}</Text>
+                      <Text style={{ color: 'var(--text-tertiary)', fontSize: 12, fontWeight: 500 }}>{card.title}</Text>
                       <span style={{ color: card.glowColor, opacity: 0.8, fontSize: 16 }}>{card.icon}</span>
                     </div>
                     <div>
                       {statsLoading ? (
-                        <div style={{ height: 26, width: '60%', borderRadius: 6, background: 'rgba(255,255,255,0.04)' }} />
+                        <div style={{ height: 26, width: '60%', borderRadius: 'var(--radius-control)', background: 'var(--surface)' }} />
                       ) : card.title === '成功率' && successRate <= 0 ? (
-                        <span style={{ fontSize: 22, fontWeight: 700, color: '#f4f4f8', lineHeight: 1, letterSpacing: '-1px' }}>—</span>
+                        <span style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1, letterSpacing: '-1px' }}>—</span>
                       ) : (
                         <span style={{ display: 'inline-flex', alignItems: 'baseline' }}>
                           <CountUp
                             value={card.value}
-                            style={{ fontSize: 22, fontWeight: 700, color: '#f4f4f8', lineHeight: 1, letterSpacing: '-1px' }}
+                            style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1, letterSpacing: '-1px' }}
                           />
                           {card.suffix && (
-                            <span style={{ fontSize: 14, fontWeight: 600, color: '#f4f4f8', marginLeft: 2 }}>{card.suffix}</span>
+                            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginLeft: 2 }}>{card.suffix}</span>
                           )}
                         </span>
                       )}
@@ -131,17 +131,17 @@ export function DashboardPage() {
           alignItems: 'center',
           gap: 12,
           padding: '10px 16px',
-          borderRadius: 12,
-          background: 'rgba(255,255,255,0.03)',
-          border: '1px solid rgba(255,255,255,0.07)',
+          borderRadius: 'var(--radius-control)',
+          background: 'var(--surface)',
+          border: '1px solid var(--line)',
           cursor: 'pointer',
           transition: 'border-color 0.15s',
         }}
         onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'rgba(158,76,255,0.4)')}
         onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.07)')}
       >
-        <RobotOutlined style={{ color: '#9e4cff', fontSize: 16 }} />
-        <Text style={{ color: '#f4f4f8', fontWeight: 600, fontSize: 14 }}>数字员工</Text>
+        <RobotOutlined style={{ color: 'var(--signal)', fontSize: 16 }} />
+        <Text style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: 14 }}>数字员工</Text>
         <NeonBadge label={`${onlineCount}/${agentList.length} 在线`} variant="green" pulse size="sm" />
         <span style={{ flex: 1 }} />
         <Space size={-2}>
@@ -163,7 +163,7 @@ export function DashboardPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4, delay: 0.3, ease: 'easeOut' }}
             >
-              <GlassPanel title="最近活动" icon={<ThunderboltOutlined style={{ color: '#6d5ff5', fontSize: 16 }} />}>
+              <GlassPanel title="最近活动" icon={<ThunderboltOutlined style={{ color: 'var(--signal)', fontSize: 16 }} />}>
                 <EventTimeline events={events ?? []} loading={eventsLoading} showActorName emptyText="暂无活动记录" />
               </GlassPanel>
             </motion.div>
@@ -174,7 +174,7 @@ export function DashboardPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4, delay: 0.35, ease: 'easeOut' }}
             >
-              <GlassPanel title="最近任务" icon={<CheckCircleOutlined style={{ color: '#22d3ee', fontSize: 16 }} />}>
+              <GlassPanel title="最近任务" icon={<CheckCircleOutlined style={{ color: 'var(--cyan)', fontSize: 16 }} />}>
                 <RecentTasksList tasks={recentTasks ?? []} loading={tasksLoading} />
               </GlassPanel>
             </motion.div>
@@ -189,10 +189,10 @@ function GlassPanel({ title, icon, children }: { title: string; icon?: React.Rea
   return (
     <div
       style={{
-        background: 'rgba(255,255,255,0.03)',
-        backdropFilter: 'blur(24px)',
-        border: '1px solid rgba(255,255,255,0.07)',
-        borderRadius: 16,
+        background: 'var(--surface)',
+        backdropFilter: 'var(--glass-blur)',
+        border: '1px solid var(--line)',
+        borderRadius: 'var(--radius-structure)',
         overflow: 'hidden',
         height: '100%',
       }}
@@ -200,7 +200,7 @@ function GlassPanel({ title, icon, children }: { title: string; icon?: React.Rea
       <div
         style={{
           padding: '12px 20px',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          borderBottom: '1px solid var(--line)',
           display: 'flex',
           alignItems: 'center',
           flexShrink: 0,
@@ -208,7 +208,7 @@ function GlassPanel({ title, icon, children }: { title: string; icon?: React.Rea
       >
         <Space>
           {icon}
-          <Text style={{ color: '#f4f4f8', fontWeight: 600, fontSize: 15 }}>{title}</Text>
+          <Text style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: 15 }}>{title}</Text>
         </Space>
       </div>
       <div style={{ padding: 16 }}>{children}</div>

@@ -35,13 +35,13 @@ export function ProjectTabRail({ tabs, activeKey, onChange }: ProjectTabRailProp
     height: 36,
     padding: 0,
     border: 'none',
-    borderRadius: 9,
+    borderRadius: 'var(--radius-control)',
     cursor: 'pointer',
     fontFamily: 'inherit',
     fontSize: 13,
     transition: 'background 0.15s ease, color 0.15s ease',
     background: 'transparent',
-    color: 'rgba(255,255,255,0.6)',
+    color: 'var(--text-secondary)',
   }
 
   const renderRow = (key: string, label: string, icon: ReactNode, active: boolean) => (
@@ -116,13 +116,11 @@ export function ProjectTabRail({ tabs, activeKey, onChange }: ProjectTabRailProp
           flexDirection: 'column',
           gap: 2,
           padding: 6,
-          background: 'rgba(16,16,26,0.92)',
-          border: '1px solid rgba(255,255,255,0.07)',
-          borderRadius: 14,
-          backdropFilter: 'blur(12px)',
-          boxShadow: expanded
-            ? '0 12px 32px rgba(0,0,0,0.5)'
-            : '0 2px 8px rgba(0,0,0,0.25)',
+          background: 'var(--canvas-elevated)',
+          border: '1px solid var(--line)',
+          borderRadius: 'var(--radius-structure)',
+          backdropFilter: 'var(--glass-blur)',
+          boxShadow: expanded ? 'var(--shadow-float)' : 'var(--shadow-card)',
           transition: 'width 0.18s ease',
         }}
       >
@@ -136,7 +134,7 @@ export function ProjectTabRail({ tabs, activeKey, onChange }: ProjectTabRailProp
             width: expanded ? '100%' : 36,
             justifyContent: expanded ? 'flex-start' : 'center',
             paddingLeft: expanded ? 4 : 0,
-            color: 'rgba(255,255,255,0.45)',
+            color: 'var(--text-tertiary)',
             background: hovered === '__toggle' ? 'rgba(255,255,255,0.06)' : 'transparent',
           }}
           title={expanded ? '收起' : '展开'}
@@ -156,7 +154,7 @@ export function ProjectTabRail({ tabs, activeKey, onChange }: ProjectTabRailProp
           {expanded && <span style={{ fontSize: 12 }}>收起</span>}
         </button>
 
-        <div style={{ height: 1, background: 'rgba(255,255,255,0.07)', margin: '3px 0' }} />
+        <div style={{ height: 1, background: 'var(--surface-raised)', margin: '3px 0' }} />
 
         {tabs.map((t) => {
           const active = t.key === activeKey

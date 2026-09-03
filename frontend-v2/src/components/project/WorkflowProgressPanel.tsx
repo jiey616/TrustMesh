@@ -21,22 +21,22 @@ const statusConfig: Record<
   WorkflowStepProgress['status'],
   { color: string; bg: string; border: string; label: string; icon: React.ReactNode }
 > = {
-  done: { color: '#10b981', bg: 'rgba(16,185,129,0.14)', border: 'rgba(16,185,129,0.4)', label: '已完成', icon: <CheckCircleOutlined /> },
-  in_progress: { color: '#3b82f6', bg: 'rgba(59,130,246,0.14)', border: 'rgba(59,130,246,0.5)', label: '进行中', icon: <LoadingOutlined /> },
-  awaiting_review: { color: '#f59e0b', bg: 'rgba(245,158,11,0.14)', border: 'rgba(245,158,11,0.5)', label: '待确认', icon: <ClockCircleOutlined /> },
-  failed: { color: '#ef4444', bg: 'rgba(239,68,68,0.14)', border: 'rgba(239,68,68,0.4)', label: '失败', icon: <CloseCircleOutlined /> },
-  canceled: { color: '#6b7280', bg: 'rgba(107,114,128,0.14)', border: 'rgba(107,114,128,0.35)', label: '已取消', icon: <MinusCircleOutlined /> },
-  pending: { color: '#f59e0b', bg: 'rgba(245,158,11,0.10)', border: 'rgba(245,158,11,0.3)', label: '待开始', icon: <ClockCircleOutlined /> },
-  unassigned: { color: '#64748b', bg: 'rgba(100,116,139,0.08)', border: 'rgba(100,116,139,0.25)', label: '未编排', icon: <MinusCircleOutlined /> },
+  done: { color: 'var(--success)', bg: 'rgba(16,185,129,0.14)', border: 'rgba(16,185,129,0.4)', label: '已完成', icon: <CheckCircleOutlined /> },
+  in_progress: { color: 'var(--info)', bg: 'rgba(59,130,246,0.14)', border: 'rgba(59,130,246,0.5)', label: '进行中', icon: <LoadingOutlined /> },
+  awaiting_review: { color: 'var(--warning)', bg: 'rgba(245,158,11,0.14)', border: 'rgba(245,158,11,0.5)', label: '待确认', icon: <ClockCircleOutlined /> },
+  failed: { color: 'var(--error)', bg: 'rgba(239,68,68,0.14)', border: 'rgba(239,68,68,0.4)', label: '失败', icon: <CloseCircleOutlined /> },
+  canceled: { color: 'var(--text-quaternary)', bg: 'rgba(107,114,128,0.14)', border: 'rgba(107,114,128,0.35)', label: '已取消', icon: <MinusCircleOutlined /> },
+  pending: { color: 'var(--warning)', bg: 'rgba(245,158,11,0.10)', border: 'rgba(245,158,11,0.3)', label: '待开始', icon: <ClockCircleOutlined /> },
+  unassigned: { color: 'var(--text-quaternary)', bg: 'rgba(100,116,139,0.08)', border: 'rgba(100,116,139,0.25)', label: '未编排', icon: <MinusCircleOutlined /> },
 }
 
 const rolePalette: { bg: string; color: string }[] = [
-  { bg: 'linear-gradient(135deg, #6d5ff5, #6366f1)', color: '#a99cff' },
-  { bg: 'linear-gradient(135deg, #3b82f6, #22d3ee)', color: '#7dd3fc' },
-  { bg: 'linear-gradient(135deg, #f59e0b, #f43f5e)', color: '#fcd34d' },
-  { bg: 'linear-gradient(135deg, #10b981, #22d3ee)', color: '#6ee7b7' },
+  { bg: 'linear-gradient(135deg, #6d5ff5, #6366f1)', color: 'var(--signal-hover)' },
+  { bg: 'linear-gradient(135deg, #3b82f6, #22d3ee)', color: 'var(--info)' },
+  { bg: 'linear-gradient(135deg, #f59e0b, #f43f5e)', color: 'var(--warning)' },
+  { bg: 'linear-gradient(135deg, #10b981, #22d3ee)', color: 'var(--success)' },
   { bg: 'linear-gradient(135deg, #ec4899, #a855f7)', color: '#f9a8d4' },
-  { bg: 'linear-gradient(135deg, #06b6d4, #3b82f6)', color: '#67e8f9' },
+  { bg: 'linear-gradient(135deg, #06b6d4, #3b82f6)', color: 'var(--cyan)' },
 ]
 
 function getBadgeChar(name?: string, role?: string, stepName?: string): string {
@@ -62,10 +62,10 @@ function formatFileSize(bytes: number): string {
 
 function fileTypeIcon(name?: string) {
   const ext = (name ?? '').toLowerCase()
-  const style = { color: '#94a3b8' }
+  const style = { color: 'var(--text-tertiary)' }
   if (ext.endsWith('.pdf')) return <span style={{ ...style, color: '#f472b6' }}>PDF</span>
-  if (/\.(png|jpe?g|gif|webp|svg|bmp)$/.test(ext)) return <span style={{ ...style, color: '#34d399' }}>IMG</span>
-  if (/\.(md|markdown)$/.test(ext)) return <span style={{ ...style, color: '#60a5fa' }}>MD</span>
+  if (/\.(png|jpe?g|gif|webp|svg|bmp)$/.test(ext)) return <span style={{ ...style, color: 'var(--success)' }}>IMG</span>
+  if (/\.(md|markdown)$/.test(ext)) return <span style={{ ...style, color: 'var(--info)' }}>MD</span>
   return <span style={style}>FILE</span>
 }
 
@@ -114,9 +114,9 @@ export function WorkflowProgressPanel({ projectId }: Props) {
         minWidth: 0,
         maxWidth: '100%',
         boxSizing: 'border-box',
-        borderRadius: 12,
+        borderRadius: 'var(--radius-control)',
         border: '1px solid rgba(139,127,248,0.2)',
-        background: 'linear-gradient(160deg, rgba(24,24,32,0.6), rgba(16,16,24,0.5))',
+        background: 'var(--surface)',
         padding: '12px 14px',
         display: 'flex',
         flexDirection: 'column',
@@ -133,15 +133,15 @@ export function WorkflowProgressPanel({ projectId }: Props) {
 
       {/* 顶部完成度小条 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)' }}>
-          <span style={{ color: '#a99cff', fontWeight: 600 }}>{doneCount}</span>/{totalCount} 完成
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+          <span style={{ color: 'var(--signal-hover)', fontWeight: 600 }}>{doneCount}</span>/{totalCount} 完成
         </span>
         <span
           style={{
             flex: 1,
             height: 3,
-            borderRadius: 999,
-            background: 'rgba(255,255,255,0.08)',
+            borderRadius: 'var(--radius-pill)',
+            background: 'var(--surface-raised)',
             overflow: 'hidden',
           }}
         >
@@ -151,7 +151,7 @@ export function WorkflowProgressPanel({ projectId }: Props) {
               height: '100%',
               width: `${pct}%`,
               background: 'linear-gradient(90deg, #6d5ff5, #22d3ee)',
-              borderRadius: 999,
+              borderRadius: 'var(--radius-pill)',
               transition: 'width 0.4s ease',
             }}
           />
@@ -167,10 +167,10 @@ export function WorkflowProgressPanel({ projectId }: Props) {
           // 已完成节点灰度展示，未完成保持状态色
           const nodeColor = isDone ? '#6b7280' : cfg.color
           const nodeBorder = isDone ? 'rgba(107,114,128,0.3)' : cfg.border
-          const nodeBg = isDone ? 'rgba(107,114,128,0.06)' : isSelected ? cfg.bg : 'rgba(255,255,255,0.03)'
+          const nodeBg = isDone ? 'rgba(107,114,128,0.06)' : isSelected ? cfg.bg : 'var(--surface)'
           const nodeText = isDone ? 'rgba(255,255,255,0.35)' : '#f4f4f8'
           const rc = isDone
-            ? { bg: 'linear-gradient(135deg, #6b7280, #4b5563)', color: '#9ca3af' }
+            ? { bg: 'linear-gradient(135deg, #6b7280, #4b5563)', color: 'var(--text-tertiary)' }
             : roleColor(step.role, step.agent_id)
           const badge = getBadgeChar(step.task_title, step.role, step.name)
           return (
@@ -184,7 +184,7 @@ export function WorkflowProgressPanel({ projectId }: Props) {
                     alignItems: 'center',
                     gap: 8,
                     padding: '6px 12px 6px 6px',
-                    borderRadius: 999,
+                    borderRadius: 'var(--radius-pill)',
                     border: `1px solid ${isSelected ? nodeColor : nodeBorder}`,
                     background: nodeBg,
                     boxShadow: isSelected && !isDone ? `0 0 14px ${cfg.color}35` : 'none',
@@ -197,7 +197,7 @@ export function WorkflowProgressPanel({ projectId }: Props) {
                     style={{
                       width: 26,
                       height: 26,
-                      borderRadius: '50%',
+                      borderRadius: 'var(--radius-avatar)',
                       background: rc.bg,
                       color: isDone ? '#9ca3af' : '#fff',
                       display: 'flex',
@@ -236,16 +236,16 @@ export function WorkflowProgressPanel({ projectId }: Props) {
       {selectedStep && (
         <div
           style={{
-            borderRadius: 10,
+            borderRadius: 'var(--radius-control)',
             border: '1px solid rgba(139,127,248,0.2)',
-            background: 'rgba(255,255,255,0.02)',
+            background: 'var(--surface-sunken)',
             padding: '8px 12px',
             display: 'flex',
             flexDirection: 'column',
             gap: 3,
           }}
         >
-          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
+          <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
             步骤 {selectedStep.index + 1} · {selectedStep.name} · 最终产物
           </div>
           {selectedStep.outputs && selectedStep.outputs.length > 0 ? (
@@ -260,17 +260,17 @@ export function WorkflowProgressPanel({ projectId }: Props) {
                     fontWeight: 600,
                     minWidth: 32,
                     height: 18,
-                    borderRadius: 4,
-                    background: 'rgba(255,255,255,0.06)',
-                    color: '#94a3b8',
+                    borderRadius: 'var(--radius-control)',
+                    background: 'var(--surface-raised)',
+                    color: 'var(--text-tertiary)',
                   }}
                 >
                   {fileTypeIcon(o.file_name || o.output_name)}
                 </span>
-                <span style={{ color: 'rgba(255,255,255,0.85)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ color: 'var(--text-primary)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {o.file_name || o.output_name || '未命名产物'}
                 </span>
-                <span style={{ color: 'rgba(255,255,255,0.35)', flexShrink: 0 }}>
+                <span style={{ color: 'var(--text-quaternary)', flexShrink: 0 }}>
                   {o.mime_type || ''} {o.file_size != null ? ` · ${formatFileSize(o.file_size)}` : ''}
                 </span>
                 <span style={{ flex: 1 }} />
@@ -278,19 +278,19 @@ export function WorkflowProgressPanel({ projectId }: Props) {
                   <Tooltip title="预览">
                     <button
                       type="button"
-                      style={{ border: 'none', background: 'transparent', color: '#60a5fa', cursor: 'pointer', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 3, padding: 0 }}
+                      style={{ border: 'none', background: 'transparent', color: 'var(--info)', cursor: 'pointer', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 3, padding: 0 }}
                       onClick={() => void handlePreview(selectedStep, o.file_id!, o.file_name || o.output_name || '产物')}
                     >
                       <EyeOutlined /> 预览
                     </button>
                   </Tooltip>
                 ) : (
-                  <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11 }}>暂无预览文件</span>
+                  <span style={{ color: 'var(--text-quaternary)', fontSize: 11 }}>暂无预览文件</span>
                 )}
               </div>
             ))
           ) : (
-            <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)' }}>
+            <span style={{ fontSize: 12, color: 'var(--text-quaternary)' }}>
               {selectedStep.status === 'unassigned' ? '该步骤尚未绑定任务' : '该步骤暂无已提交的产物'}
             </span>
           )}

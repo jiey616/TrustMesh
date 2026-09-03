@@ -124,7 +124,7 @@ export function AgentInvitePage() {
         <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 24 }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-              <RobotOutlined style={{ fontSize: 18, color: '#6d5ff5' }} />
+              <RobotOutlined style={{ fontSize: 18, color: 'var(--signal)' }} />
               <Title level={5} style={{ margin: 0 }}>招聘数字员工</Title>
             </div>
             <Paragraph type="secondary" style={{ fontSize: 13 }}>复制以下提示词并发送给 Agent，Agent 将自动发起入职申请。</Paragraph>
@@ -132,7 +132,7 @@ export function AgentInvitePage() {
               <Skeleton active paragraph={{ rows: 4 }} />
             ) : (
               <div style={{ position: 'relative' }}>
-                <pre style={{ borderRadius: 12, background: 'rgba(255,255,255,0.05)', padding: 16, fontSize: 13, lineHeight: 1.7, whiteSpace: 'pre-wrap', color: 'rgba(255,255,255,0.85)', maxHeight: 320, overflow: 'auto' }}>
+                <pre style={{ borderRadius: 'var(--radius-control)', background: 'var(--surface)', padding: 16, fontSize: 13, lineHeight: 1.7, whiteSpace: 'pre-wrap', color: 'var(--text-primary)', maxHeight: 320, overflow: 'auto' }}>
                   {invite?.prompt}
                 </pre>
                 <Button
@@ -150,7 +150,7 @@ export function AgentInvitePage() {
           <div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <ToolOutlined style={{ fontSize: 18, color: '#22d3ee' }} />
+                <ToolOutlined style={{ fontSize: 18, color: 'var(--cyan)' }} />
                 <Title level={5} style={{ margin: 0 }}>添加 / 更新 Skill</Title>
               </div>
               <Select
@@ -166,13 +166,13 @@ export function AgentInvitePage() {
             <Paragraph type="secondary" style={{ fontSize: 13 }}>数字员工入职后，复制以下指令发送给对应 Agent，使其安装或更新 Skill。</Paragraph>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               {skillInstructions.map((skill) => (
-                <div key={skill.key} style={{ borderRadius: 12, border: '1px solid rgba(255,255,255,0.08)', padding: 16, background: 'rgba(255,255,255,0.02)' }}>
+                <div key={skill.key} style={{ borderRadius: 'var(--radius-control)', border: '1px solid var(--line)', padding: 16, background: 'var(--surface-sunken)' }}>
                   <div style={{ marginBottom: 8 }}>
                     <Text strong>{skill.title}</Text>
                     <Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>{skill.description}</Paragraph>
                   </div>
                   <div style={{ position: 'relative' }}>
-                    <pre style={{ borderRadius: 8, background: 'rgba(255,255,255,0.04)', padding: '10px 72px 10px 12px', fontSize: 13, lineHeight: 1.7, whiteSpace: 'pre-wrap', color: 'rgba(255,255,255,0.85)', maxHeight: 160, overflow: 'auto' }}>
+                    <pre style={{ borderRadius: 'var(--radius-control)', background: 'var(--surface)', padding: '10px 72px 10px 12px', fontSize: 13, lineHeight: 1.7, whiteSpace: 'pre-wrap', color: 'var(--text-primary)', maxHeight: 160, overflow: 'auto' }}>
                       {skill.prompt}
                     </pre>
                     <Button
@@ -191,9 +191,9 @@ export function AgentInvitePage() {
         </div>
 
         {/* Right: Pending Requests */}
-        <div style={{ width: 480, flexShrink: 0, display: 'flex', flexDirection: 'column', minWidth: 0, borderLeft: '1px solid rgba(255,255,255,0.08)', paddingLeft: 24 }}>
+        <div style={{ width: 480, flexShrink: 0, display: 'flex', flexDirection: 'column', minWidth: 0, borderLeft: '1px solid var(--line)', paddingLeft: 24 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <CheckSquareOutlined style={{ fontSize: 18, color: '#f59e0b' }} />
+            <CheckSquareOutlined style={{ fontSize: 18, color: 'var(--warning)' }} />
             <Title level={5} style={{ margin: 0 }}>入职审批</Title>
             {pendingCount > 0 && (
               <Tag color="orange">{pendingCount}</Tag>
@@ -201,13 +201,13 @@ export function AgentInvitePage() {
           </div>
 
           {pendingCount === 0 ? (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12, border: '1px dashed rgba(255,255,255,0.15)' }}>
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--radius-control)', border: '1px dashed var(--line-strong)' }}>
               <Empty description="暂无待审批的入职申请" />
             </div>
           ) : (
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
               {requests!.map((jr) => (
-                <div key={jr.id} style={{ borderRadius: 12, border: '1px solid rgba(255,255,255,0.08)', padding: 16, background: 'rgba(255,255,255,0.02)' }}>
+                <div key={jr.id} style={{ borderRadius: 'var(--radius-control)', border: '1px solid var(--line)', padding: 16, background: 'var(--surface-sunken)' }}>
                   {editingId === jr.id ? (
                     <Space direction="vertical" style={{ width: '100%' }}>
                       <Input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="数字员工名称" />
@@ -241,7 +241,7 @@ export function AgentInvitePage() {
                         <Paragraph type="secondary" style={{ fontSize: 13, marginTop: 6, marginBottom: 4 }} ellipsis={{ rows: 2 }}>
                           {jr.description || '无描述'}
                         </Paragraph>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12, color: 'var(--text-tertiary)' }}>
                           <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>{jr.node_id}</span>
                           {jr.capabilities?.length > 0 && <span>能力: {jr.capabilities.join(', ')}</span>}
                         </div>
@@ -249,7 +249,7 @@ export function AgentInvitePage() {
                     </div>
                   )}
 
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, paddingTop: 12, marginTop: 12, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, paddingTop: 12, marginTop: 12, borderTop: '1px solid var(--line)' }}>
                     {editingId === jr.id ? (
                       <Button size="small" onClick={() => setEditingId(null)}>取消</Button>
                     ) : (

@@ -17,7 +17,7 @@ export function ExternalAppFramePage() {
 
   if (isLoading) {
     return (
-      <Card bordered={false} style={{ background: 'rgba(255,255,255,0.03)' }}>
+      <Card bordered={false} style={{ background: 'var(--surface)' }}>
         <Skeleton active paragraph={{ rows: 6 }} />
       </Card>
     )
@@ -49,7 +49,7 @@ export function ExternalAppFramePage() {
         {app.frame_mode === 'iframe' ? (
           <ExternalAppFrame app={app} />
         ) : (
-          <Card bordered={false} style={{ background: 'rgba(255,255,255,0.03)' }}>
+          <Card bordered={false} style={{ background: 'var(--surface)' }}>
             <Empty
               description={
                 <span>

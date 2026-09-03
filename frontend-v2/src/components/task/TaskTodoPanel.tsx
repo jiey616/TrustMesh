@@ -6,15 +6,15 @@ import { useAgents } from '@/hooks/useAgents'
 import type { Todo, TaskDetail } from '@/types'
 
 const statusIndicatorColors: Record<string, string> = {
-  planning: '#22d3ee',
-  review: '#f59e0b',
-  pending: '#94a3b8',
-  in_progress: '#0ea5e9',
-  awaiting_review: '#f59e0b',
-  waiting_user: '#f43f5e',
-  done: '#10b981',
-  failed: '#f43f5e',
-  canceled: '#64748b',
+  planning: 'var(--cyan)',
+  review: 'var(--warning)',
+  pending: 'var(--text-tertiary)',
+  in_progress: 'var(--info)',
+  awaiting_review: 'var(--warning)',
+  waiting_user: 'var(--error)',
+  done: 'var(--success)',
+  failed: 'var(--error)',
+  canceled: 'var(--text-quaternary)',
 }
 
 const statusLabels: Record<string, string> = {
@@ -52,7 +52,7 @@ function TodoResultText({ result }: { result: Todo['result'] }) {
       <div
         style={{
           fontSize: 13,
-          color: 'rgba(255,255,255,0.7)',
+          color: 'var(--text-secondary)',
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
           lineHeight: 1.6,
@@ -69,8 +69,8 @@ function TodoResultText({ result }: { result: Todo['result'] }) {
               right: 0,
               bottom: 0,
               paddingLeft: 24,
-              background: 'linear-gradient(90deg, transparent, rgba(13,13,22,1))',
-              color: '#6d5ff5',
+              background: 'linear-gradient(90deg, transparent, var(--canvas))',
+              color: 'var(--signal)',
               cursor: 'pointer',
               fontWeight: 500,
               fontSize: 12,
@@ -85,7 +85,7 @@ function TodoResultText({ result }: { result: Todo['result'] }) {
         <button
           type="button"
           onClick={() => setExpanded(false)}
-          style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginTop: 2, fontFamily: 'inherit' }}
+          style={{ fontSize: 12, color: 'var(--text-tertiary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginTop: 2, fontFamily: 'inherit' }}
         >
           收起
         </button>
@@ -237,19 +237,19 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
     onCancel: () => void,
     saving: boolean,
   ) => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderRadius: 10, border: '1px solid rgba(109,95,245,0.25)', background: 'rgba(109,95,245,0.05)', padding: 12 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderRadius: 'var(--radius-control)', border: '1px solid rgba(109,95,245,0.25)', background: 'rgba(109,95,245,0.05)', padding: 12 }}>
       <Input
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         placeholder="TODO 标题 *"
-        style={{ background: 'rgba(0,0,0,0.25)', borderColor: 'rgba(255,255,255,0.12)', color: '#fff' }}
+        style={{ background: 'var(--surface-inset)', borderColor: 'var(--line-strong)', color: 'var(--text-primary)' }}
       />
       <Input.TextArea
         value={desc}
         onChange={(e) => setDesc(e.target.value)}
         placeholder="描述（可选）"
         rows={2}
-        style={{ background: 'rgba(0,0,0,0.25)', borderColor: 'rgba(255,255,255,0.12)', color: '#fff', resize: 'none', fontSize: 13 }}
+        style={{ background: 'var(--surface-inset)', borderColor: 'var(--line-strong)', color: 'var(--text-primary)', resize: 'none', fontSize: 13 }}
       />
       <Select
         value={assignee || undefined}
@@ -258,7 +258,7 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
         options={assigneeOptions}
         style={{ width: '100%' }}
       />
-      {error && <div style={{ fontSize: 13, color: '#f87171' }}>{error}</div>}
+      {error && <div style={{ fontSize: 13, color: 'var(--error)' }}>{error}</div>}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
         <Button size="small" onClick={onCancel}>取消</Button>
         <Button size="small" type="primary" loading={saving} onClick={onSave}>保存</Button>
@@ -269,7 +269,7 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {task.todos.length === 0 && !addOpen && (
-        <div style={{ textAlign: 'center', padding: 16, color: 'rgba(255,255,255,0.35)', fontSize: 13 }}>暂无 TODO</div>
+        <div style={{ textAlign: 'center', padding: 16, color: 'var(--text-quaternary)', fontSize: 13 }}>暂无 TODO</div>
       )}
 
       {task.todos.map((todo) => {
@@ -293,7 +293,7 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
           <div
             key={todo.id}
             style={{
-              borderRadius: 10,
+              borderRadius: 'var(--radius-control)',
               border: `1px solid ${isAwaitingReview ? 'rgba(245,158,11,0.4)' : 'rgba(255,255,255,0.06)'}`,
               background: isAwaitingReview ? 'rgba(245,158,11,0.05)' : 'rgba(255,255,255,0.02)',
               overflow: 'hidden',
@@ -306,7 +306,7 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
                   width: 8,
                   height: 8,
                   marginTop: 5,
-                  borderRadius: '50%',
+                  borderRadius: 'var(--radius-avatar)',
                   flexShrink: 0,
                   background: statusIndicatorColors[todo.status] ?? '#94a3b8',
                   boxShadow: todo.status === 'in_progress' ? `0 0 6px ${statusIndicatorColors[todo.status]}` : 'none',
@@ -321,12 +321,12 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
                   {isRejected && <Tag color="error" style={{ margin: 0, fontSize: 12, lineHeight: '16px', height: 18 }}>🔄 已退回重做</Tag>}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>{todo.assignee?.name ?? '未指派'}</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{todo.assignee?.name ?? '未指派'}</span>
                   <span style={{ fontSize: 12, color: statusIndicatorColors[todo.status] ?? 'rgba(255,255,255,0.4)' }}>
                     {statusLabels[todo.status] ?? todo.status}
                   </span>
                   {isRejected && todo.review_reason && (
-                    <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 260 }} title={todo.review_reason}>
+                    <span style={{ fontSize: 12, color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 260 }} title={todo.review_reason}>
                       退回原因：{todo.review_reason}
                     </span>
                   )}
@@ -352,7 +352,7 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
                     <Button type="text" size="small" icon={<EditOutlined style={{ fontSize: 13 }} />} title="编辑" onClick={() => startEditing(todo)} />
                     {isDeleting ? (
                       <>
-                        <Button type="text" size="small" icon={<CheckOutlined style={{ fontSize: 13, color: '#f43f5e' }} />} title="确认删除" onClick={() => handleDelete(todo.id)} />
+                        <Button type="text" size="small" icon={<CheckOutlined style={{ fontSize: 13, color: 'var(--error)' }} />} title="确认删除" onClick={() => handleDelete(todo.id)} />
                         <Button type="text" size="small" icon={<CloseOutlined style={{ fontSize: 13 }} />} title="取消" onClick={() => setDeletingId(null)} />
                       </>
                     ) : (
@@ -366,22 +366,22 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
             {isExpanded && hasDetails && (
               <div style={{ padding: '0 10px 10px 28px', display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {todo.description && (
-                  <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', whiteSpace: 'pre-wrap' }}>{todo.description}</div>
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap' }}>{todo.description}</div>
                 )}
                 {todo.error && (
-                  <div style={{ fontSize: 13, color: '#f87171', whiteSpace: 'pre-wrap', background: 'rgba(244,63,94,0.06)', borderRadius: 6, padding: 6 }}>
+                  <div style={{ fontSize: 13, color: 'var(--error)', whiteSpace: 'pre-wrap', background: 'rgba(244,63,94,0.06)', borderRadius: 'var(--radius-control)', padding: 6 }}>
                     {todo.error}
                   </div>
                 )}
                 {todo.questions && todo.questions.length > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     {todo.questions.map((q) => (
-                      <div key={q.id} style={{ fontSize: 13, borderRadius: 6, background: 'rgba(244,63,94,0.05)', padding: '4px 8px' }}>
-                        <span style={{ color: 'rgba(255,255,255,0.6)' }}>问：{q.question}</span>
+                      <div key={q.id} style={{ fontSize: 13, borderRadius: 'var(--radius-control)', background: 'rgba(244,63,94,0.05)', padding: '4px 8px' }}>
+                        <span style={{ color: 'var(--text-secondary)' }}>问：{q.question}</span>
                         {q.answer ? (
-                          <div style={{ marginTop: 2, color: '#34d399' }}>答：{q.answer === '__timeout__' ? '（超时自动放行）' : q.answer}{q.answered_by ? ` · ${q.answered_by}` : ''}</div>
+                          <div style={{ marginTop: 2, color: 'var(--success)' }}>答：{q.answer === '__timeout__' ? '（超时自动放行）' : q.answer}{q.answered_by ? ` · ${q.answered_by}` : ''}</div>
                         ) : (
-                          <div style={{ marginTop: 2, color: '#fbbf24' }}>等待用户回答…</div>
+                          <div style={{ marginTop: 2, color: 'var(--warning)' }}>等待用户回答…</div>
                         )}
                       </div>
                     ))}
@@ -407,10 +407,10 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
             justifyContent: 'center',
             gap: 6,
             padding: '8px 0',
-            borderRadius: 10,
-            border: '1px dashed rgba(255,255,255,0.2)',
+            borderRadius: 'var(--radius-control)',
+            border: '1px dashed var(--line-strong)',
             background: 'transparent',
-            color: 'rgba(255,255,255,0.5)',
+            color: 'var(--text-tertiary)',
             fontSize: 13,
             cursor: 'pointer',
             fontFamily: 'inherit',

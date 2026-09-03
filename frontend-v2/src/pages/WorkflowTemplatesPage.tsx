@@ -135,7 +135,7 @@ export function WorkflowTemplatesPage() {
       <div style={{ flex: 1, overflowY: 'auto', paddingRight: 2 }}>
         {templates.length === 0 ? (
           <Empty
-            description={<span style={{ color: 'rgba(255,255,255,0.5)' }}>还没有全局工作流模板</span>}
+            description={<span style={{ color: 'var(--text-tertiary)' }}>还没有全局工作流模板</span>}
             style={{ padding: '48px 0' }}
           >
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({ isNew: true, tpl: emptyTemplate() })}>
@@ -156,22 +156,22 @@ export function WorkflowTemplatesPage() {
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <NodeIndexOutlined style={{ color: '#9e4cff', fontSize: 15 }} />
-                  <Text strong style={{ color: '#f4f4f8', fontSize: 14, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <NodeIndexOutlined style={{ color: 'var(--signal)', fontSize: 15 }} />
+                  <Text strong style={{ color: 'var(--text-primary)', fontSize: 14, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {tpl.name || '未命名模板'}
                   </Text>
                   <Tag color="purple" style={{ marginInlineEnd: 0 }}>v{tpl.version}</Tag>
-                  <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', background: 'rgba(255,255,255,0.06)', borderRadius: 999, padding: '1px 8px', flexShrink: 0 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-tertiary)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-pill)', padding: '1px 8px', flexShrink: 0 }}>
                     {tpl.steps.length} 步
                   </span>
                   <Tooltip title="复制为新模板">
-                    <Button type="text" size="small" icon={<CopyOutlined />} style={{ color: 'rgba(255,255,255,0.5)' }} onClick={() => handleCopy(tpl.id)} />
+                    <Button type="text" size="small" icon={<CopyOutlined />} style={{ color: 'var(--text-tertiary)' }} onClick={() => handleCopy(tpl.id)} />
                   </Tooltip>
                   <Tooltip title="编辑">
-                    <Button type="text" size="small" icon={<EditOutlined />} style={{ color: 'rgba(255,255,255,0.5)' }} onClick={() => setEditing({ isNew: false, tpl: { ...tpl, steps: tpl.steps.map((s) => ({ ...s })) } })} />
+                    <Button type="text" size="small" icon={<EditOutlined />} style={{ color: 'var(--text-tertiary)' }} onClick={() => setEditing({ isNew: false, tpl: { ...tpl, steps: tpl.steps.map((s) => ({ ...s })) } })} />
                   </Tooltip>
                   <Tooltip title="删除">
-                    <Button type="text" size="small" icon={<DeleteOutlined />} style={{ color: 'rgba(255,255,255,0.4)' }} onClick={() => setDeleting(tpl.id)} />
+                    <Button type="text" size="small" icon={<DeleteOutlined />} style={{ color: 'var(--text-quaternary)' }} onClick={() => setDeleting(tpl.id)} />
                   </Tooltip>
                 </div>
 
@@ -195,7 +195,7 @@ export function WorkflowTemplatesPage() {
                             gap: 6,
                             padding: '3px 8px 3px 3px',
                             fontSize: 12,
-                            color: 'rgba(255,255,255,0.75)',
+                            color: 'var(--text-secondary)',
                             maxWidth: 220,
                           }}
                           title={`${s.name}${agent ? ` @${agent.name}` : s.role ? ` (${s.role})` : ''}`}
@@ -203,16 +203,16 @@ export function WorkflowTemplatesPage() {
                           {agent ? (
                             <AgentAvatar name={agent.name} role={agent.role} seed={agent.node_id} size={18} />
                           ) : (
-                            <span style={{ width: 18, height: 18, borderRadius: '50%', border: '1px dashed rgba(255,255,255,0.3)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: 'rgba(255,255,255,0.45)', flexShrink: 0 }}>
+                            <span style={{ width: 18, height: 18, borderRadius: 'var(--radius-avatar)', border: '1px dashed var(--line-strong)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: 'var(--text-tertiary)', flexShrink: 0 }}>
                               {si + 1}
                             </span>
                           )}
                           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {s.name || '未命名'}
                           </span>
-                          {s.need_review && <ClockCircleOutlined style={{ color: '#f59e0b', fontSize: 11, flexShrink: 0 }} />}
+                          {s.need_review && <ClockCircleOutlined style={{ color: 'var(--warning)', fontSize: 11, flexShrink: 0 }} />}
                         </span>
-                        {si < tpl.steps.length - 1 && <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11 }}>→</span>}
+                        {si < tpl.steps.length - 1 && <span style={{ color: 'var(--text-quaternary)', fontSize: 11 }}>→</span>}
                       </span>
                     )
                   })}
@@ -250,10 +250,10 @@ export function WorkflowTemplatesPage() {
                 style={{
                   width: '100%',
                   padding: '8px 12px',
-                  borderRadius: 8,
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  background: 'rgba(255,255,255,0.04)',
-                  color: '#f4f4f8',
+                  borderRadius: 'var(--radius-control)',
+                  border: '1px solid var(--line-strong)',
+                  background: 'var(--surface)',
+                  color: 'var(--text-primary)',
                   fontSize: 14,
                   outline: 'none',
                 }}

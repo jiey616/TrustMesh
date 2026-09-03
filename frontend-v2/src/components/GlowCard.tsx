@@ -25,7 +25,7 @@ export function GlowCard({
   children,
   className = '',
   intensity = 'medium',
-  glowColor = '#6d5ff5',
+  glowColor = 'var(--signal)',
   onClick,
 }: GlowCardProps) {
   const ref = useRef<HTMLDivElement>(null)
@@ -64,18 +64,20 @@ export function GlowCard({
         style={{
           rotateX,
           rotateY,
-          background: 'rgba(255, 255, 255, 0.03)',
-          border: '1px solid rgba(255, 255, 255, 0.07)',
-          backdropFilter: 'blur(24px)',
-          WebkitBackdropFilter: 'blur(24px)',
-          borderRadius: 16,
+          background: 'var(--surface)',
+          border: '1px solid var(--line)',
+          backdropFilter: 'var(--glass-blur)',
+          WebkitBackdropFilter: 'var(--glass-blur)',
+          borderRadius: 'var(--radius-structure)',
           cursor: onClick ? 'pointer' : 'default',
           position: 'relative',
           overflow: 'hidden',
         }}
         whileHover={{
-          borderColor: `${glowColor}44`,
-          boxShadow: `0 8px 32px rgba(0,0,0,0.4), 0 0 20px ${glowColor}22`,
+          // 边框走卡片自身的强调色（调用方传入的是 var(--signal) 等令牌引用）
+          borderColor: glowColor,
+          // 发光走令牌：深色是霓虹辉光，近白主题下退化为浅投影
+          boxShadow: 'var(--shadow-float)',
         }}
         transition={{ type: 'spring', stiffness: 300, damping: 30 }}
       >
@@ -84,7 +86,7 @@ export function GlowCard({
           style={{
             position: 'absolute',
             inset: 0,
-            borderRadius: 16,
+            borderRadius: 'var(--radius-structure)',
             background: 'radial-gradient(circle at 50% 50%, rgba(255,255,255,0.06) 0%, transparent 50%)',
             pointerEvents: 'none',
             zIndex: 1,

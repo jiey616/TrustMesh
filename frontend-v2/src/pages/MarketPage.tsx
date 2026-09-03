@@ -38,12 +38,12 @@ function RoleCard({ role, index }: { role: MarketRoleListItem; index: number }) 
             style={{
               width: 40,
               height: 40,
-              borderRadius: 12,
+              borderRadius: 'var(--radius-control)',
               background: gradient,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: '#fff',
+              color: 'var(--text-primary)',
               fontWeight: 700,
               fontSize: 17,
               flexShrink: 0,
@@ -125,7 +125,7 @@ export function MarketPage() {
         subtitle="预置 AI 数字员工角色模板，下载到本地即可接入团队"
         actions={
           <Input
-            prefix={<SearchOutlined style={{ color: '#8b8f9e' }} />}
+            prefix={<SearchOutlined style={{ color: 'var(--text-tertiary)' }} />}
             placeholder="搜索角色名称或描述..."
             value={inputValue}
             onChange={(e) => handleSearch(e.target.value)}
@@ -141,9 +141,9 @@ export function MarketPage() {
           style={{
             width: 180,
             flexShrink: 0,
-            borderRadius: 12,
-            border: '1px solid rgba(255,255,255,0.07)',
-            background: 'rgba(255,255,255,0.02)',
+            borderRadius: 'var(--radius-control)',
+            border: '1px solid var(--line)',
+            background: 'var(--surface-sunken)',
             padding: 8,
             maxHeight: 'calc(100vh - 260px)',
             overflow: 'auto',
@@ -156,7 +156,7 @@ export function MarketPage() {
               alignItems: 'center',
               justifyContent: 'space-between',
               padding: '8px 12px',
-              borderRadius: 8,
+              borderRadius: 'var(--radius-control)',
               cursor: 'pointer',
               marginBottom: 2,
               transition: 'all 0.2s ease',
@@ -181,7 +181,7 @@ export function MarketPage() {
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   padding: '8px 12px',
-                  borderRadius: 8,
+                  borderRadius: 'var(--radius-control)',
                   cursor: 'pointer',
                   marginBottom: 2,
                   transition: 'all 0.2s ease',
@@ -201,21 +201,21 @@ export function MarketPage() {
         {/* Right: role list */}
         <div style={{ flex: 1, minWidth: 0 }}>
           {/* status bar */}
-          <div style={{ fontSize: 13, color: '#8b8f9e', marginBottom: 12 }}>
+          <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 12 }}>
             {activeDeptName ? (
               <span>
-                <span style={{ color: '#f4f4f8', fontWeight: 500 }}>{activeDeptName}</span>
+                <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{activeDeptName}</span>
                 {debouncedQuery && (
                   <>
                     {' · 搜索 "'}
-                    <span style={{ color: '#f4f4f8', fontWeight: 500 }}>{debouncedQuery}</span>
+                    <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{debouncedQuery}</span>
                     {'"'}
                   </>
                 )}
               </span>
             ) : debouncedQuery ? (
               <span>
-                搜索 "<span style={{ color: '#f4f4f8', fontWeight: 500 }}>{debouncedQuery}</span>"
+                搜索 "<span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{debouncedQuery}</span>"
               </span>
             ) : (
               <span>全部角色</span>
