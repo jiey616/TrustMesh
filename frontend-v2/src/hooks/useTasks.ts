@@ -203,6 +203,24 @@ export function useRemoveTaskTodo() {
   })
 }
 
+// 把归档的过程文件提升为某工作流步骤的交付物。绑定成功后会触发任务详情刷新，
+// 让文件 badge 从「过程」变成「交付 · 输出位名」，并把它接到工作流图的下游步骤上。
+export function useBindArtifactOutput() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      taskId,
+      todoId,
+      input,
+    }: {
+      taskId: string
+      todoId: string
+      input: { artifact_id: string; output_name: string }
+    }) => tasksApi.bindArtifactOutput(taskId, todoId, input),
+    onSuccess: (_res, { taskId }) => invalidateTask(qc, taskId),
+  })
+}
+
 function invalidateTask(qc: ReturnType<typeof useQueryClient>, taskId: string) {
   qc.invalidateQueries({ queryKey: ['tasks'] })
   qc.invalidateQueries({ queryKey: ['tasks', 'detail', taskId] })

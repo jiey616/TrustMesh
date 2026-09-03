@@ -1366,7 +1366,13 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
         styles={{ body: { background: '#0a0a14', paddingTop: 8 } }}
         style={{ background: '#0a0a14' }}
       >
-        <TaskResultView taskId={task.id} result={task.result} artifacts={task.artifacts ?? []} />
+        <TaskResultView
+          taskId={task.id}
+          result={task.result}
+          artifacts={task.artifacts ?? []}
+          workflow={task.workflow ?? null}
+          todos={task.todos ?? []}
+        />
       </Drawer>
 
       {/* 退回重做 Dialog */}

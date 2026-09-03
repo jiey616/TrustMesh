@@ -120,3 +120,15 @@ export async function answerTodo(taskId: string, todoId: string, input: { questi
 export async function getTaskArtifactContent(taskId: string, transferId: string) {
   return apiClient.get(`/api/v1/tasks/${taskId}/artifacts/${transferId}/content`).blob()
 }
+
+// 把已归档的过程文件提升为某工作流步骤的最终交付物（手工救场）。
+// `artifact_id` 就是后端的 transfer_id（Mongo bson:_id 同值）。
+export async function bindArtifactOutput(
+  taskId: string,
+  todoId: string,
+  input: { artifact_id: string; output_name: string },
+) {
+  return apiClient
+    .post(`/api/v1/tasks/${taskId}/todos/${todoId}/outputs/bind`, { json: input })
+    .json<ApiResponse<TaskArtifact>>()
+}
