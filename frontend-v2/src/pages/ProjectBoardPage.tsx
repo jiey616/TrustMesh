@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { Button, Typography, Tabs, Space, Tag, Spin, App, Modal, Form, Input, Select, Dropdown, Empty } from 'antd'
+import { Button, Typography, Space, Tag, Spin, App, Modal, Form, Input, Select, Dropdown, Empty } from 'antd'
 import { ArrowLeftOutlined, PlusOutlined, FileTextOutlined, VideoCameraOutlined, CheckSquareOutlined, NodeIndexOutlined, MessageOutlined, MoreOutlined, EditOutlined, DeleteOutlined, ApiOutlined } from '@ant-design/icons'
 import { useProject, useUpdateProject, useArchiveProject } from '@/hooks/useProjects'
 import { useTasks } from '@/hooks/useTasks'
@@ -10,6 +10,7 @@ import { FileExplorer } from '@/components/project/FileExplorer'
 import { ActionItemsPanel } from '@/components/project/ActionItemsPanel'
 import { WorkflowListPanel } from '@/components/project/WorkflowListPanel'
 import { WorkflowProgressPanel } from '@/components/project/WorkflowProgressPanel'
+import { ProjectTabRail, type ProjectTabItem } from '@/components/project/ProjectTabRail'
 import { ExternalAppFrame } from '@/components/external/ExternalAppFrame'
 import { AgentAvatar } from '@/components/shared/AgentAvatar'
 import { MeetingListPage } from '@/pages/MeetingListPage'
@@ -191,23 +192,20 @@ export function ProjectBoardPage() {
   const failed = ts.failed_count ?? 0
   const pm = project.pm_agent
 
-  const tabItems = [
-    { key: 'tasks', label: <span><MessageOutlined /> 任务</span> },
-    { key: 'files', label: <span><FileTextOutlined /> 文件</span> },
-    { key: 'meetings', label: <span><VideoCameraOutlined /> 会议室</span> },
-    { key: 'todos', label: <span><CheckSquareOutlined /> 待办</span> },
-    { key: 'workflows', label: <span><NodeIndexOutlined /> 工作流</span> },
+  // 右侧竖向 tab 条用的定义（图标与文字分开，折叠态只渲染图标）
+  const tabDefs: ProjectTabItem[] = [
+    { key: 'tasks', label: '任务', icon: <MessageOutlined /> },
+    { key: 'files', label: '文件', icon: <FileTextOutlined /> },
+    { key: 'meetings', label: '会议室', icon: <VideoCameraOutlined /> },
+    { key: 'todos', label: '待办', icon: <CheckSquareOutlined /> },
+    { key: 'workflows', label: '工作流', icon: <NodeIndexOutlined /> },
     ...projectTabApps.map((a) => ({
       key: `${APP_TAB_PREFIX}${a.id}`,
-      label: (
-        <span>
-          {a.icon_url ? (
-            <img src={a.icon_url} alt="" style={{ width: 14, height: 14, marginRight: 6, objectFit: 'contain' }} />
-          ) : (
-            <ApiOutlined />
-          )}{' '}
-          {a.name}
-        </span>
+      label: a.name,
+      icon: a.icon_url ? (
+        <img src={a.icon_url} alt="" style={{ width: 14, height: 14, objectFit: 'contain' }} />
+      ) : (
+        <ApiOutlined />
       ),
     })),
   ]
@@ -315,16 +313,13 @@ export function ProjectBoardPage() {
           <WorkflowProgressPanel projectId={projectId!} />
         </div>
 
-        <Tabs
-          activeKey={activeTab}
-          onChange={handleTabChange}
-          items={tabItems}
-          size="small"
-          style={{ marginTop: 2, marginBottom: -8 }}
-        />
       </div>
 
-      <div style={{ flex: 1, overflow: 'hidden', padding: '16px 16px 0' }}>
+      {/* 右侧预留 72px 给折叠态 tab 条，内容不被遮挡；
+          展开态是浮层，向左覆盖在内容之上，不会挤压布局 */}
+      <div style={{ flex: 1, overflow: 'hidden', padding: '16px 72px 0 16px', position: 'relative' }}>
+        <ProjectTabRail tabs={tabDefs} activeKey={activeTab} onChange={handleTabChange} />
+
         {activeTab === 'tasks' && (
           <div style={{ display: 'flex', height: '100%', gap: 16 }}>
             {/* 主区域:默认新建任务对话框(类 Codex),点击任务后切换为任务流程界面 */}
