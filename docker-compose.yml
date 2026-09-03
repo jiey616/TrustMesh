@@ -67,6 +67,13 @@ services:
   clawsynapse:
     image: clawsynapse:local-rt4
     container_name: trustmesh-clawsynapse
+    # 指定 container_name 后，compose 不再把 service 名注册成 DNS 别名，
+    # 而 backend 的 CLAWSYNAPSE_API_URL 用的正是 service 名
+    # http://clawsynapse:18080 —— 缺这个别名会让 peer sync 每 10s 失败一次。
+    networks:
+      default:
+        aliases:
+          - clawsynapse
     restart: unless-stopped
     depends_on:
       - backend
