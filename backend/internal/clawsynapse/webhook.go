@@ -45,7 +45,19 @@ type WebhookHandler struct {
 	// intermediate drafts must not flood the task timeline.
 	unboundWarnMu sync.Mutex
 	unboundWarned map[string]bool
+
+	// rejectedWarnMu guards rejectedWarned, which de-duplicates the "文件上
+	// 传未入库" system comment. The platform-side forwarder fires
+	// transfer.received twice for every single transfer (measured 2026-09-03:
+	// 114 sends for 57 distinct transfer ids in 24h), so without this every
+	// rejection wrote its warning in duplicate. Successful transfers never
+	// showed the bug because artifact persistence is idempotent on transfer id.
+	rejectedWarnMu sync.Mutex
+	rejectedWarned map[string]time.Time
 }
+
+// transferWarnTTL bounds how long a suppressed duplicate warning is remembered.
+const transferWarnTTL = 30 * time.Minute
 
 func NewWebhookHandler(st *store.Store, client *Client, log *zap.Logger) *WebhookHandler {
 	return &WebhookHandler{
@@ -2379,12 +2391,45 @@ func findTodo(task *model.TaskDetail, todoID string) *model.Todo {
 // — the user only found out when a deliverable never appeared. Every rejection
 // path now writes a ⚠️ system comment on the owning task (best-effort, never
 // fatal), mirroring how task.plan_ready rejections are surfaced.
+// warnOnce reports whether a warning keyed by `key` may be emitted now. The
+// platform-side forwarder delivers every transfer.received twice (0.2ms apart),
+// so an unguarded warning path writes each notice in duplicate.
+func (h *WebhookHandler) warnOnce(key string) bool {
+	h.rejectedWarnMu.Lock()
+	defer h.rejectedWarnMu.Unlock()
+	if h.rejectedWarned == nil {
+		h.rejectedWarned = map[string]time.Time{}
+	}
+	now := time.Now()
+	if last, ok := h.rejectedWarned[key]; ok && now.Sub(last) < transferWarnTTL {
+		return false
+	}
+	// Opportunistic sweep so a long uptime cannot leak entries indefinitely.
+	for k, t := range h.rejectedWarned {
+		if now.Sub(t) >= transferWarnTTL {
+			delete(h.rejectedWarned, k)
+		}
+	}
+	h.rejectedWarned[key] = now
+	return true
+}
+
 func (h *WebhookHandler) warnTransferRejected(taskID, fromNode, transferID, fileName, reason string) {
 	if taskID == "" {
 		// No declared task: try to still find a home for the warning.
 		if owner, err := h.store.ResolveTransferOwner(fromNode); err == nil && owner != nil {
 			taskID = owner.TaskID
 		}
+	}
+	// Key on the transfer when we have one: two deliveries of the same
+	// transfer are the same event, not two events. Malformed payloads have no
+	// transfer id, so fall back to the (task, file, reason) triple.
+	key := strings.TrimSpace(transferID)
+	if key == "" {
+		key = taskID + "|" + strings.TrimSpace(fileName) + "|" + reason
+	}
+	if !h.warnOnce(key) {
+		return
 	}
 	content := fmt.Sprintf("⚠️ 文件上传未入库：%s（%s）。文件已传输到平台但未写入文件列表，请让执行方用 `clawsynapse transfer send --metadata taskId=… todoId=…` 重新上传。",
 		strings.TrimSpace(fileName), reason)
@@ -2530,8 +2575,25 @@ func (h *WebhookHandler) handleTransferReceived(c *gin.Context, webhook protocol
 
 	filing, appErr := h.store.SaveArtifactWithFiling(artifact, declared)
 	if appErr != nil {
-		h.warnTransferRejected(taskID, webhook.From, msg.TransferID, msg.FileName,
-			"入库被拒（"+appErr.Code+"："+appErr.Message+"）")
+		// A rejection does not automatically mean something is missing. Agents
+		// re-run finished steps and the forwarder re-sends transfers, so a
+		// 409 frequently lands on a file that is already filed under the same
+		// name. Screaming "未入库" for it is actively misleading — the user
+		// sees a deliverable's name in a scary comment and concludes the
+		// deliverable was lost, when it is sitting in the file list.
+		if h.store.HasArtifactNamed(taskID, msg.FileName) {
+			if h.log != nil {
+				h.log.Info("duplicate transfer rejected; identical file already filed",
+					zap.String("transfer_id", msg.TransferID),
+					zap.String("task_id", taskID),
+					zap.String("todo_id", todoID),
+					zap.String("file_name", msg.FileName),
+					zap.String("code", appErr.Code))
+			}
+		} else {
+			h.warnTransferRejected(taskID, webhook.From, msg.TransferID, msg.FileName,
+				"入库被拒（"+appErr.Code+"："+appErr.Message+"）")
+		}
 		transport.WriteError(c, appErr)
 		return
 	}

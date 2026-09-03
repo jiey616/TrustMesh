@@ -193,6 +193,126 @@ func TestTransferReceivedBadPayloadAppendsSystemComment(t *testing.T) {
 	}
 }
 
+// postTransferReceived drives one transfer.received delivery through the
+// handler and returns the recorder, so tests can replay the same delivery the
+// way the platform-side forwarder does.
+func postTransferReceived(h *WebhookHandler, from, message string, metadata map[string]any) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/webhook/clawsynapse", nil)
+	h.handleTransferReceived(c, protocol.WebhookPayload{
+		NodeID:   from,
+		Type:     "transfer.received",
+		From:     from,
+		Message:  message,
+		Metadata: metadata,
+	})
+	return w
+}
+
+// TestTransferReceivedDuplicateStaysQuiet covers 2026-09-03 资产提取: the agent
+// re-sent four deliverables that had already been filed 19 minutes earlier.
+// Every re-send was rejected and each rejection wrote a ⚠️ "文件上传未入库"
+// comment, so the user saw the names of deliverables that were sitting right
+// there in the file list and concluded they had been lost. A rejection of a
+// file the task already holds is not a loss — it must stay quiet instead of
+// crying wolf.
+func TestTransferReceivedDuplicateStaysQuiet(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s, userID, taskID, devNode := newTransferTestFixture(t)
+	h := NewWebhookHandler(s, nil, nil)
+
+	first, err := json.Marshal(map[string]any{
+		"transferId": "tid-dup-first-000001",
+		"fileName":   "生死靶心_角色清单_v01.xlsx",
+		"fileSize":   16737,
+		"localPath":  "/var/lib/trustmesh-transfers/tid-dup-first-000001-生死靶心_角色清单_v01.xlsx",
+		"mimeType":   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if w := postTransferReceived(h, devNode, string(first),
+		map[string]any{"taskId": taskID, "todoId": "TD_01"}); w.Code != 200 {
+		t.Fatalf("first upload should be filed, got %d body=%s", w.Code, w.Body.String())
+	}
+	if got := len(s.GetArtifactsByTaskID(taskID)); got != 1 {
+		t.Fatalf("expected 1 filed artifact, got %d", got)
+	}
+
+	// Same file name, new transfer id, rejected on an unknown todo. The task
+	// already holds a file by this name, so nothing is actually missing.
+	second, err := json.Marshal(map[string]any{
+		"transferId": "tid-dup-second-00001",
+		"fileName":   "生死靶心_角色清单_v01.xlsx",
+		"fileSize":   16737,
+		"localPath":  "/var/lib/trustmesh-transfers/tid-dup-second-00001-生死靶心_角色清单_v01.xlsx",
+		"mimeType":   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if w := postTransferReceived(h, devNode, string(second),
+		map[string]any{"taskId": taskID, "todoId": "TD_404"}); w.Code == 200 {
+		t.Fatalf("expected the duplicate to be rejected, got 200")
+	}
+
+	comments, appErr := s.ListTaskComments(userID, taskID)
+	if appErr != nil {
+		t.Fatalf("list comments: %v", appErr)
+	}
+	for _, cm := range comments {
+		if strings.Contains(cm.Content, "文件上传未入库") {
+			t.Fatalf("duplicate upload must not raise a 未入库 warning, got: %s", cm.Content)
+		}
+	}
+}
+
+// TestTransferRejectionWarnedOnce covers the forwarder's duplicate delivery:
+// it fires transfer.received twice per transfer (measured 2026-09-03: 114
+// sends for 57 distinct transfer ids in 24h), so an unguarded warning path
+// wrote every rejection notice in duplicate.
+func TestTransferRejectionWarnedOnce(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s, userID, taskID, devNode := newTransferTestFixture(t)
+	h := NewWebhookHandler(s, nil, nil)
+
+	body, err := json.Marshal(map[string]any{
+		"transferId": "tid-twice-0000000001",
+		"fileName":   "05-audiovisual-blueprint.md",
+		"fileSize":   24254,
+		"localPath":  "/var/lib/trustmesh-transfers/tid-twice-0000000001-05-audiovisual-blueprint.md",
+		"mimeType":   "text/markdown",
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	// Byte-identical replay: same transfer id, same everything.
+	for i := 0; i < 2; i++ {
+		w := postTransferReceived(h, devNode, string(body),
+			map[string]any{"taskId": taskID, "todoId": "TD_404"})
+		if w.Code == 200 {
+			t.Fatalf("delivery %d: expected rejection, got 200", i)
+		}
+	}
+
+	comments, appErr := s.ListTaskComments(userID, taskID)
+	if appErr != nil {
+		t.Fatalf("list comments: %v", appErr)
+	}
+	count := 0
+	for _, cm := range comments {
+		if strings.Contains(cm.Content, "文件上传未入库") &&
+			strings.Contains(cm.Content, "05-audiovisual-blueprint.md") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 rejection warning for a doubly-delivered transfer, got %d", count)
+	}
+}
+
 // newTransferWorkflowFixture extends the base fixture with a workflow whose
 // single step is bound to the developer agent (matching the todo's assignee)
 // and declares the given output slots.

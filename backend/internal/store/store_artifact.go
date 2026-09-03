@@ -473,6 +473,30 @@ func (s *Store) getArtifactsByTaskIDUnsafe(taskID string) []model.TaskArtifact {
 	return out
 }
 
+// HasArtifactNamed reports whether an artifact with this exact file name is
+// already filed on the task. The rejection path needs it to tell two very
+// different situations apart: a file that genuinely never made it in, versus a
+// re-upload of something the platform already holds. Both surface as the same
+// 409 to the caller, but only the first one deserves a ⚠️ on the timeline —
+// see 2026-09-03 资产提取, where four deliverables filed at 03:30 were re-sent
+// at 03:49 and produced eight alarming comments for files that were sitting
+// right there in the file list.
+func (s *Store) HasArtifactNamed(taskID, fileName string) bool {
+	taskID = strings.TrimSpace(taskID)
+	fileName = strings.TrimSpace(fileName)
+	if taskID == "" || fileName == "" {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, a := range s.taskArtifacts[taskID] {
+		if a.FileName == fileName {
+			return true
+		}
+	}
+	return false
+}
+
 // GetArtifact returns a single artifact by task ID and transfer ID.
 func (s *Store) GetArtifact(taskID, transferID string) (*model.TaskArtifact, *transport.AppError) {
 	s.mu.RLock()
