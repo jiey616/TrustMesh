@@ -28,6 +28,8 @@ import { useProjects } from '@/hooks/useProjects'
 import { useExternalApps } from '@/hooks/useExternalApps'
 import { FloatingOrbs } from '@/components/FloatingOrbs'
 import { GradientText } from '@/components/GradientText'
+import { ThemeSwitch } from '@/components/ThemeSwitch'
+import { useTheme } from '@/theme/ThemeProvider'
 import { motion } from 'framer-motion'
 import { hasPlacement, type ProjectWorkStatus } from '@/types'
 
@@ -63,6 +65,7 @@ export function MainLayout() {
   const { data: unreadCount } = useUnreadCount()
   const { data: projects } = useProjects()
   const { data: externalApps } = useExternalApps()
+  const { theme } = useTheme()
   useRealtimeEvents()
 
   // 声明了 sidebar 挂载点的启用中外部平台，追加在主菜单末尾。
@@ -182,7 +185,7 @@ export function MainLayout() {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
+              borderBottom: '1px solid var(--line)',
               flexShrink: 0,
             }}
           >
@@ -200,7 +203,7 @@ export function MainLayout() {
           {/* 中部：主导航 + 最近项目快捷入口 */}
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
             <Menu
-              theme="dark"
+              theme={theme === 'dark' ? 'dark' : 'light'}
               mode="inline"
               selectedKeys={[selectedKey]}
               items={menuItems}
@@ -324,6 +327,8 @@ export function MainLayout() {
                 {!collapsed && <span style={{ flex: 1 }}>收起侧边栏</span>}
               </div>
             </Tooltip>
+
+            <ThemeSwitch collapsed={collapsed} />
           </div>
         </div>
       </Sider>

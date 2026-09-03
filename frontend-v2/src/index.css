@@ -1,33 +1,55 @@
 /* Tailwind CSS v4 */
 @import 'tailwindcss';
 
-/* ============================================
-   TrustMesh Dopamine Design System
-   参考 tiaoyueai.com 风格优化
-   ============================================ */
-
 @theme {
   --font-sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  
-  /* 品牌色 */
-  --color-primary: #9e4cff;
-  --color-primary-hover: #853dd9;
-  --color-primary-light: rgba(158, 76, 255, 0.15);
-  
-  /* 背景色 */
-  --bg-base: #0b0b10;
-  --bg-surface: rgba(255, 255, 255, 0.06);
-  --bg-surface-hover: rgba(255, 255, 255, 0.08);
-  
-  /* 文字色 */
-  --ink: #ffffff;
-  --muted: #a1a1aa;
-  --muted-weak: #71717a;
-  
-  /* 边框 */
-  --line: rgba(255, 255, 255, 0.08);
-  --line-hover: rgba(255, 255, 255, 0.12);
+}
+
+/* ============================================
+   设计令牌默认值（深色）
+   ——必须与 src/theme/tokens.ts 的 darkTokens 保持一致。
+   ThemeProvider 启动后会用 JS 覆盖 :root 上的同名变量；
+   这里先写死一份，是为了避免首屏（JS 执行前）变量缺失导致闪白。
+   ============================================ */
+:root {
+  --canvas: #0a0a12;
+  --canvas-elevated: #12121d;
+  --surface: rgba(255, 255, 255, 0.04);
+  --surface-sunken: rgba(255, 255, 255, 0.02);
+  --surface-raised: rgba(255, 255, 255, 0.06);
+
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.12);
+
+  --text-primary: #f4f4f8;
+  --text-secondary: rgba(255, 255, 255, 0.65);
+  --text-tertiary: rgba(255, 255, 255, 0.48);
+  --text-quaternary: rgba(255, 255, 255, 0.34);
+  --text-inverse: #0a0a12;
+
+  --signal: #6d5ff5;
+  --signal-soft: rgba(109, 95, 245, 0.14);
+  --signal-border: rgba(109, 95, 245, 0.35);
+  --signal-hover: #8b7ff8;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --error: #ef4444;
+  --info: #3b82f6;
+  --cyan: #22d3ee;
+
+  --radius-structure: 0px;
+  --radius-control: 4px;
+  --radius-avatar: 50%;
+  --radius-pill: 999px;
+
+  --glass-blur: blur(24px) saturate(150%);
+  --canvas-glow:
+    radial-gradient(ellipse 60% 50% at 10% -15%, rgba(109, 95, 245, 0.16), transparent 55%),
+    radial-gradient(ellipse 50% 40% at 85% 0%, rgba(34, 211, 238, 0.06), transparent 55%);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.2), 0 4px 16px rgba(0, 0, 0, 0.25);
+  --shadow-float: 0 18px 48px rgba(0, 0, 0, 0.45);
+  --gradient-cta: linear-gradient(135deg, #6d5ff5 0%, #8b7ff8 100%);
 }
 
 /* ---- Canvas & Global ---- */
@@ -38,31 +60,25 @@ html {
 body {
   margin: 0;
   min-height: 100vh;
-  background:
-    /* 左上角紫色光晕 */
-    radial-gradient(ellipse 60% 50% at 10% -15%, rgba(158, 76, 255, 0.18), transparent 55%),
-    /* 右上角青色光晕 */
-    radial-gradient(ellipse 50% 40% at 85% 0%, rgba(192, 132, 252, 0.08), transparent 55%),
-    /* 底部粉色光晕 */
-    radial-gradient(ellipse 45% 35% at 50% 110%, rgba(232, 121, 249, 0.06), transparent 55%),
-    /* 基础背景色 - 带微蓝的深色 */
-    var(--bg-base);
+  background-color: var(--canvas);
+  background-image: var(--canvas-glow);
   background-attachment: fixed;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
+  color: var(--text-primary);
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 #root {
   min-height: 100vh;
 }
 
-/* ---- Scrollbar (glass style) ---- */
-/* Firefox */
+/* ---- Scrollbar ---- */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+  scrollbar-color: var(--line-strong) transparent;
 }
 ::-webkit-scrollbar {
   width: 8px;
@@ -72,102 +88,109 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
+  background: var(--line-strong);
+  border-radius: var(--radius-pill);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--text-quaternary);
 }
 
 /* Project flow horizontal scroll reuses the global scrollbar above so it
    stays visually identical to the dashboard. Only Firefox hints are kept here. */
 .wp-flow-scroll {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+  scrollbar-color: var(--line-strong) transparent;
 }
 
-/* ---- Ant Design overrides for Dopamine theme ---- */
+/* ============================================
+   Ant Design overrides — 主题感知
+   ============================================ */
 
-/* Primary button — 品牌渐变 - 参考 tiaoyueai.com */
+/* Primary button：深色走品牌渐变，近白走纯信号色（无动画、无流光） */
 .ant-btn-primary:not(.ant-btn-dangerous) {
-  background: linear-gradient(135deg, #9e4cff 0%, #c084fc 50%, #e879f9 100%);
+  background: var(--gradient-cta);
   border: none;
+  box-shadow: none;
+}
+[data-theme='dark'] .ant-btn-primary:not(.ant-btn-dangerous) {
   background-size: 200% 200%;
   animation: gradientShimmer 4s ease infinite;
-  transition: box-shadow 0.2s ease, transform 0.15s ease;
   position: relative;
   overflow: hidden;
-  box-shadow: 0 2px 8px rgba(158, 76, 255, 0.35);
+  box-shadow: 0 2px 8px rgba(109, 95, 245, 0.35);
 }
-.ant-btn-primary:not(.ant-btn-dangerous)::after {
+[data-theme='dark'] .ant-btn-primary:not(.ant-btn-dangerous)::after {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.15), transparent);
   transform: translateX(-100%);
   animation: beamSweep 2.5s ease-in-out infinite;
   pointer-events: none;
 }
 .ant-btn-primary:not(.ant-btn-dangerous):hover {
-  background: linear-gradient(135deg, #853dd9 0%, #a855f7 50%, #d946ef 100%);
-  box-shadow: 0 4px 16px rgba(158, 76, 255, 0.5), 0 0 12px rgba(158, 76, 255, 0.2);
+  background: var(--signal-hover);
+}
+[data-theme='dark'] .ant-btn-primary:not(.ant-btn-dangerous):hover {
+  box-shadow: 0 4px 16px rgba(109, 95, 245, 0.5);
   transform: translateY(-1px);
 }
 .ant-btn-primary:not(.ant-btn-dangerous):active {
   transform: translateY(1px);
-  box-shadow: 0 1px 4px rgba(158, 76, 255, 0.3);
 }
 
-/* Cards — 毛玻璃风格 - 参考 tiaoyueai.com */
+/* Cards：混合改造后不再是浮层 —— 去掉毛玻璃，圆角走控件级 4px */
 .ant-card {
-  background: rgba(255, 255, 255, 0.04) !important;
-  border: 1px solid rgba(255, 255, 255, 0.08) !important;
-  backdrop-filter: blur(20px) saturate(150%);
-  -webkit-backdrop-filter: blur(20px) saturate(150%);
-  border-radius: 16px !important;
-  transition: all 0.25s ease;
-  box-shadow: 
-    0 1px 2px rgba(0, 0, 0, 0.2),
-    0 4px 16px rgba(0, 0, 0, 0.25);
+  background: var(--surface) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-control) !important;
+  box-shadow: var(--shadow-card);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .ant-card-hoverable:hover {
-  background: rgba(255, 255, 255, 0.06) !important;
-  border-color: rgba(158, 76, 255, 0.3) !important;
-  box-shadow: 
-    0 4px 20px rgba(0, 0, 0, 0.35),
-    0 0 24px rgba(158, 76, 255, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  background: var(--surface-raised) !important;
+  border-color: var(--signal-border) !important;
+  box-shadow: var(--shadow-float);
+}
+[data-theme='dark'] .ant-card-hoverable:hover {
   transform: translateY(-2px);
 }
 
-/* Layout — 毛玻璃透明 */
+/* Layout */
 .ant-layout {
   background: transparent !important;
 }
 .ant-layout-sider {
-  background: rgba(11, 11, 16, 0.92) !important;
-  backdrop-filter: blur(24px) saturate(150%);
-  -webkit-backdrop-filter: blur(24px) saturate(150%);
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--canvas-elevated) !important;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-right: 1px solid var(--line);
 }
 .ant-layout-header {
-  background: rgba(11, 11, 16, 0.88) !important;
-  backdrop-filter: blur(24px) saturate(150%);
-  -webkit-backdrop-filter: blur(24px) saturate(150%);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--canvas-elevated) !important;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-bottom: 1px solid var(--line);
 }
 
-/* Menu */
+/* Menu：深色选中态带渐变，近白只用信号底色 */
 .ant-menu-dark {
   background: transparent !important;
 }
 .ant-menu-dark .ant-menu-item-selected {
-  background: linear-gradient(90deg, rgba(158,76,255,0.2), rgba(192,132,252,0.08)) !important;
-  border-right: 3px solid #9e4cff !important;
-  box-shadow: inset 0 0 20px rgba(158, 76, 255, 0.05);
+  background: var(--signal-soft) !important;
+  color: var(--signal-hover) !important;
+}
+[data-theme='dark'] .ant-menu-dark .ant-menu-item-selected {
+  background: linear-gradient(90deg, rgba(109, 95, 245, 0.2), rgba(139, 127, 248, 0.08)) !important;
+  border-right: 3px solid var(--signal);
 }
 .ant-menu-dark .ant-menu-item:hover {
-  background: rgba(158, 76, 255, 0.08) !important;
+  background: var(--signal-soft) !important;
+}
+.ant-menu-light .ant-menu-item-selected {
+  background: var(--signal-soft) !important;
+  color: var(--signal) !important;
 }
 
 /* Table */
@@ -175,86 +198,88 @@ body {
   background: transparent !important;
 }
 .ant-table-thead > tr > th {
-  background: rgba(255, 255, 255, 0.04) !important;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
-  color: var(--muted);
+  background: var(--surface-sunken) !important;
+  border-bottom: 1px solid var(--line) !important;
+  color: var(--text-tertiary);
   font-weight: 600;
 }
 .ant-table-tbody > tr > td {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04) !important;
+  border-bottom: 1px solid var(--line) !important;
 }
 .ant-table-tbody > tr:hover > td {
-  background: rgba(158, 76, 255, 0.04) !important;
+  background: var(--surface) !important;
 }
 
-/* Modal — 毛玻璃效果 */
+/* Modal / Drawer / Dropdown / Select —— 这些是真浮层，保留毛玻璃 */
 .ant-modal-content {
-  background: rgba(15, 15, 25, 0.95) !important;
-  backdrop-filter: blur(32px) saturate(150%);
-  -webkit-backdrop-filter: blur(32px) saturate(150%);
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
-  border-radius: 20px !important;
-  box-shadow: 
-    0 18px 48px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  background: var(--canvas-elevated) !important;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control) !important;
+  box-shadow: var(--shadow-float);
+}
+.ant-drawer-content {
+  background: var(--canvas-elevated) !important;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
 }
 
-/* Dropdown / Select — 毛玻璃效果 */
 .ant-dropdown-menu,
 .ant-select-dropdown {
-  background: rgba(15, 15, 25, 0.95) !important;
-  backdrop-filter: blur(32px) saturate(150%);
-  -webkit-backdrop-filter: blur(32px) saturate(150%);
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
-  border-radius: 12px !important;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  background: var(--canvas-elevated) !important;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--line-strong) !important;
+  border-radius: var(--radius-control) !important;
+  box-shadow: var(--shadow-float);
 }
 .ant-dropdown-menu-item:hover,
 .ant-select-item-option-active {
-  background: rgba(158, 76, 255, 0.1) !important;
+  background: var(--surface-raised) !important;
 }
 .ant-dropdown-menu-item-selected,
 .ant-select-item-option-selected {
-  background: rgba(158, 76, 255, 0.15) !important;
-  color: #c084fc !important;
+  background: var(--signal-soft) !important;
+  color: var(--signal) !important;
 }
 
-/* Input — 聚焦时紫色光晕 */
+/* Input —— 近白去掉紫色光晕，只留边框信号 */
 .ant-input,
 .ant-input-affix-wrapper {
-  background: rgba(255, 255, 255, 0.05) !important;
-  border-color: rgba(255, 255, 255, 0.1) !important;
-  transition: all 0.2s ease;
+  background: var(--surface-sunken) !important;
+  border-color: var(--line) !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .ant-input:focus,
 .ant-input-affix-wrapper:focus,
 .ant-input-affix-wrapper-focused {
-  border-color: rgba(158, 76, 255, 0.6) !important;
-  box-shadow: 0 0 0 3px rgba(158, 76, 255, 0.15), 0 0 16px rgba(158, 76, 255, 0.1) !important;
+  border-color: var(--signal) !important;
+  box-shadow: 0 0 0 3px var(--signal-soft) !important;
 }
 
-/* Tag — 品牌渐变风格 */
+/* Tag */
 .ant-tag {
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   font-weight: 500;
   border: none;
 }
 .ant-tag-primary {
-  background: linear-gradient(135deg, rgba(158, 76, 255, 0.2), rgba(192, 132, 252, 0.1)) !important;
-  color: #c084fc !important;
-  border: 1px solid rgba(158, 76, 255, 0.3) !important;
+  background: var(--signal-soft) !important;
+  color: var(--signal) !important;
+  border: 1px solid var(--signal-border) !important;
 }
 .ant-tag-success {
-  background: rgba(5, 150, 105, 0.15) !important;
-  color: #34d399 !important;
+  background: color-mix(in srgb, var(--success) 15%, transparent) !important;
+  color: var(--success) !important;
 }
 .ant-tag-warning {
-  background: rgba(249, 115, 22, 0.15) !important;
-  color: #fb923c !important;
+  background: color-mix(in srgb, var(--warning) 15%, transparent) !important;
+  color: var(--warning) !important;
 }
 .ant-tag-error {
-  background: rgba(239, 68, 68, 0.15) !important;
-  color: #f87171 !important;
+  background: color-mix(in srgb, var(--error) 15%, transparent) !important;
+  color: var(--error) !important;
 }
 
 /* ============================================
@@ -292,13 +317,13 @@ body {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #22c55e;
-  box-shadow: 0 0 8px #22c55e, 0 0 16px rgba(34, 197, 94, 0.4);
+  background: var(--success);
+  box-shadow: 0 0 8px var(--success);
   animation: onlinePulse 2s ease-in-out infinite;
 }
 @keyframes onlinePulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 8px #22c55e, 0 0 16px rgba(34, 197, 94, 0.4); }
-  50% { opacity: 0.6; box-shadow: 0 0 4px #22c55e, 0 0 8px rgba(34, 197, 94, 0.2); }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
 
 /* ---- 离线状态点 ---- */
@@ -306,8 +331,7 @@ body {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #71717a;
-  box-shadow: 0 0 4px rgba(113, 113, 122, 0.3);
+  background: var(--text-quaternary);
 }
 
 /* ---- 忙碌状态点 ---- */
@@ -315,8 +339,8 @@ body {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #3b82f6;
-  box-shadow: 0 0 8px #3b82f6, 0 0 16px rgba(59, 130, 246, 0.4);
+  background: var(--info);
+  box-shadow: 0 0 8px var(--info);
   animation: onlinePulse 1.5s ease-in-out infinite;
 }
 
@@ -331,26 +355,34 @@ body {
   letter-spacing: -0.5px;
 }
 
-/* ---- 品牌渐变文字 ---- */
+/* ---- 品牌渐变文字 —— 近白主题降级为纯信号色 ---- */
 .gradient-text {
-  background: linear-gradient(135deg, #c084fc 0%, #e879f9 50%, #f0abfc 100%);
+  background: var(--gradient-cta);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
-
-/* ---- 玻璃面板 ---- */
-.glass-panel {
-  background: rgba(255, 255, 255, 0.04);
-  backdrop-filter: blur(20px) saturate(150%);
-  -webkit-backdrop-filter: blur(20px) saturate(150%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
+[data-theme='quiet'] .gradient-text {
+  background: none;
+  -webkit-text-fill-color: var(--signal);
+  color: var(--signal);
 }
 
-/* ---- 紫色发光效果 ---- */
+/* ---- 玻璃面板 —— 近白主题退化为普通表面 ---- */
+.glass-panel {
+  background: var(--surface);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+
+/* ---- 紫色发光效果 —— 近白主题关闭 ---- */
 .glow-purple {
-  box-shadow: 0 0 20px rgba(158, 76, 255, 0.2), 0 0 40px rgba(158, 76, 255, 0.1);
+  box-shadow: none;
+}
+[data-theme='dark'] .glow-purple {
+  box-shadow: 0 0 20px rgba(109, 95, 245, 0.2), 0 0 40px rgba(109, 95, 245, 0.1);
 }
 
 /* ---- 悬浮卡片效果 ---- */
@@ -358,8 +390,10 @@ body {
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 .hover-lift:hover {
+  box-shadow: var(--shadow-float);
+}
+[data-theme='dark'] .hover-lift:hover {
   transform: translateY(-4px);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 0 24px rgba(158, 76, 255, 0.1);
 }
 
 /* ---- 执行中状态标签动效 ---- */
@@ -378,11 +412,11 @@ body {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #10b981;
+  background: var(--success);
   transform: translateY(-50%);
   animation: runningDot 1.5s ease-in-out infinite;
 }
 @keyframes runningDot {
-  0%, 100% { box-shadow: 0 0 4px #10b981, 0 0 8px rgba(16, 185, 129, 0.5); }
-  50% { box-shadow: 0 0 8px #10b981, 0 0 16px rgba(16, 185, 129, 0.7); }
+  0%, 100% { box-shadow: 0 0 4px var(--success); }
+  50% { box-shadow: 0 0 8px var(--success); }
 }
