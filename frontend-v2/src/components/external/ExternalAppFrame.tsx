@@ -138,7 +138,7 @@ export function ExternalAppFrame({
         src={launchUrl}
         title={app.name}
         referrerPolicy="no-referrer"
-        sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads"
         allow="clipboard-read; clipboard-write; fullscreen"
         style={{
           flex: 1,
