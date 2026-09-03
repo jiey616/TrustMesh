@@ -19,6 +19,7 @@ import {
   FileDoneOutlined,
   DownloadOutlined,
   EyeOutlined,
+  UnorderedListOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import {
@@ -1022,6 +1023,7 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
   const [input, setInput] = useState('')
   const [showCancel, setShowCancel] = useState(false)
   const [resultOpen, setResultOpen] = useState(false)
+  const [todoOpen, setTodoOpen] = useState(false)
   const [rejectTodo, setRejectTodo] = useState<Todo | null>(null)
   const [rejectReason, setRejectReason] = useState('')
   const feedRef = useRef<HTMLDivElement>(null)
@@ -1029,6 +1031,10 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
   const isPlanningMode = task ? ['planning', 'review'].includes(task.status) : false
   const activeStatus = task && !['done', 'failed', 'canceled'].includes(task.status)
   const mentionCandidates = useMemo(() => buildTaskMentionCandidates(task), [task])
+  const todoStats = useMemo(() => {
+    const todos = task?.todos ?? []
+    return { done: todos.filter((t) => t.status === 'done').length, total: todos.length }
+  }, [task])
 
   const pendingUIBlocks = useMemo(() => {
     if (!task || task.status !== 'planning' || !task.messages?.length) return null
@@ -1196,6 +1202,16 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
           {activeStatus && !showCancel && (
             <Button danger size="small" icon={<StopOutlined />} onClick={() => setShowCancel(true)}>终止任务</Button>
           )}
+          {!isPlanningMode && todoStats.total > 0 && (
+            <Button
+              size="small"
+              icon={<UnorderedListOutlined />}
+              title="查看执行清单"
+              onClick={() => setTodoOpen(true)}
+            >
+              执行清单 {todoStats.done}/{todoStats.total}
+            </Button>
+          )}
           <Button size="small" icon={<FileDoneOutlined />} title="查看交付成果" onClick={() => setResultOpen(true)} />
           <Button type="text" icon={<CloseOutlined />} onClick={onClose} />
         </Space>
@@ -1257,18 +1273,6 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
         {/* Building: todos + events */}
         {!isPlanningMode && (
           <>
-            {task.todos.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <CheckCircleOutlined style={{ color: '#22d3ee', fontSize: 13 }} />
-                  <Text style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.6)' }}>
-                    执行清单 ({task.todos.filter((t) => t.status === 'done').length}/{task.todos.length})
-                  </Text>
-                </div>
-                <TaskTodoPanel task={task} onReviewTodo={handleReviewTodo} />
-              </div>
-            )}
-
             {events && events.length > 0 && (
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
@@ -1285,8 +1289,11 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
               </div>
             )}
 
-            {messages.length === 0 && task.todos.length === 0 && (!events || events.length === 0) && (
-              <Empty description="暂无执行过程" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            {messages.length === 0 && (!events || events.length === 0) && (
+              <Empty
+                description={todoStats.total > 0 ? '执行过程暂无内容，可点右上角「执行清单」查看步骤进度' : '暂无执行过程'}
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+              />
             )}
           </>
         )}
@@ -1356,6 +1363,18 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
           />
         )}
       </div>
+
+      {/* 执行清单 Drawer */}
+      <Drawer
+        title={`执行清单 (${todoStats.done}/${todoStats.total})`}
+        open={todoOpen}
+        onClose={() => setTodoOpen(false)}
+        width={520}
+        styles={{ body: { background: '#0a0a14', paddingTop: 8 } }}
+        style={{ background: '#0a0a14' }}
+      >
+        {task && <TaskTodoPanel task={task} onReviewTodo={handleReviewTodo} />}
+      </Drawer>
 
       {/* 交付成果 Drawer */}
       <Drawer
