@@ -1,6 +1,6 @@
 # TrustMesh 多租户 + 企业管理 实施设计
 
-> 状态：**阶段 0 + 阶段 1 已完成，阶段 2 分批推进中**（阶段 0 commit `5fa4a71`；阶段 1 见 §阶段 1 实况；阶段 2 见 §阶段 2 实况，**2-1 Project / 2-2 Task / 2-3 Agent / 2-4 Knowledge+Template 均已上线**）
+> 状态：**阶段 0 + 阶段 1 已完成，阶段 2 分批推进中**（阶段 0 commit `5fa4a71`；阶段 1 见 §阶段 1 实况；阶段 2 见 §阶段 2 实况，**2-1 Project / 2-2 Task / 2-3 Agent / 2-4 Knowledge+Template / 2-5a File 均已上线**）
 > 日期：2026-09-04
 > 开工前备份：`deploy/backups/mongodump-trustmesh-20260904-214800.archive.gz`，git tag `pre-multitenant-stage0`
 > 阶段 1 备份：`deploy/backups/mongodump-trustmesh-20260904-223127-stage1.archive.gz`，git tag `pre-multitenant-stage1`
@@ -448,9 +448,45 @@ func visibleToScope(sc Scope, ownerOrgID, ownerUserID string) bool {
 | 2-2 | Task 归属收敛 | ✅ 已上线 |
 | 2-3 | Agent 归属收敛 | ✅ 已上线 |
 | 2-4 | Knowledge + WorkflowTemplate | ✅ 已上线 |
-| 2-5 | File + Comment + Meeting | ⬜ 待开工 |
+### 2-5a File 归属收敛（已完成并上线）
+
+| 项 | 内容 |
+|---|---|
+| 签名收敛 | `store_project_file.go` 11 个函数收 Scope：`SaveProjectFile`（写路径）/ `CreateFolder` / `RenameProjectFile` / `MoveProjectFile` / `BatchDeleteProjectFiles` / `ListProjectFiles` / `GetProjectFile` / `DeleteProjectFile` / `GetProjectFileTree` / `BrowseProjectFiles` / `ListArtifactGroups`；`store_artifact.go` 的 `BindArtifactOutput` |
+| 写路径落点 | `SaveProjectFile` 补 `pf.OrgID = s.resolveOwnerOrgUnsafe(sc)` |
+| 项目归属 | 11 处 `project.UserID != userID` 统一改 `!s.projectVisible(sc, project)`，继承 2-1 的**项目成员白名单**语义 |
+| Handler | `project_file.go` 11 处调用点 + `task.go` 的 `BindTodoOutput` 鉴权行改 `currentScope` |
+| 内部路径 | `store/meeting.go` 落会议纪要时显式传 `Scope{UserID: ownerID}` |
+| 测试 | 新增 3 个：`TestProjectFileScopedVisibility` / `TestSaveProjectFileOwnerOrg` / `TestBindArtifactOutputScoped` |
+
+#### 🔴 补掉阶段 1 的一处双写漏网
+
+**`SaveProjectFile` 从未设置 `pf.OrgID`**。与 2-2 `CreateTask`、2-4 `CreateKnowledgeDocument` 同类：不补的话，企业租户下上传的文件 `org_id` 恒为空，`visibleToScope` 永远退回 user 维度，**对同租户其他成员不可见**。
+
+#### 关键设计决策
+
+1. **项目文件的归属继承项目，不独立裁决**。文件自身只有 `UploadedBy`，归属判断一律走 `pf.ProjectID` → 项目 → `projectVisible(sc, project)`。这样**项目成员白名单**自动生效，与文件是谁上传的无关 —— 与「项目内资源共享」的产品语义一致。
+2. **`GetProjectFileByID` / `GetProjectFileByTransferID` 保持无 Scope**。这两个供 agent 下载端点使用，agent 凭 download token 鉴权，不经过用户会话。
+
+**踩坑（🔴 下次必须避开）**
+
+1. **`projectVisible` 是 `*Store` 的方法，替换时漏了接收者**。批量把 `project.UserID != userID` 换成 `!projectVisible(sc, project)` 后，编译报 11 处 `undefined: projectVisible`。批量替换**凡是调方法的地方一律带 `s.`**，改完立刻 `go build`。
+2. **`GetProjectFileTree` 的拒绝路径返回空树而非 nil**。写断言 `got != nil` 会误判成放行 —— 正确断言是 `got != nil && (len(got.Uploads) != 0 || len(got.Tasks) != 0)`。
+3. **冒烟选项目不能只按「有 project_files 记录」挑**。本次首次冒烟选中的项目 Mongo 里有 106 条记录，但容器磁盘上 `uploads/` 目录根本不存在（历史遗留），详情路径必然 404，与改造无关却会污染结论。**挑项目时要 Mongo 记录与容器磁盘双向核对**。
+
+**后续批次排期**
+
+| 批次 | 范围 | 状态 |
+|---|---|---|
+| 2-1 | Project（7 函数 + handler + 裁决层） | ✅ 已上线 |
+| 2-2 | Task 归属收敛 | ✅ 已上线 |
+| 2-3 | Agent 归属收敛 | ✅ 已上线 |
+| 2-4 | Knowledge + WorkflowTemplate | ✅ 已上线 |
+| 2-5a | File（project_file + artifact 绑定） | ✅ 已上线 |
+| 2-5b | Comment + Meeting | ⬜ 待开工 |
 | 2-6 | JoinRequest + ExternalApp | ⬜ 待开工 |
 | 2-7 | Event + Notification 分区 map（§4.3） | ⬜ 待开工 |
+
 
 ### 阶段 3 — 节点 org 绑定与 NATS 隔离（🔴 **跨仓库 + 跨环境**）
 

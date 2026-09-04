@@ -341,7 +341,7 @@ func (h *TaskHandler) DispatchTodo(c *gin.Context) {
 // `--metadata outputName` and could not be auto-matched (ambiguous multi-slot
 // steps, unexpected mime types).
 func (h *TaskHandler) BindTodoOutput(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -355,7 +355,7 @@ func (h *TaskHandler) BindTodoOutput(c *gin.Context) {
 		return
 	}
 
-	artifact, appErr := h.store.BindArtifactOutput(userID, c.Param("id"), c.Param("todoId"), body.ArtifactID, body.OutputName)
+	artifact, appErr := h.store.BindArtifactOutput(sc, c.Param("id"), c.Param("todoId"), body.ArtifactID, body.OutputName)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return

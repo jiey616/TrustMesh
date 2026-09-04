@@ -613,7 +613,7 @@ func TestBindArtifactOutputPromotesProcessFile(t *testing.T) {
 		t.Fatalf("precondition: expected a process artifact, got %q", before[0].Kind)
 	}
 
-	bound, appErr := s.BindArtifactOutput(userID, taskID, "TD_01", "tid-manualbind-00001", "剧名_分镜头脚本")
+	bound, appErr := s.BindArtifactOutput(store.Scope{UserID: userID}, taskID, "TD_01", "tid-manualbind-00001", "剧名_分镜头脚本")
 	if appErr != nil {
 		t.Fatalf("bind: %v", appErr)
 	}
@@ -626,10 +626,10 @@ func TestBindArtifactOutputPromotesProcessFile(t *testing.T) {
 	}
 
 	// Unknown artifact / slot-less payloads are rejected explicitly.
-	if _, err := s.BindArtifactOutput(userID, taskID, "TD_01", "tid-does-not-exist", "slot"); err == nil {
+	if _, err := s.BindArtifactOutput(store.Scope{UserID: userID}, taskID, "TD_01", "tid-does-not-exist", "slot"); err == nil {
 		t.Fatalf("expected an error for an unknown artifact")
 	}
-	if _, err := s.BindArtifactOutput(userID, taskID, "TD_01", "tid-manualbind-00001", ""); err == nil {
+	if _, err := s.BindArtifactOutput(store.Scope{UserID: userID}, taskID, "TD_01", "tid-manualbind-00001", ""); err == nil {
 		t.Fatalf("expected an error when output_name is missing")
 	}
 }

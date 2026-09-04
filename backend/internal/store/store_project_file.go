@@ -14,7 +14,7 @@ import (
 // The caller must supply a full ProjectFile with at least ProjectID, FileName,
 // FileSize, MimeType, and Source set. ID and timestamps are generated here.
 // ParentID is supported for uploading into a user-created folder.
-func (s *Store) SaveProjectFile(userID, projectID string, pf *model.ProjectFile) (*model.ProjectFile, *transport.AppError) {
+func (s *Store) SaveProjectFile(sc Scope, projectID string, pf *model.ProjectFile) (*model.ProjectFile, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -23,7 +23,7 @@ func (s *Store) SaveProjectFile(userID, projectID string, pf *model.ProjectFile)
 	if !ok {
 		return nil, transport.NotFound("project not found")
 	}
-	if project.UserID != userID {
+	if !s.projectVisible(sc, project) {
 		return nil, transport.Forbidden("access denied to project")
 	}
 
@@ -45,7 +45,8 @@ func (s *Store) SaveProjectFile(userID, projectID string, pf *model.ProjectFile)
 
 	pf.ID = "pf_" + newID()
 	pf.ProjectID = projectID
-	pf.UploadedBy = userID
+	pf.UploadedBy = sc.UserID
+	pf.OrgID = s.resolveOwnerOrgUnsafe(sc)
 	pf.CreatedAt = time.Now().UTC()
 
 	s.projectFiles[pf.ID] = pf
@@ -111,7 +112,7 @@ func (s *Store) CreateMeetingMinutesFile(meetingID, fileName, content string) (*
 }
 
 // CreateFolder creates a new folder record in the project file space.
-func (s *Store) CreateFolder(userID, projectID, name, parentID string) (*model.ProjectFile, *transport.AppError) {
+func (s *Store) CreateFolder(sc Scope, projectID, name, parentID string) (*model.ProjectFile, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -119,7 +120,7 @@ func (s *Store) CreateFolder(userID, projectID, name, parentID string) (*model.P
 	if !ok {
 		return nil, transport.NotFound("project not found")
 	}
-	if project.UserID != userID {
+	if !s.projectVisible(sc, project) {
 		return nil, transport.Forbidden("access denied to project")
 	}
 
@@ -143,14 +144,14 @@ func (s *Store) CreateFolder(userID, projectID, name, parentID string) (*model.P
 	folder := &model.ProjectFile{
 		ID:         "pf_" + newID(),
 		ProjectID:  projectID,
-		OrgID:      s.personalOrgOfUnsafe(userID),
+		OrgID:      s.resolveOwnerOrgUnsafe(sc),
 		ParentID:   parentID,
 		FileName:   name,
 		FileSize:   0,
 		MimeType:   "",
 		Source:     "user_upload",
 		IsFolder:   true,
-		UploadedBy: userID,
+		UploadedBy: sc.UserID,
 		CreatedAt:  time.Now().UTC(),
 	}
 
@@ -167,7 +168,7 @@ func (s *Store) CreateFolder(userID, projectID, name, parentID string) (*model.P
 }
 
 // RenameProjectFile updates the name of a file or folder.
-func (s *Store) RenameProjectFile(userID, projectID, fileID, name string) (*model.ProjectFile, *transport.AppError) {
+func (s *Store) RenameProjectFile(sc Scope, projectID, fileID, name string) (*model.ProjectFile, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -180,7 +181,7 @@ func (s *Store) RenameProjectFile(userID, projectID, fileID, name string) (*mode
 	}
 
 	project, ok := s.projects[projectID]
-	if !ok || project.UserID != userID {
+	if !ok || !s.projectVisible(sc, project) {
 		return nil, transport.Forbidden("access denied")
 	}
 
@@ -206,7 +207,7 @@ func (s *Store) RenameProjectFile(userID, projectID, fileID, name string) (*mode
 }
 
 // MoveProjectFile moves a file or folder to a different parent folder.
-func (s *Store) MoveProjectFile(userID, projectID, fileID, targetParentID string) (*model.ProjectFile, *transport.AppError) {
+func (s *Store) MoveProjectFile(sc Scope, projectID, fileID, targetParentID string) (*model.ProjectFile, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -219,7 +220,7 @@ func (s *Store) MoveProjectFile(userID, projectID, fileID, targetParentID string
 	}
 
 	project, ok := s.projects[projectID]
-	if !ok || project.UserID != userID {
+	if !ok || !s.projectVisible(sc, project) {
 		return nil, transport.Forbidden("access denied")
 	}
 
@@ -278,12 +279,12 @@ func (s *Store) isDescendantUnsafe(ancestorID, candidateID string) bool {
 
 // BatchDeleteProjectFiles deletes multiple files/folders and cascades to children.
 // Returns a result summarizing deleted count and any IDs that failed.
-func (s *Store) BatchDeleteProjectFiles(userID, projectID string, ids []string) model.BatchDeleteResult {
+func (s *Store) BatchDeleteProjectFiles(sc Scope, projectID string, ids []string) model.BatchDeleteResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	project, ok := s.projects[projectID]
-	if !ok || project.UserID != userID {
+	if !ok || !s.projectVisible(sc, project) {
 		return model.BatchDeleteResult{Deleted: 0, Failed: ids}
 	}
 
@@ -462,13 +463,13 @@ func (s *Store) saveProjectFileFromArtifactUnsafe(artifact model.TaskArtifact) (
 }
 
 // ListProjectFiles returns files for a project with optional filters.
-func (s *Store) ListProjectFiles(userID, projectID, source, taskID, agentID string) []model.ProjectFile {
+func (s *Store) ListProjectFiles(sc Scope, projectID, source, taskID, agentID string) []model.ProjectFile {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	// Validate ownership.
 	project, ok := s.projects[projectID]
-	if !ok || project.UserID != userID {
+	if !ok || !s.projectVisible(sc, project) {
 		return []model.ProjectFile{}
 	}
 
@@ -506,7 +507,7 @@ func (s *Store) ListProjectFiles(userID, projectID, source, taskID, agentID stri
 }
 
 // GetProjectFile returns a single file by ID with ownership validation.
-func (s *Store) GetProjectFile(userID, fileID string) (*model.ProjectFile, *transport.AppError) {
+func (s *Store) GetProjectFile(sc Scope, fileID string) (*model.ProjectFile, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -516,7 +517,7 @@ func (s *Store) GetProjectFile(userID, fileID string) (*model.ProjectFile, *tran
 	}
 
 	project, ok := s.projects[pf.ProjectID]
-	if !ok || project.UserID != userID {
+	if !ok || !s.projectVisible(sc, project) {
 		return nil, transport.Forbidden("access denied")
 	}
 
@@ -554,7 +555,7 @@ func (s *Store) GetProjectFileByTransferID(transferID string) (*model.ProjectFil
 
 // DeleteProjectFile removes a file record and returns it.
 // If the entry is a folder, all child files and sub-folders are also deleted.
-func (s *Store) DeleteProjectFile(userID, fileID string) (*model.ProjectFile, *transport.AppError) {
+func (s *Store) DeleteProjectFile(sc Scope, fileID string) (*model.ProjectFile, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -564,7 +565,7 @@ func (s *Store) DeleteProjectFile(userID, fileID string) (*model.ProjectFile, *t
 	}
 
 	project, ok := s.projects[pf.ProjectID]
-	if !ok || project.UserID != userID {
+	if !ok || !s.projectVisible(sc, project) {
 		return nil, transport.Forbidden("access denied")
 	}
 
@@ -629,12 +630,12 @@ func (s *Store) deleteFolderChildrenUnsafe(projectID, folderID string) {
 // GetProjectFileTree builds a hierarchical view of project files.
 // User uploads are organized by the ParentID folder hierarchy.
 // Agent artifacts remain grouped by task → agent.
-func (s *Store) GetProjectFileTree(userID, projectID string) *model.ProjectFileTree {
+func (s *Store) GetProjectFileTree(sc Scope, projectID string) *model.ProjectFileTree {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	project, ok := s.projects[projectID]
-	if !ok || project.UserID != userID {
+	if !ok || !s.projectVisible(sc, project) {
 		return &model.ProjectFileTree{
 			Uploads: []model.ProjectFileTreeNode{},
 			Tasks:   []model.ProjectFileTreeNode{},
@@ -874,12 +875,12 @@ func buildFolderNode(folderID, folderName string, folderMap map[string]*model.Pr
 
 // BrowseProjectFiles returns the flat contents of a folder (folders + files) plus breadcrumbs.
 // parentID empty means the project root.
-func (s *Store) BrowseProjectFiles(userID, projectID, parentID string) (*model.BrowseFilesResult, *transport.AppError) {
+func (s *Store) BrowseProjectFiles(sc Scope, projectID, parentID string) (*model.BrowseFilesResult, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	project, ok := s.projects[projectID]
-	if !ok || project.UserID != userID {
+	if !ok || !s.projectVisible(sc, project) {
 		return nil, transport.Forbidden("access denied")
 	}
 
@@ -1171,12 +1172,12 @@ func buildBreadcrumbs(projectFiles map[string]*model.ProjectFile, folderID strin
 }
 
 // ListArtifactGroups returns agent artifacts grouped by task → agent.
-func (s *Store) ListArtifactGroups(userID, projectID string) ([]model.ArtifactTaskGroup, *transport.AppError) {
+func (s *Store) ListArtifactGroups(sc Scope, projectID string) ([]model.ArtifactTaskGroup, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	project, ok := s.projects[projectID]
-	if !ok || project.UserID != userID {
+	if !ok || !s.projectVisible(sc, project) {
 		return nil, transport.Forbidden("access denied")
 	}
 

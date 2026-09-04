@@ -584,7 +584,7 @@ func (s *Store) copyTaskWithArtifactsUnsafe(task *model.TaskDetail) *model.TaskD
 // `--metadata outputName` and could not be auto-matched (ambiguous multi-slot
 // steps, unexpected mime types). Without it the only remedy was re-running the
 // transfer webhook by hand.
-func (s *Store) BindArtifactOutput(userID, taskID, todoID, transferID, outputName string) (*model.TaskArtifact, *transport.AppError) {
+func (s *Store) BindArtifactOutput(sc Scope, taskID, todoID, transferID, outputName string) (*model.TaskArtifact, *transport.AppError) {
 	taskID = strings.TrimSpace(taskID)
 	todoID = strings.TrimSpace(todoID)
 	transferID = strings.TrimSpace(transferID)
@@ -600,7 +600,7 @@ func (s *Store) BindArtifactOutput(userID, taskID, todoID, transferID, outputNam
 	defer s.mu.Unlock()
 
 	task, ok := s.tasks[taskID]
-	if !ok || task.UserID != userID {
+	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 		return nil, transport.NotFound("task not found")
 	}
 	todoIdx := -1

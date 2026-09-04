@@ -38,7 +38,6 @@ func (h *ProjectFileHandler) Upload(c *gin.Context) {
 	if !ok {
 		return
 	}
-	userID := sc.UserID
 
 	projectID := c.Param("projectId")
 
@@ -75,7 +74,7 @@ func (h *ProjectFileHandler) Upload(c *gin.Context) {
 	}
 
 	// Create record in store (validates project ownership & optional task).
-	pf, appErr := h.store.SaveProjectFile(userID, projectID, pf)
+	pf, appErr := h.store.SaveProjectFile(sc, projectID, pf)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -103,7 +102,7 @@ func (h *ProjectFileHandler) Upload(c *gin.Context) {
 	_ = h.store.SetProjectFileLocalPath(pf.ID, path)
 
 	// Re-read to get updated record.
-	pf, appErr = h.store.GetProjectFile(userID, pf.ID)
+	pf, appErr = h.store.GetProjectFile(sc, pf.ID)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -118,7 +117,6 @@ func (h *ProjectFileHandler) CreateFolder(c *gin.Context) {
 	if !ok {
 		return
 	}
-	userID := sc.UserID
 
 	projectID := c.Param("projectId")
 
@@ -136,7 +134,7 @@ func (h *ProjectFileHandler) CreateFolder(c *gin.Context) {
 
 	req.ParentID = strings.TrimSpace(req.ParentID)
 
-	folder, appErr := h.store.CreateFolder(userID, projectID, req.Name, req.ParentID)
+	folder, appErr := h.store.CreateFolder(sc, projectID, req.Name, req.ParentID)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -151,14 +149,13 @@ func (h *ProjectFileHandler) List(c *gin.Context) {
 	if !ok {
 		return
 	}
-	userID := sc.UserID
 
 	projectID := c.Param("projectId")
 	source := c.Query("source")
 	taskID := c.Query("task_id")
 	agentID := c.Query("agent_id")
 
-	files := h.store.ListProjectFiles(userID, projectID, source, taskID, agentID)
+	files := h.store.ListProjectFiles(sc, projectID, source, taskID, agentID)
 	if files == nil {
 		files = []model.ProjectFile{}
 	}
@@ -181,11 +178,10 @@ func (h *ProjectFileHandler) GetTree(c *gin.Context) {
 	if !ok {
 		return
 	}
-	userID := sc.UserID
 
 	projectID := c.Param("projectId")
 
-	tree := h.store.GetProjectFileTree(userID, projectID)
+	tree := h.store.GetProjectFileTree(sc, projectID)
 	transport.WriteData(c, http.StatusOK, tree)
 }
 
@@ -199,7 +195,7 @@ func (h *ProjectFileHandler) GetContent(c *gin.Context) {
 
 	fileID := c.Param("fileId")
 
-	pf, appErr := h.store.GetProjectFile(userID, fileID)
+	pf, appErr := h.store.GetProjectFile(sc, fileID)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -295,12 +291,11 @@ func (h *ProjectFileHandler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	userID := sc.UserID
 
 	fileID := c.Param("fileId")
 
 	// Get file record first to obtain the LocalPath.
-	pf, appErr := h.store.GetProjectFile(userID, fileID)
+	pf, appErr := h.store.GetProjectFile(sc, fileID)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -316,7 +311,7 @@ func (h *ProjectFileHandler) Delete(c *gin.Context) {
 	}
 
 	// Delete the store record.
-	deleted, appErr := h.store.DeleteProjectFile(userID, fileID)
+	deleted, appErr := h.store.DeleteProjectFile(sc, fileID)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -331,7 +326,6 @@ func (h *ProjectFileHandler) Rename(c *gin.Context) {
 	if !ok {
 		return
 	}
-	userID := sc.UserID
 
 	projectID := c.Param("projectId")
 	fileID := c.Param("fileId")
@@ -348,7 +342,7 @@ func (h *ProjectFileHandler) Rename(c *gin.Context) {
 		return
 	}
 
-	pf, appErr := h.store.RenameProjectFile(userID, projectID, fileID, req.Name)
+	pf, appErr := h.store.RenameProjectFile(sc, projectID, fileID, req.Name)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -363,7 +357,6 @@ func (h *ProjectFileHandler) Move(c *gin.Context) {
 	if !ok {
 		return
 	}
-	userID := sc.UserID
 
 	projectID := c.Param("projectId")
 	fileID := c.Param("fileId")
@@ -374,7 +367,7 @@ func (h *ProjectFileHandler) Move(c *gin.Context) {
 		return
 	}
 
-	pf, appErr := h.store.MoveProjectFile(userID, projectID, fileID, req.ParentID)
+	pf, appErr := h.store.MoveProjectFile(sc, projectID, fileID, req.ParentID)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -389,7 +382,6 @@ func (h *ProjectFileHandler) BatchDelete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	userID := sc.UserID
 
 	projectID := c.Param("projectId")
 
@@ -399,7 +391,7 @@ func (h *ProjectFileHandler) BatchDelete(c *gin.Context) {
 		return
 	}
 
-	result := h.store.BatchDeleteProjectFiles(userID, projectID, req.IDs)
+	result := h.store.BatchDeleteProjectFiles(sc, projectID, req.IDs)
 	transport.WriteData(c, http.StatusOK, result)
 }
 
@@ -409,12 +401,11 @@ func (h *ProjectFileHandler) Browse(c *gin.Context) {
 	if !ok {
 		return
 	}
-	userID := sc.UserID
 
 	projectID := c.Param("projectId")
 	parentID := c.Query("parent_id")
 
-	result, appErr := h.store.BrowseProjectFiles(userID, projectID, parentID)
+	result, appErr := h.store.BrowseProjectFiles(sc, projectID, parentID)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -429,11 +420,10 @@ func (h *ProjectFileHandler) ListArtifacts(c *gin.Context) {
 	if !ok {
 		return
 	}
-	userID := sc.UserID
 
 	projectID := c.Param("projectId")
 
-	groups, appErr := h.store.ListArtifactGroups(userID, projectID)
+	groups, appErr := h.store.ListArtifactGroups(sc, projectID)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return

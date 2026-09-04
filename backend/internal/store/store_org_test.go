@@ -943,3 +943,151 @@ func TestValidateProjectOwnershipScoped(t *testing.T) {
 		t.Fatal("pA must not validate under orgB")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// 阶段 2-5a：File 域归属收敛（project_file + artifact）
+// ---------------------------------------------------------------------------
+
+// seedProjectFileFixture 建两个租户各一个项目，并各挂一个文件。
+// 注意：File 域的归属是「通过项目裁决」的（projectVisible），不是按文件自身字段。
+func seedProjectFileFixture(s *Store, orgA, orgB *model.Organization) {
+	s.projects["pA"] = &model.Project{ID: "pA", OrgID: orgA.ID, UserID: "u1", Name: "A 的项目"}
+	s.projects["pB"] = &model.Project{ID: "pB", OrgID: orgB.ID, UserID: "u9", Name: "B 的项目"}
+	s.projectFiles["pfA"] = &model.ProjectFile{
+		ID: "pfA", ProjectID: "pA", OrgID: orgA.ID, FileName: "a.txt", UploadedBy: "u1",
+	}
+	s.projectFileIndex["pA"] = []string{"pfA"}
+}
+
+// TestProjectFileScopedVisibility 覆盖项目文件读路径的归属裁决。
+func TestProjectFileScopedVisibility(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	orgB, _ := s.CreateOrganization("u9", "Globex", "globex", model.OrgKindEnterprise)
+	if _, err := s.AddOrgMember(orgA.ID, "u2", model.OrgRoleMember); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	seedProjectFileFixture(s, orgA, orgB)
+
+	// 无租户头：与改造前一致
+	if got := s.ListProjectFiles(Scope{UserID: "u1"}, "pA", "", "", ""); len(got) != 1 {
+		t.Fatalf("u1 without org ctx should see own file, got %d", len(got))
+	}
+	if _, err := s.GetProjectFile(Scope{UserID: "u2"}, "pfA"); err == nil {
+		t.Fatal("u2 without org ctx must not read pfA")
+	}
+
+	// 有租户头：同租户成员可见
+	if got := s.ListProjectFiles(Scope{UserID: "u2", OrgID: orgA.ID}, "pA", "", "", ""); len(got) != 1 {
+		t.Fatalf("u2 in orgA should see pfA, got %d", len(got))
+	}
+	if _, err := s.GetProjectFile(Scope{UserID: "u2", OrgID: orgA.ID}, "pfA"); err != nil {
+		t.Fatalf("u2 in orgA should read pfA: %v", err)
+	}
+
+	// 跨租户不可见（u9 是 orgB 的真实成员）
+	if got := s.ListProjectFiles(Scope{UserID: "u9", OrgID: orgB.ID}, "pA", "", "", ""); len(got) != 0 {
+		t.Fatalf("orgB must not expose pA files to u9, got %d", len(got))
+	}
+	if _, err := s.GetProjectFile(Scope{UserID: "u9", OrgID: orgB.ID}, "pfA"); err == nil {
+		t.Fatal("pfA must not be visible under orgB")
+	}
+
+	// 其他读路径同样收口
+	// 拒绝路径返回空树（不是 nil），按"无内容"断言
+	if got := s.GetProjectFileTree(Scope{UserID: "u9", OrgID: orgB.ID}, "pA"); got != nil && (len(got.Uploads) != 0 || len(got.Tasks) != 0) {
+		t.Fatalf("GetProjectFileTree leaked pA to orgB: %+v", got)
+	}
+	if _, err := s.BrowseProjectFiles(Scope{UserID: "u9", OrgID: orgB.ID}, "pA", ""); err == nil {
+		t.Fatal("BrowseProjectFiles must reject pA under orgB")
+	}
+	if _, err := s.ListArtifactGroups(Scope{UserID: "u9", OrgID: orgB.ID}, "pA"); err == nil {
+		t.Fatal("ListArtifactGroups must reject pA under orgB")
+	}
+	if got := s.BatchDeleteProjectFiles(Scope{UserID: "u9", OrgID: orgB.ID}, "pA", []string{"pfA"}); got.Deleted != 0 {
+		t.Fatalf("BatchDeleteProjectFiles must not delete across orgs, deleted=%d", got.Deleted)
+	}
+}
+
+// TestSaveProjectFileOwnerOrg 覆盖阶段 1 漏掉的双写：
+// SaveProjectFile 从未设置 pf.OrgID，不补则新建文件 org_id 恒空。
+func TestSaveProjectFileOwnerOrg(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	if _, err := s.AddOrgMember(orgA.ID, "u2", model.OrgRoleMember); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	if _, err := s.EnsurePersonalOrg("u1", "Jiey"); err != nil {
+		t.Fatalf("ensure personal org: %v", err)
+	}
+	var personal *model.Organization
+	for _, o := range s.ListUserOrganizations("u1") {
+		if o.Kind == model.OrgKindPersonal {
+			personal = o
+		}
+	}
+	if personal == nil {
+		t.Fatal("personal org missing")
+	}
+	s.projects["pA"] = &model.Project{ID: "pA", OrgID: orgA.ID, UserID: "u1", Name: "A 的项目"}
+
+	// 带租户上下文（作者是 u2，同租户成员）
+	pf, err := s.SaveProjectFile(Scope{UserID: "u2", OrgID: orgA.ID}, "pA", &model.ProjectFile{FileName: "x.txt"})
+	if err != nil {
+		t.Fatalf("save file under org ctx: %v", err)
+	}
+	if pf.OrgID != orgA.ID {
+		t.Fatalf("file should land in the active org, got %q want %q", pf.OrgID, orgA.ID)
+	}
+	if pf.UploadedBy != "u2" {
+		t.Fatalf("uploader should be the caller, got %q", pf.UploadedBy)
+	}
+
+	// 无租户上下文：退回个人租户
+	pf2, err := s.SaveProjectFile(Scope{UserID: "u1"}, "pA", &model.ProjectFile{FileName: "y.txt"})
+	if err != nil {
+		t.Fatalf("save file without org ctx: %v", err)
+	}
+	if pf2.OrgID != personal.ID {
+		t.Fatalf("file should land in personal org, got %q want %q", pf2.OrgID, personal.ID)
+	}
+
+	// CreateFolder 同理
+	folder, err := s.CreateFolder(Scope{UserID: "u2", OrgID: orgA.ID}, "pA", "新建目录", "")
+	if err != nil {
+		t.Fatalf("create folder under org ctx: %v", err)
+	}
+	if folder.OrgID != orgA.ID || folder.UploadedBy != "u2" {
+		t.Fatalf("folder owner = org:%q by:%q", folder.OrgID, folder.UploadedBy)
+	}
+}
+
+// TestBindArtifactOutputScoped 交付物手工绑定按任务归属裁决。
+func TestBindArtifactOutputScoped(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	orgB, _ := s.CreateOrganization("u9", "Globex", "globex", model.OrgKindEnterprise)
+	if _, err := s.AddOrgMember(orgA.ID, "u2", model.OrgRoleMember); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	s.tasks["tA"] = &model.TaskDetail{
+		ID: "tA", OrgID: orgA.ID, UserID: "u1", Title: "A 的任务",
+		Todos: []model.Todo{{ID: "TD_01", Title: "待办"}},
+	}
+	s.taskArtifacts["tA"] = []model.TaskArtifact{
+		{TransferID: "tid-1", TaskID: "tA", FileName: "out.md"},
+	}
+
+	// 无租户头：他人不可绑定
+	if _, err := s.BindArtifactOutput(Scope{UserID: "u2"}, "tA", "TD_01", "tid-1", "分镜脚本"); err == nil {
+		t.Fatal("u2 without org ctx must not bind tA artifacts")
+	}
+	// 有租户头：同租户成员可绑定
+	if _, err := s.BindArtifactOutput(Scope{UserID: "u2", OrgID: orgA.ID}, "tA", "TD_01", "tid-1", "分镜脚本"); err != nil {
+		t.Fatalf("u2 in orgA should bind tA artifacts: %v", err)
+	}
+	// 跨租户不可见（u9 是 orgB 的真实成员）
+	if _, err := s.BindArtifactOutput(Scope{UserID: "u9", OrgID: orgB.ID}, "tA", "TD_01", "tid-1", "脚本"); err == nil {
+		t.Fatal("tA must not be bindable under orgB")
+	}
+}

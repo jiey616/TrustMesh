@@ -419,7 +419,7 @@ func (s *Store) GenerateMeetingMinutesFile(userID string, meeting *model.Meeting
 		}
 	}
 
-	pf, appErr := s.SaveProjectFile(ownerID, meeting.ProjectID, pf)
+	pf, appErr := s.SaveProjectFile(Scope{UserID: ownerID}, meeting.ProjectID, pf)
 	if appErr != nil {
 		return "", fmt.Errorf("save project file: %w", appErr)
 	}
