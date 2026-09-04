@@ -16,6 +16,7 @@ type ProjectTaskSummary struct {
 type Project struct {
 	ID          string             `json:"id" bson:"_id"`
 	UserID      string             `json:"-" bson:"user_id"`
+	OrgID       string             `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属（阶段 0 仅加字段）
 	Name        string             `json:"name" bson:"name"`
 	Description string             `json:"description" bson:"description"`
 	Status      string             `json:"status" bson:"status"`

@@ -221,6 +221,7 @@ type TaskListItem struct {
 type TaskDetail struct {
 	ID          string `json:"id" bson:"_id"`
 	UserID      string `json:"-" bson:"user_id"`
+	OrgID       string `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属（阶段 0 仅加字段）
 	ProjectID   string `json:"project_id" bson:"project_id"`
 	Title       string `json:"title" bson:"title"`
 	Description string `json:"description" bson:"description"`

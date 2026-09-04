@@ -77,6 +77,13 @@ type Store struct {
 	projectFileIndex  map[string][]string           // projectID → []fileID
 	transferFileIndex map[string]string             // transferID → fileID
 
+	// 多租户阶段 0：仅建模与骨架，不参与任何业务判断
+	organizations  map[string]*model.Organization
+	orgMemberships map[string]*model.OrgMembership
+	orgMemberIndex map[string][]string // orgID → []membershipID
+	userOrgIndex   map[string][]string // userID → []membershipID
+	projectMembers map[string][]model.ProjectMember
+
 	meetings            map[string]*model.Meeting // meetingID → Meeting
 	projectMeetings     map[string][]string       // projectID → []meetingID
 	meetingMessages     map[string]*model.MeetingMessage
@@ -105,6 +112,9 @@ type Store struct {
 	mongoProjectFiles      *mongo.Collection
 	mongoMeetings          *mongo.Collection
 	mongoMeetingMessages   *mongo.Collection
+	mongoOrganizations  *mongo.Collection
+	mongoOrgMemberships *mongo.Collection
+	mongoProjectMembers *mongo.Collection
 	mongoWorkflowTemplates *mongo.Collection
 	mongoTimeout           time.Duration
 	log                    *zap.Logger
@@ -187,6 +197,11 @@ func New() *Store {
 		transferFileIndex:  make(map[string]string),
 		externalApps:       make(map[string]*model.ExternalApp),
 
+		organizations:  make(map[string]*model.Organization),
+		orgMemberships: make(map[string]*model.OrgMembership),
+		orgMemberIndex: make(map[string][]string),
+		userOrgIndex:   make(map[string][]string),
+		projectMembers: make(map[string][]model.ProjectMember),
 		meetings:            make(map[string]*model.Meeting),
 		projectMeetings:     make(map[string][]string),
 		meetingMessages:     make(map[string]*model.MeetingMessage),

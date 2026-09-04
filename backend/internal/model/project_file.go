@@ -8,6 +8,7 @@ import "time"
 type ProjectFile struct {
 	ID          string    `json:"id" bson:"_id"`
 	ProjectID   string    `json:"project_id" bson:"project_id"`
+	OrgID       string    `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属（阶段 0 仅加字段）
 	ParentID    string    `json:"parent_id,omitempty" bson:"parent_id,omitempty"`
 	TaskID      string    `json:"task_id,omitempty" bson:"task_id,omitempty"`
 	AgentID     string    `json:"agent_id,omitempty" bson:"agent_id,omitempty"`

@@ -131,6 +131,9 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 
 	authed := v1.Group("")
 	authed.Use(middleware.RequireAuth(jwtManager))
+	// 多租户阶段 0：解析 X-Org-Id 并注入 Scope。存量客户端不带该头，
+	// 中间件直接放行（只带 UserID），行为与改造前完全一致。
+	authed.Use(middleware.OrgScope(s))
 
 	authed.POST("/agents", agentHandler.Create)
 	authed.GET("/agents", agentHandler.List)

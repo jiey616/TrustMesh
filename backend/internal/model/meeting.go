@@ -49,6 +49,7 @@ type MeetingParticipant struct {
 type Meeting struct {
 	ID            string               `json:"id" bson:"_id"`
 	ProjectID     string               `json:"project_id" bson:"project_id"`
+	OrgID         string               `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属（阶段 0 仅加字段）
 	Title         string               `json:"title" bson:"title"`
 	Agenda        string               `json:"agenda" bson:"agenda"`
 	CreatorID     string               `json:"creator_id" bson:"creator_id"`

@@ -63,6 +63,9 @@ func (s *Store) enableMongo(cfg config.Config, log *zap.Logger) error {
 	s.mongoMeetings = db.Collection("meetings")
 	s.mongoMeetingMessages = db.Collection("meeting_messages")
 	s.mongoWorkflowTemplates = db.Collection("workflow_templates")
+	s.mongoOrganizations = db.Collection("organizations")
+	s.mongoOrgMemberships = db.Collection("org_memberships")
+	s.mongoProjectMembers = db.Collection("project_members")
 	s.mongoTimeout = cfg.MongoTimeout
 	if log != nil {
 		s.log = log
@@ -116,6 +119,9 @@ func (s *Store) clearMongoCollections() {
 	s.mongoMeetings = nil
 	s.mongoMeetingMessages = nil
 	s.mongoWorkflowTemplates = nil
+	s.mongoOrganizations = nil
+	s.mongoOrgMemberships = nil
+	s.mongoProjectMembers = nil
 }
 
 func (s *Store) mongoContext() (context.Context, context.CancelFunc) {
@@ -189,6 +195,17 @@ func (s *Store) ensureMongoIndexes() error {
 		},
 		s.mongoMeetingMessages: {
 			{Keys: bson.D{{Key: "meeting_id", Value: 1}}},
+		},
+		s.mongoOrganizations: {
+			{Keys: bson.D{{Key: "slug", Value: 1}}, Options: options.Index().SetUnique(true)},
+			{Keys: bson.D{{Key: "owner_id", Value: 1}}},
+		},
+		s.mongoOrgMemberships: {
+			{Keys: bson.D{{Key: "org_id", Value: 1}, {Key: "user_id", Value: 1}}, Options: options.Index().SetUnique(true)},
+			{Keys: bson.D{{Key: "user_id", Value: 1}}},
+		},
+		s.mongoProjectMembers: {
+			{Keys: bson.D{{Key: "project_id", Value: 1}, {Key: "user_id", Value: 1}}, Options: options.Index().SetUnique(true)},
 		},
 		s.mongoWorkflowTemplates: {
 			{Keys: bson.D{{Key: "user_id", Value: 1}}},
@@ -284,6 +301,18 @@ func (s *Store) loadMongoState() error {
 	if err != nil {
 		return err
 	}
+	organizations, err := s.loadOrganizations()
+	if err != nil {
+		return err
+	}
+	orgMemberships, orgMemberIndex, userOrgIndex, err := s.loadOrgMemberships()
+	if err != nil {
+		return err
+	}
+	projectMembers, err := s.loadProjectMembers()
+	if err != nil {
+		return err
+	}
 	usersByMail := make(map[string]string, len(users))
 	for id, user := range users {
 		usersByMail[user.Email] = id
@@ -330,6 +359,11 @@ func (s *Store) loadMongoState() error {
 	s.meetingMessageIndex = meetingMessageIndex
 	s.workflowTemplates = workflowTemplates
 	s.userWorkflowTemplates = userWorkflowTemplates
+	s.organizations = organizations
+	s.orgMemberships = orgMemberships
+	s.orgMemberIndex = orgMemberIndex
+	s.userOrgIndex = userOrgIndex
+	s.projectMembers = projectMembers
 	return nil
 }
 

@@ -5,6 +5,7 @@ import "time"
 type KnowledgeDocument struct {
 	ID          string         `json:"id" bson:"_id"`
 	UserID      string         `json:"-" bson:"user_id"`
+	OrgID       string         `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属（阶段 0 仅加字段）
 	ProjectID   *string        `json:"project_id" bson:"project_id"`
 	Title       string         `json:"title" bson:"title"`
 	Description string         `json:"description" bson:"description"`
@@ -24,6 +25,7 @@ type KnowledgeChunk struct {
 	ID         string         `json:"id" bson:"_id"`
 	DocumentID string         `json:"document_id" bson:"document_id"`
 	UserID     string         `json:"-" bson:"user_id"`
+	OrgID      string         `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属（阶段 0 仅加字段）
 	ProjectID  *string        `json:"-" bson:"project_id"`
 	ChunkIndex int            `json:"chunk_index" bson:"chunk_index"`
 	Content    string         `json:"content" bson:"content"`
