@@ -239,6 +239,40 @@ func (h *WebhookHandler) handleChatMessage(c *gin.Context, webhook protocol.Webh
 		return
 	}
 	content := strings.TrimSpace(webhook.Message)
+
+	// Task-protocol envelopes smuggled over the chat channel: 山雨-style
+	// orchestrators occasionally hand-write a full protocol JSON
+	// ({"protocol":"clawsynapse/1.0","type":"todo.complete",...,"task_id":...})
+	// and publish it as chat.message with a random session key. The chat
+	// lookup then 404s ("agent chat not found") and the todo stalls forever.
+	// Unwrap into the real task handler instead. Measured 2026-09-04: after a
+	// 400 on todo.complete, the writer node retried exactly this way.
+	if unwrapped, ok := unwrapTaskProtocolEnvelope(webhook); ok {
+		if h.log != nil {
+			h.log.Warn("chat.message carried a task-protocol envelope; rerouting",
+				zap.String("session", webhook.SessionKey),
+				zap.String("type", unwrapped.Type),
+				zap.String("message", truncateStr(content, 200)))
+		}
+		switch strings.TrimSpace(unwrapped.Type) {
+		case "task.comment":
+			h.handleTaskComment(c, unwrapped)
+			return
+		case "todo.complete":
+			h.handleTodoComplete(c, unwrapped)
+			return
+		case "todo.progress":
+			h.handleTodoProgress(c, unwrapped)
+			return
+		case "todo.fail":
+			h.handleTodoFail(c, unwrapped)
+			return
+		case "todo.ask":
+			h.handleTodoAsk(c, unwrapped)
+			return
+		}
+	}
+
 	// Strip agent-runtime noise (ACK/WAITING/English monologue leakage) but
 	// KEEP any genuine reply content. A message that is pure noise collapses to
 	// empty and is silently ignored; a real reply with a trailing "ACK
@@ -260,6 +294,43 @@ func (h *WebhookHandler) handleChatMessage(c *gin.Context, webhook protocol.Webh
 		return
 	}
 	transport.WriteData(c, http.StatusOK, detail)
+}
+
+// unwrapTaskProtocolEnvelope detects a task-protocol envelope smuggled over
+// the chat channel (content is a JSON object carrying protocol + type + task
+// payload fields) and rewrites the webhook into the wrapped message type so
+// the dispatcher's handler can decode it. The envelope's payload fields
+// (task_id/todo_id/comment/result) live at its top level, which is exactly
+// what the payload structs unmarshal — unknown envelope keys are ignored.
+func unwrapTaskProtocolEnvelope(webhook protocol.WebhookPayload) (protocol.WebhookPayload, bool) {
+	content := strings.TrimSpace(webhook.Message)
+	if !strings.HasPrefix(content, "{") {
+		return webhook, false
+	}
+	var probe struct {
+		Protocol string          `json:"protocol"`
+		Type     string          `json:"type"`
+		Body     json.RawMessage `json:"body"`
+	}
+	if err := json.Unmarshal([]byte(content), &probe); err != nil {
+		return webhook, false
+	}
+	if !strings.Contains(probe.Protocol, "clawsynapse") {
+		return webhook, false
+	}
+	switch strings.TrimSpace(probe.Type) {
+	case "task.comment", "todo.complete", "todo.progress", "todo.fail", "todo.ask":
+		// The 山雨 orchestrator nests the actual task payload under a "body"
+		// key ({"protocol":...,"type":"todo.complete","body":{"task_id":...}}).
+		// When present and an object, the body IS the payload — swap it in so
+		// the handler's struct decode sees task_id/todo_id at the top level.
+		if b := []byte(probe.Body); len(b) > 0 && b[0] == '{' {
+			webhook.Message = string(b)
+		}
+		webhook.Type = probe.Type
+		return webhook, true
+	}
+	return webhook, false
 }
 
 func (h *WebhookHandler) resolveLocalNodeID(ctx context.Context) (string, *transport.AppError) {
@@ -1258,7 +1329,10 @@ func (h *WebhookHandler) handleTodoProgress(c *gin.Context, webhook protocol.Web
 func (h *WebhookHandler) handleTodoComplete(c *gin.Context, webhook protocol.WebhookPayload) {
 	var payload protocol.TodoCompletePayload
 	if err := decodeWebhookMessage(webhook.Message, &payload); err != nil {
-		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid todo.complete message"))
+		// Include the decode error detail: LLM executors only see this message
+		// and must be able to self-correct. A bare "invalid ... message" gave
+		// the agent nothing to fix, so it retried blind over the chat channel.
+		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid todo.complete message: "+err.Error()))
 		return
 	}
 
@@ -1280,7 +1354,7 @@ func (h *WebhookHandler) handleTodoComplete(c *gin.Context, webhook protocol.Web
 	task, reworked, appErr := h.store.CompleteTodoByNodeWithMessageID(webhook.From, messageIDFromMetadata(webhook.Metadata), store.TodoCompleteInput{
 		TaskID:         payload.TaskID,
 		TodoID:         payload.TodoID,
-		Result:         payload.Result,
+		Result:         model.TodoResult(payload.Result),
 		NeedReview:     needReview,
 		ReturnPrevious: returnPrevious,
 		ReworkReason:   strings.TrimSpace(payload.ReworkReason),
@@ -1519,7 +1593,7 @@ func (h *WebhookHandler) NudgePlanningPM(ctx context.Context, taskID string) {
 func (h *WebhookHandler) handleTodoFail(c *gin.Context, webhook protocol.WebhookPayload) {
 	var payload protocol.TodoFailPayload
 	if err := decodeWebhookMessage(webhook.Message, &payload); err != nil {
-		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid todo.fail message"))
+		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid todo.fail message: "+err.Error()))
 		return
 	}
 

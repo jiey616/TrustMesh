@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"encoding/json"
 	"time"
 
 	"trustmesh/backend/internal/model"
@@ -72,11 +73,33 @@ type TodoProgressPayload struct {
 	Message string `json:"message"`
 }
 
+// FlexibleTodoResult tolerates LLM agents that report "result" as a plain
+// string instead of the structured object. The string is treated as the
+// result summary. Measured 2026-09-04: the 山雨 screenwriter node sent a
+// correct todo.complete whose "result" was a hand-written JSON string; the
+// strict object decode 400-rejected it ("invalid todo.complete message"),
+// the node then retried over the chat channel and stalled the task.
+type FlexibleTodoResult model.TodoResult
+
+func (r *FlexibleTodoResult) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		*r = FlexibleTodoResult{Summary: text}
+		return nil
+	}
+	var base model.TodoResult
+	if err := json.Unmarshal(data, &base); err != nil {
+		return err
+	}
+	*r = FlexibleTodoResult(base)
+	return nil
+}
+
 type TodoCompletePayload struct {
-	TaskID  string           `json:"task_id"`
-	TodoID  string           `json:"todo_id"`
-	Result  model.TodoResult `json:"result"`
-	Content string           `json:"content"` // 兼容外部 Agent 用 content 回报完成摘要而非 result
+	TaskID  string             `json:"task_id"`
+	TodoID  string             `json:"todo_id"`
+	Result  FlexibleTodoResult `json:"result"`
+	Content string             `json:"content"` // 兼容外部 Agent 用 content 回报完成摘要而非 result
 
 	// NeedReview marks the completed todo as awaiting human/PM review. While
 	// pending_approval, sequential dispatch of later todos is blocked until
