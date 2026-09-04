@@ -843,6 +843,7 @@ function NextFlowBanner({ task, onTaskCreated }: { task: TaskDetail; onTaskCreat
   const projectId = task.project_id
   const { data: project } = useProject(projectId)
   const { data: progress } = useWorkflowProgress(projectId)
+  const { data: projectTasks } = useTasks(projectId)
   const createFromText = useCreateTaskFromText()
   const [collapsed, setCollapsed] = useState(false)
   const [endIdx, setEndIdx] = useState<number | null>(null)
@@ -858,6 +859,12 @@ function NextFlowBanner({ task, onTaskCreated }: { task: TaskDetail; onTaskCreat
   // 不能只看 workflow_ref.step_to：PM 可能用 deliver_scope 截断了计划
   //（实测 2026-09-04：切片声明 0-5，实际只执行到 3），且未开始的步骤
   // 状态是 pending（被主任务绑住）而非 unassigned。
+  // 归属判断：绑在已 done 的任务上的 pending 步骤（声明了但永远不会再
+  // 执行，实测分镜视频生成绑在旧 done 任务上）也视为可认领。
+  const boundStatusById = useMemo(
+    () => new Map((projectTasks ?? []).map((t) => [t.id, t.status])),
+    [projectTasks],
+  )
   const run: WorkflowStepProgress[] = useMemo(() => {
     if (!sameWf || !progress?.steps?.length || !ref) return []
     const byIndex = new Map(progress.steps.map((s) => [s.index, s]))
@@ -868,18 +875,20 @@ function NextFlowBanner({ task, onTaskCreated }: { task: TaskDetail; onTaskCreat
       if (!s || s.task_id !== task.id || s.status !== 'done') break
       execEnd = i
     }
-    // 其后连续的 pending/unassigned 且归属为空或本任务的步骤 = 下一流程候选
+    // 其后连续的 pending/unassigned 且归属可认领的步骤 = 下一流程候选
     const out: WorkflowStepProgress[] = []
     for (let i = execEnd + 1; ; i++) {
       const s = byIndex.get(i)
       if (!s) break
       const notStarted = s.status === 'pending' || s.status === 'unassigned'
-      const freeOrOurs = !s.task_id || s.task_id === task.id
+      const bound = s.task_id ? boundStatusById.get(s.task_id) : undefined
+      const freeOrOurs =
+        !s.task_id || s.task_id === task.id || bound === 'done'
       if (!notStarted || !freeOrOurs) break
       out.push(s)
     }
     return out
-  }, [sameWf, progress, ref, task.id])
+  }, [sameWf, progress, ref, task.id, boundStatusById])
 
   if (task.status !== 'done' || run.length === 0) return null
 
