@@ -80,16 +80,30 @@ export function ProjectBoardPage() {
   const [archiveOpen, setArchiveOpen] = useState(false)
   const { message } = App.useApp()
 
-  // URL 参数只用于初始化选中任务，用完即清（刷新后回到默认视图）
-  const consumedUrlTask = useRef(false)
+  // ?task= 深链：首次进入页面、以及页内任何时刻导航到带 ?task= 的地址
+  // （工作流节点点击、收件箱通知跳转）都打开对应任务工作台，随后清掉
+  // task 参数（刷新后回到默认视图）。用 ref 记录已消费的 id，防止
+  // StrictMode 双调用 / 参数尚未清完时重复触发；参数清空后重置 ref，
+  // 同一任务可再次通过深链打开（如关闭工作台后重复点击节点）。
+  const consumedUrlTask = useRef<string | null>(null)
   useEffect(() => {
-    if (urlTaskId && !consumedUrlTask.current) {
-      consumedUrlTask.current = true
-      // 只清掉 task 参数，保留 tab（可能被外部平台 tab 占用）
-      const next = new URLSearchParams(searchParams)
-      next.delete('task')
-      setSearchParams(next, { replace: true })
+    if (!urlTaskId) {
+      consumedUrlTask.current = null
+      return
     }
+    if (consumedUrlTask.current === urlTaskId) return
+    consumedUrlTask.current = urlTaskId
+    // 显式打开优先于任务列表的自动选中
+    setTaskSelectionState((prev) =>
+      prev.autoSelectedTaskId ? { ...prev, autoSelectedTaskId: null } : prev,
+    )
+    setWorkspace({ kind: 'task', taskId: urlTaskId })
+    // 工作流面板常驻在 Tabs 上方：当前不在任务 tab 时必须切回去，
+    // 否则工作台打开了用户也看不到
+    if (activeTab !== 'tasks') handleTabChange('tasks')
+    const next = new URLSearchParams(searchParams)
+    next.delete('task')
+    setSearchParams(next, { replace: true })
   }, [urlTaskId, setSearchParams, searchParams])
 
   // 声明了 project_tab 挂载点的启用中外部平台，追加在内置 tab 之后。
