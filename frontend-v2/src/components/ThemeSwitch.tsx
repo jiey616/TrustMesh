@@ -5,11 +5,41 @@ import { useTheme } from '../theme/ThemeProvider'
 /**
  * 主题切换器。两套皮肤：深色 console（TrustMesh）↔ 近白（Quiet Signal）。
  * 选择持久化在 localStorage，刷新后保持。
+ * - iconOnly：仅图标紧凑按钮（用于侧边栏底部与「收起」并排）。
+ * - 默认：带边框/背景的完整条目（兼容旧调用）。
  */
-export function ThemeSwitch({ collapsed = false }: { collapsed?: boolean }) {
+export function ThemeSwitch({
+  collapsed = false,
+  iconOnly = false,
+}: {
+  collapsed?: boolean
+  iconOnly?: boolean
+}) {
   const { theme, toggleTheme } = useTheme()
   const isDark = theme === 'dark'
   const label = isDark ? '切换到近白主题' : '切换到深色主题'
+
+  if (iconOnly) {
+    return (
+      <Tooltip title={label} placement="right">
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label={label}
+          onClick={toggleTheme}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              toggleTheme()
+            }
+          }}
+          className="tm-iconbtn"
+        >
+          {isDark ? <MoonOutlined style={{ fontSize: 15 }} /> : <BulbOutlined style={{ fontSize: 15 }} />}
+        </div>
+      </Tooltip>
+    )
+  }
 
   return (
     <Tooltip title={collapsed ? label : ''} placement="right">

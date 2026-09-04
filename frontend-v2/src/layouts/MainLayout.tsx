@@ -176,6 +176,19 @@ export function MainLayout() {
             border-radius: 8px;
           }
           .tm-sidebar .ant-menu-inline { gap: 0; }
+          .tm-iconbtn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            border-radius: var(--radius-control);
+            cursor: pointer;
+            color: var(--text-secondary);
+            transition: background 0.15s ease, color 0.15s ease;
+            user-select: none;
+          }
+          .tm-iconbtn:hover { background: var(--surface); color: var(--text-primary); }
         `}</style>
         <div className="tm-sidebar" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
           {/* 顶部 Logo */}
@@ -274,7 +287,7 @@ export function MainLayout() {
             )}
           </div>
 
-          {/* 底部固定区：消息通知 / 个人信息 / 收起侧边栏 */}
+          {/* 底部固定区：消息通知 / 个人信息 / 收起+主题（图标并排） */}
           <div
             style={{
               flexShrink: 0,
@@ -321,14 +334,37 @@ export function MainLayout() {
               </Tooltip>
             </Dropdown>
 
-            <Tooltip title={collapsed ? '收起侧边栏' : ''} placement="right">
-              <div onClick={() => setCollapsed(!collapsed)} style={rowStyle}>
-                {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-                {!collapsed && <span style={{ flex: 1 }}>收起侧边栏</span>}
-              </div>
-            </Tooltip>
-
-            <ThemeSwitch collapsed={collapsed} />
+            {/* 收起侧边栏 + 主题切换：同一行，仅图标 */}
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: collapsed ? 'column' : 'row',
+                alignItems: 'center',
+                justifyContent: collapsed ? 'center' : 'flex-start',
+                gap: 6,
+                padding: collapsed ? '6px 0' : '6px 12px',
+                margin: '0 8px',
+              }}
+            >
+              <Tooltip title="收起侧边栏" placement="right">
+                <div
+                  role="button"
+                  tabIndex={0}
+                  aria-label="收起侧边栏"
+                  onClick={() => setCollapsed(!collapsed)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      setCollapsed(!collapsed)
+                    }
+                  }}
+                  className="tm-iconbtn"
+                >
+                  {collapsed ? <MenuUnfoldOutlined style={{ fontSize: 15 }} /> : <MenuFoldOutlined style={{ fontSize: 15 }} />}
+                </div>
+              </Tooltip>
+              <ThemeSwitch collapsed={collapsed} iconOnly />
+            </div>
           </div>
         </div>
       </Sider>
