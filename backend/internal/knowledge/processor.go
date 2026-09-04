@@ -88,6 +88,7 @@ func (p *Processor) processDocument(ctx context.Context, doc *model.KnowledgeDoc
 			ID:         chunkID,
 			DocumentID: doc.ID,
 			UserID:     doc.UserID,
+			OrgID:      doc.OrgID,
 			ProjectID:  doc.ProjectID,
 			ChunkIndex: i,
 			Content:    cr.Content,

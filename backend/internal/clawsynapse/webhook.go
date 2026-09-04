@@ -2947,7 +2947,7 @@ func (h *WebhookHandler) handleKnowledgeQuery(c *gin.Context, webhook protocol.W
 
 	// Validate project ownership
 	if payload.ProjectID != "" {
-		if appErr := h.store.ValidateProjectOwnership(userID, payload.ProjectID); appErr != nil {
+		if appErr := h.store.ValidateProjectOwnership(store.Scope{UserID: userID}, payload.ProjectID); appErr != nil {
 			h.sendKnowledgeError(webhook.From, payload, "access denied to project")
 			transport.WriteError(c, appErr)
 			return
@@ -3036,7 +3036,7 @@ func (h *WebhookHandler) knowledgeSearch(ctx context.Context, userID string, pay
 	if payload.ProjectID != "" {
 		projectID = &payload.ProjectID
 	}
-	chunks, err := h.store.SearchKnowledgeChunks(ctx, userID, projectID, payload.Query, payload.TopK)
+	chunks, err := h.store.SearchKnowledgeChunks(ctx, store.Scope{UserID: userID}, projectID, payload.Query, payload.TopK)
 	if err != nil {
 		return nil, err
 	}

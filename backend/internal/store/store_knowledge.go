@@ -13,12 +13,13 @@ import (
 )
 
 // CreateKnowledgeDocument creates a new knowledge document record.
-func (s *Store) CreateKnowledgeDocument(userID string, doc *model.KnowledgeDocument) (*model.KnowledgeDocument, *transport.AppError) {
+func (s *Store) CreateKnowledgeDocument(sc Scope, doc *model.KnowledgeDocument) (*model.KnowledgeDocument, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	doc.ID = "kb_" + newID()
-	doc.UserID = userID
+	doc.UserID = sc.UserID
+	doc.OrgID = s.resolveOwnerOrgUnsafe(sc)
 	doc.Status = model.KnowledgeDocStatusProcessing
 	now := time.Now().UTC()
 	doc.CreatedAt = now
@@ -31,7 +32,7 @@ func (s *Store) CreateKnowledgeDocument(userID string, doc *model.KnowledgeDocum
 	}
 
 	s.knowledgeDocs[doc.ID] = doc
-	s.userKnowledgeDocs[userID] = append(s.userKnowledgeDocs[userID], doc.ID)
+	s.userKnowledgeDocs[sc.UserID] = append(s.userKnowledgeDocs[sc.UserID], doc.ID)
 
 	if err := s.persistKnowledgeDocUnsafe(doc); err != nil {
 		return nil, mongoWriteError(err)
@@ -40,7 +41,7 @@ func (s *Store) CreateKnowledgeDocument(userID string, doc *model.KnowledgeDocum
 }
 
 // GetKnowledgeDocument returns a document by ID, checking ownership.
-func (s *Store) GetKnowledgeDocument(userID, docID string) (*model.KnowledgeDocument, *transport.AppError) {
+func (s *Store) GetKnowledgeDocument(sc Scope, docID string) (*model.KnowledgeDocument, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -48,18 +49,38 @@ func (s *Store) GetKnowledgeDocument(userID, docID string) (*model.KnowledgeDocu
 	if !ok {
 		return nil, transport.NotFound("knowledge document not found")
 	}
-	if doc.UserID != userID {
+	if !visibleToScope(sc, doc.OrgID, doc.UserID) {
 		return nil, transport.Forbidden("access denied")
 	}
 	return doc, nil
 }
 
 // ListKnowledgeDocuments returns documents for a user with optional filters.
-func (s *Store) ListKnowledgeDocuments(userID, projectID, status, tag string) []*model.KnowledgeDocument {
+func (s *Store) ListKnowledgeDocuments(sc Scope, projectID, status, tag string) []*model.KnowledgeDocument {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	docIDs := s.userKnowledgeDocs[userID]
+	// 带租户上下文时，user 分区索引只覆盖作者本人的文档，
+	// 必须全量扫描按归属裁决，否则同租户成员上传的文档列不出来。
+	if sc.HasOrg() {
+		result := make([]*model.KnowledgeDocument, 0)
+		for _, doc := range s.knowledgeDocs {
+			if !visibleToScope(sc, doc.OrgID, doc.UserID) {
+				continue
+			}
+			if !knowledgeDocMatchesFilters(doc, projectID, status, tag) {
+				continue
+			}
+			result = append(result, doc)
+		}
+		sort.Slice(result, func(i, j int) bool {
+			return result[i].CreatedAt.Before(result[j].CreatedAt)
+		})
+		return result
+	}
+
+	// 无租户上下文：走 user 分区索引，与改造前完全一致
+	docIDs := s.userKnowledgeDocs[sc.UserID]
 	var result []*model.KnowledgeDocument
 	for _, id := range docIDs {
 		doc, ok := s.knowledgeDocs[id]
@@ -83,7 +104,7 @@ func (s *Store) ListKnowledgeDocuments(userID, projectID, status, tag string) []
 }
 
 // UpdateKnowledgeDocument updates document metadata.
-func (s *Store) UpdateKnowledgeDocument(userID, docID string, title, description *string, tags []string) (*model.KnowledgeDocument, *transport.AppError) {
+func (s *Store) UpdateKnowledgeDocument(sc Scope, docID string, title, description *string, tags []string) (*model.KnowledgeDocument, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -91,7 +112,7 @@ func (s *Store) UpdateKnowledgeDocument(userID, docID string, title, description
 	if !ok {
 		return nil, transport.NotFound("knowledge document not found")
 	}
-	if doc.UserID != userID {
+	if !visibleToScope(sc, doc.OrgID, doc.UserID) {
 		return nil, transport.Forbidden("access denied")
 	}
 
@@ -113,7 +134,7 @@ func (s *Store) UpdateKnowledgeDocument(userID, docID string, title, description
 }
 
 // DeleteKnowledgeDocument removes a document and its chunks from the store.
-func (s *Store) DeleteKnowledgeDocument(userID, docID string) (*model.KnowledgeDocument, *transport.AppError) {
+func (s *Store) DeleteKnowledgeDocument(sc Scope, docID string) (*model.KnowledgeDocument, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -121,15 +142,15 @@ func (s *Store) DeleteKnowledgeDocument(userID, docID string) (*model.KnowledgeD
 	if !ok {
 		return nil, transport.NotFound("knowledge document not found")
 	}
-	if doc.UserID != userID {
+	if !visibleToScope(sc, doc.OrgID, doc.UserID) {
 		return nil, transport.Forbidden("access denied")
 	}
 
 	delete(s.knowledgeDocs, docID)
-	ids := s.userKnowledgeDocs[userID]
+	ids := s.userKnowledgeDocs[sc.UserID]
 	for i, id := range ids {
 		if id == docID {
-			s.userKnowledgeDocs[userID] = append(ids[:i], ids[i+1:]...)
+			s.userKnowledgeDocs[sc.UserID] = append(ids[:i], ids[i+1:]...)
 			break
 		}
 	}
@@ -238,7 +259,7 @@ func (s *Store) ResolveKnowledgeDocOwnerByAgentNode(nodeID string) (string, *tra
 }
 
 // ValidateProjectOwnership checks that a project belongs to a user.
-func (s *Store) ValidateProjectOwnership(userID, projectID string) *transport.AppError {
+func (s *Store) ValidateProjectOwnership(sc Scope, projectID string) *transport.AppError {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -246,7 +267,7 @@ func (s *Store) ValidateProjectOwnership(userID, projectID string) *transport.Ap
 	if !ok {
 		return transport.NotFound("project not found")
 	}
-	if project.UserID != userID {
+	if !visibleToScope(sc, project.OrgID, project.UserID) {
 		return transport.Forbidden("access denied to project")
 	}
 	return nil
@@ -263,7 +284,7 @@ func (s *Store) GetKnowledgeDocTitle(docID string) string {
 }
 
 // SearchKnowledgeChunks does a text search fallback (when no vector search).
-func (s *Store) SearchKnowledgeChunks(ctx context.Context, userID string, projectID *string, query string, limit int) ([]model.KnowledgeChunk, error) {
+func (s *Store) SearchKnowledgeChunks(ctx context.Context, sc Scope, projectID *string, query string, limit int) ([]model.KnowledgeChunk, error) {
 	if !s.mongoEnabled || s.mongoKnowledgeChunks == nil {
 		return nil, nil
 	}
@@ -271,7 +292,11 @@ func (s *Store) SearchKnowledgeChunks(ctx context.Context, userID string, projec
 	defer cancel()
 	_ = ctx
 
-	filter := bson.M{"user_id": userID}
+	// 带租户上下文按 org_id 检索；否则按 user_id，与改造前完全一致。
+	filter := bson.M{"user_id": sc.UserID}
+	if sc.HasOrg() {
+		filter = bson.M{"org_id": sc.OrgID}
+	}
 	if projectID != nil {
 		filter["$or"] = bson.A{
 			bson.M{"project_id": *projectID},
@@ -390,4 +415,21 @@ func containsTag(tags []string, target string) bool {
 		}
 	}
 	return false
+}
+
+// knowledgeDocMatchesFilters 是 ListKnowledgeDocuments 的过滤条件，
+// 抽出来供无租户上下文（user 分区索引）与带租户上下文（全量扫描）两条路径复用。
+func knowledgeDocMatchesFilters(doc *model.KnowledgeDocument, projectID, status, tag string) bool {
+	if projectID != "" {
+		if doc.ProjectID == nil || *doc.ProjectID != projectID {
+			return false
+		}
+	}
+	if status != "" && doc.Status != status {
+		return false
+	}
+	if tag != "" && !containsTag(doc.Tags, tag) {
+		return false
+	}
+	return true
 }

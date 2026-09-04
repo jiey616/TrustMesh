@@ -1,6 +1,6 @@
 # TrustMesh 多租户 + 企业管理 实施设计
 
-> 状态：**阶段 0 + 阶段 1 已完成，阶段 2 分批推进中**（阶段 0 commit `5fa4a71`；阶段 1 见 §阶段 1 实况；阶段 2 见 §阶段 2 实况，**2-1 Project / 2-2 Task / 2-3 Agent 均已上线**）
+> 状态：**阶段 0 + 阶段 1 已完成，阶段 2 分批推进中**（阶段 0 commit `5fa4a71`；阶段 1 见 §阶段 1 实况；阶段 2 见 §阶段 2 实况，**2-1 Project / 2-2 Task / 2-3 Agent / 2-4 Knowledge+Template 均已上线**）
 > 日期：2026-09-04
 > 开工前备份：`deploy/backups/mongodump-trustmesh-20260904-214800.archive.gz`，git tag `pre-multitenant-stage0`
 > 阶段 1 备份：`deploy/backups/mongodump-trustmesh-20260904-223127-stage1.archive.gz`，git tag `pre-multitenant-stage1`
@@ -410,6 +410,36 @@ func visibleToScope(sc Scope, ownerOrgID, ownerUserID string) bool {
 2. **单参数调用会漏网**。批量改调用点时，正则若写死 `\(userID,` 就匹配不到 `ListAgents(userID)` 这种首参后紧跟 `)` 的形式，必须补 `PATTERN_SINGLE`。
 3. **Go map 遍历序随机**。冒烟对比「无头 vs 真实头」的返回集时，首条元素不同是**正常的**（不是回归）；要按**集合差集**比对，不要按首条或顺序。实测 action-items 两边均 7 条、差集为 0。
 
+### 2-4 Knowledge + WorkflowTemplate 归属收敛（已完成并上线）
+
+| 项 | 内容 |
+|---|---|
+| 签名收敛 | `store_knowledge.go` 7 个函数收 Scope：`CreateKnowledgeDocument`（写路径）/ `GetKnowledgeDocument` / `ListKnowledgeDocuments` / `UpdateKnowledgeDocument` / `DeleteKnowledgeDocument` / `SearchKnowledgeChunks` / `ValidateProjectOwnership`；`store_workflow_template.go` 10 个：CRUD + `CopyWorkflowTemplate` / `InheritWorkflowTemplate` / `ComputeWorkflowSyncDiff` / `ApplyWorkflowSync` / `DetachWorkflowFromTemplate` |
+| 写路径落点 | `CreateWorkflowTemplate` / `CopyWorkflowTemplate` 的 `OrgID` 改 `resolveOwnerOrgUnsafe(sc)` |
+| Handler | `knowledge.go` 8 处 + `workflow_template.go` 10 处 + `project_file.go` 1 处鉴权行改 `currentScope`；`project.go` 的 `InheritWorkflowTemplate` 调用点 |
+| 内部路径 | `assistant/tools.go`(1) / `clawsynapse/webhook.go`(2) 显式传 user-only Scope，语义与改造前一致 |
+| 测试 | 新增 4 个：`TestKnowledgeScopedVisibility` / `TestCreateKnowledgeDocOwnerOrg` / `TestWorkflowTemplateScopedVisibility` / `TestValidateProjectOwnershipScoped` |
+
+#### 🔴 补掉阶段 1 的两处双写漏网
+
+1. **`CreateKnowledgeDocument` 从未设置 `doc.OrgID`**。集合里现有的 `org_id` 全是阶段 1 回填脚本写的（记录创建于 8 月，早于回填）。不补的话，2-4 收敛后新建的知识库文档 `org_id` 恒为空 → `visibleToScope` 永远退回 user 维度 → **企业租户下建的文档对同租户其他成员不可见**（与 2-2 写路径同类的功能缺陷）。
+2. **`knowledge.Processor` 构造 chunk 时漏了 `OrgID`**。chunk 从 `doc.UserID` 派生但没有 `doc.OrgID`，而文本检索的 Mongo 过滤是 `{"user_id": ...}` → 已改为租户感知后，缺 `org_id` 的 chunk 会检索不到。
+
+#### 关键设计决策
+
+1. **List 走「双路径」**。`userKnowledgeDocs` / `userWorkflowTemplates` 是 **user 分区 map**（`map[userID]→[]id`）。若只改单条裁决，会出现「Get 能打开同租户成员的资源、List 却列不出来」的行为不一致。做法：
+   - **无租户上下文** → 走分区索引，**零改动、零回归、零额外开销**
+   - **带租户上下文** → 全量扫描 + `visibleToScope` 裁决（并按原有顺序排序：模板新→旧，文档旧→新）
+   这与阶段 2-7 处理 Event/Notification 分区 map 的思路一致。
+2. **检索过滤租户感知**。`SearchKnowledgeChunks` 的 Mongo 过滤与 `vectorSearch` 的 Qdrant 过滤，均为「带租户上下文按 `org_id`，否则按 `user_id`」。
+3. 🔴 **store 层信任传入的 Scope，成员合法性由 `middleware.OrgScope` 保证**。`ownedByOrg` 只比较 `sc.OrgID == ownerOrgID`，不重复校验成员关系 —— 非成员带伪租户头在中间件就被 401 拦掉了。写测试时**必须**用「真实成员 + 目标租户」的组合，构造 `Scope{UserID: 非成员, OrgID: 某租户}` 会得到无意义的结论（作者本人的未回填资源仍可见）。
+
+**踩坑（🔴 下次必须避开）**
+
+1. **CRLF 文件的多行模式必须带 `\r\n`**。`store_workflow_template.go` 是纯 CRLF，脚本里写 `\n` 的单行/多行模式全部匹配失败（报 SKIPPED），而**不含换行的单行模式反而能命中** —— 这种「部分成功」最容易漏。脚本输出一定要逐条核对 `ok/SKIPPED`。
+2. **handler 加 `userID := sc.UserID` 会造成大量 `declared and not used`**。正确做法是**按函数体静态分析**删除未使用的声明（去掉声明行后正则搜 `\buserID\b`），而不是编译报错一行行删。本次 knowledge.go 删 6 处、workflow_template.go 删 10 处。
+3. **内部辅助函数的 `userID string` 形参要一并改**。`textSearch` / `vectorSearch` 不是 gin handler，持有的是裸 `userID`；改成 `sc store.Scope` 后检索才可能租户感知。
+
 **后续批次排期**
 
 | 批次 | 范围 | 状态 |
@@ -417,7 +447,7 @@ func visibleToScope(sc Scope, ownerOrgID, ownerUserID string) bool {
 | 2-1 | Project（7 函数 + handler + 裁决层） | ✅ 已上线 |
 | 2-2 | Task 归属收敛 | ✅ 已上线 |
 | 2-3 | Agent 归属收敛 | ✅ 已上线 |
-| 2-4 | Knowledge + WorkflowTemplate | ⬜ 待开工 |
+| 2-4 | Knowledge + WorkflowTemplate | ✅ 已上线 |
 | 2-5 | File + Comment + Meeting | ⬜ 待开工 |
 | 2-6 | JoinRequest + ExternalApp | ⬜ 待开工 |
 | 2-7 | Event + Notification 分区 map（§4.3） | ⬜ 待开工 |

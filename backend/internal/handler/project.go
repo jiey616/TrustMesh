@@ -42,7 +42,7 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 		return
 	}
 	if req.TemplateID != "" {
-		project, appErr = h.store.InheritWorkflowTemplate(sc.UserID, project.ID, req.TemplateID)
+		project, appErr = h.store.InheritWorkflowTemplate(sc, project.ID, req.TemplateID)
 		if appErr != nil {
 			transport.WriteError(c, appErr)
 			return

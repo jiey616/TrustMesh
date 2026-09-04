@@ -231,7 +231,7 @@ func (e *ToolExecutor) searchKnowledge(ctx context.Context, userID string, args 
 		if projectID != "" {
 			pid = &projectID
 		}
-		chunks, err := e.store.SearchKnowledgeChunks(ctx, userID, pid, query, topK)
+		chunks, err := e.store.SearchKnowledgeChunks(ctx, store.Scope{UserID: userID}, pid, query, topK)
 		if err != nil {
 			return nil, err
 		}

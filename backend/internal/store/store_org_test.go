@@ -757,3 +757,189 @@ func TestAgentChatIsUserScoped(t *testing.T) {
 		t.Fatal("u1 must not see u2's personal chat session")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// 阶段 2-4：Knowledge + WorkflowTemplate 归属收敛
+// ---------------------------------------------------------------------------
+
+func seedKnowledgeFixture(s *Store, orgA, orgB *model.Organization) {
+	s.knowledgeDocs["kbA"] = &model.KnowledgeDocument{
+		ID: "kbA", OrgID: orgA.ID, UserID: "u1", Title: "A 的知识", Status: model.KnowledgeDocStatusReady,
+	}
+	s.knowledgeDocs["kbA-legacy"] = &model.KnowledgeDocument{
+		ID: "kbA-legacy", UserID: "u1", Title: "未回填的知识", Status: model.KnowledgeDocStatusReady,
+	}
+	s.knowledgeDocs["kbB"] = &model.KnowledgeDocument{
+		ID: "kbB", OrgID: orgB.ID, UserID: "u9", Title: "B 的知识", Status: model.KnowledgeDocStatusReady,
+	}
+	s.userKnowledgeDocs["u1"] = []string{"kbA", "kbA-legacy"}
+	s.userKnowledgeDocs["u9"] = []string{"kbB"}
+
+	s.workflowTemplates["wtA"] = &model.WorkflowTemplate{
+		ID: "wtA", OrgID: orgA.ID, UserID: "u1", Name: "A 的模板", Version: 1,
+	}
+	s.workflowTemplates["wtB"] = &model.WorkflowTemplate{
+		ID: "wtB", OrgID: orgB.ID, UserID: "u9", Name: "B 的模板", Version: 1,
+	}
+	s.userWorkflowTemplates["u1"] = []string{"wtA"}
+	s.userWorkflowTemplates["u9"] = []string{"wtB"}
+}
+
+// TestKnowledgeScopedVisibility 覆盖知识库文档的三级裁决。
+func TestKnowledgeScopedVisibility(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	orgB, _ := s.CreateOrganization("u9", "Globex", "globex", model.OrgKindEnterprise)
+	if _, err := s.AddOrgMember(orgA.ID, "u2", model.OrgRoleMember); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	seedKnowledgeFixture(s, orgA, orgB)
+
+	// 无租户头：与改造前一致，只看自己的
+	if got := s.ListKnowledgeDocuments(Scope{UserID: "u1"}, "", "", ""); len(got) != 2 {
+		t.Fatalf("u1 without org ctx should see own 2 docs, got %d", len(got))
+	}
+	if got := s.ListKnowledgeDocuments(Scope{UserID: "u2"}, "", "", ""); len(got) != 0 {
+		t.Fatalf("u2 without org ctx should see nothing, got %d", len(got))
+	}
+
+	// 有租户头：全量扫描 + 归属裁决，同租户成员的已回填文档可见
+	got := s.ListKnowledgeDocuments(Scope{UserID: "u2", OrgID: orgA.ID}, "", "", "")
+	if len(got) != 1 || got[0].ID != "kbA" {
+		t.Fatalf("u2 in orgA should see kbA only (未回填文档不对他人放行), got %+v", got)
+	}
+	// 未回填文档对作者本人在租户上下文下仍可见
+	if got := s.ListKnowledgeDocuments(Scope{UserID: "u1", OrgID: orgA.ID}, "", "", ""); len(got) != 2 {
+		t.Fatalf("u1 in orgA should still see own 2 docs, got %d", len(got))
+	}
+	// 跨租户不可见（u9 是 orgB 的成员；Scope 的成员合法性由 middleware.OrgScope 保证，
+	// store 层信任传入的 Scope，因此这里必须用"真实成员 + 目标租户"的组合）
+	if got := s.ListKnowledgeDocuments(Scope{UserID: "u9", OrgID: orgB.ID}, "", "", ""); len(got) != 1 || got[0].ID != "kbB" {
+		t.Fatalf("u9 in orgB should see only kbB, got %+v", got)
+	}
+
+	// GetKnowledgeDocument
+	if _, err := s.GetKnowledgeDocument(Scope{UserID: "u2"}, "kbA"); err == nil {
+		t.Fatal("u2 without org ctx must not read kbA")
+	}
+	if _, err := s.GetKnowledgeDocument(Scope{UserID: "u2", OrgID: orgA.ID}, "kbA"); err != nil {
+		t.Fatalf("u2 in orgA should read kbA: %v", err)
+	}
+	if _, err := s.GetKnowledgeDocument(Scope{UserID: "u9", OrgID: orgB.ID}, "kbA"); err == nil {
+		t.Fatal("kbA must not be visible under orgB")
+	}
+}
+
+// TestCreateKnowledgeDocOwnerOrg 覆盖阶段 1 漏掉的双写：
+// 带租户头建的文档挂活跃租户，无租户头退回个人租户。
+func TestCreateKnowledgeDocOwnerOrg(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	if _, err := s.AddOrgMember(orgA.ID, "u2", model.OrgRoleMember); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	if _, err := s.EnsurePersonalOrg("u1", "Jiey"); err != nil {
+		t.Fatalf("ensure personal org: %v", err)
+	}
+	var personal *model.Organization
+	for _, o := range s.ListUserOrganizations("u1") {
+		if o.Kind == model.OrgKindPersonal {
+			personal = o
+		}
+	}
+	if personal == nil {
+		t.Fatal("personal org missing")
+	}
+
+	// 带租户上下文（作者是 u2）
+	doc, err := s.CreateKnowledgeDocument(Scope{UserID: "u2", OrgID: orgA.ID}, &model.KnowledgeDocument{Title: "X"})
+	if err != nil {
+		t.Fatalf("create doc under org ctx: %v", err)
+	}
+	if doc.OrgID != orgA.ID {
+		t.Fatalf("doc should land in the active org, got %q want %q", doc.OrgID, orgA.ID)
+	}
+	if doc.UserID != "u2" {
+		t.Fatalf("doc author should be the caller, got %q", doc.UserID)
+	}
+
+	// 无租户上下文：退回个人租户
+	doc2, err := s.CreateKnowledgeDocument(Scope{UserID: "u1"}, &model.KnowledgeDocument{Title: "Y"})
+	if err != nil {
+		t.Fatalf("create doc without org ctx: %v", err)
+	}
+	if doc2.OrgID != personal.ID {
+		t.Fatalf("doc should land in personal org, got %q want %q", doc2.OrgID, personal.ID)
+	}
+}
+
+// TestWorkflowTemplateScopedVisibility 覆盖工作流模板的三级裁决，
+// 并验证带租户头时 List 能突破 user 分区索引看到同租户成员的模板。
+func TestWorkflowTemplateScopedVisibility(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	orgB, _ := s.CreateOrganization("u9", "Globex", "globex", model.OrgKindEnterprise)
+	if _, err := s.AddOrgMember(orgA.ID, "u2", model.OrgRoleMember); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	seedKnowledgeFixture(s, orgA, orgB)
+
+	// 无租户头：走 user 分区索引，与改造前一致
+	if got := s.ListWorkflowTemplates(Scope{UserID: "u1"}); len(got) != 1 || got[0].ID != "wtA" {
+		t.Fatalf("u1 without org ctx should see own wtA, got %+v", got)
+	}
+	if got := s.ListWorkflowTemplates(Scope{UserID: "u2"}); len(got) != 0 {
+		t.Fatalf("u2 without org ctx should see nothing, got %d", len(got))
+	}
+
+	// 有租户头：全量扫描，同租户成员的模板可见（分区索引扫不到）
+	got := s.ListWorkflowTemplates(Scope{UserID: "u2", OrgID: orgA.ID})
+	if len(got) != 1 || got[0].ID != "wtA" {
+		t.Fatalf("u2 in orgA should see wtA via org scan, got %+v", got)
+	}
+	// 跨租户不可见
+	if got := s.ListWorkflowTemplates(Scope{UserID: "u9", OrgID: orgB.ID}); len(got) != 1 || got[0].ID != "wtB" {
+		t.Fatalf("u9 in orgB should see only wtB, got %+v", got)
+	}
+
+	// GetWorkflowTemplate
+	if _, err := s.GetWorkflowTemplate(Scope{UserID: "u2"}, "wtA"); err == nil {
+		t.Fatal("u2 without org ctx must not read wtA")
+	}
+	if _, err := s.GetWorkflowTemplate(Scope{UserID: "u2", OrgID: orgA.ID}, "wtA"); err != nil {
+		t.Fatalf("u2 in orgA should read wtA: %v", err)
+	}
+	if _, err := s.GetWorkflowTemplate(Scope{UserID: "u9", OrgID: orgB.ID}, "wtA"); err == nil {
+		t.Fatal("wtA must not be visible under orgB")
+	}
+
+	// CopyWorkflowTemplate 的副本归属跟随当前 Scope
+	copied, err := s.CopyWorkflowTemplate(Scope{UserID: "u2", OrgID: orgA.ID}, "wtA")
+	if err != nil {
+		t.Fatalf("copy under org ctx: %v", err)
+	}
+	if copied.OrgID != orgA.ID || copied.UserID != "u2" {
+		t.Fatalf("copy owner = org:%q user:%q", copied.OrgID, copied.UserID)
+	}
+}
+
+// TestValidateProjectOwnershipScoped 项目归属校验走统一裁决。
+func TestValidateProjectOwnershipScoped(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	orgB, _ := s.CreateOrganization("u9", "Globex", "globex", model.OrgKindEnterprise)
+	if _, err := s.AddOrgMember(orgA.ID, "u2", model.OrgRoleMember); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	s.projects["pA"] = &model.Project{ID: "pA", OrgID: orgA.ID, UserID: "u1", Name: "A 的项目"}
+
+	if err := s.ValidateProjectOwnership(Scope{UserID: "u2"}, "pA"); err == nil {
+		t.Fatal("u2 without org ctx must not own pA")
+	}
+	if err := s.ValidateProjectOwnership(Scope{UserID: "u2", OrgID: orgA.ID}, "pA"); err != nil {
+		t.Fatalf("u2 in orgA should own pA: %v", err)
+	}
+	if err := s.ValidateProjectOwnership(Scope{UserID: "u9", OrgID: orgB.ID}, "pA"); err == nil {
+		t.Fatal("pA must not validate under orgB")
+	}
+}

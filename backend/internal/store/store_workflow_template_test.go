@@ -37,7 +37,7 @@ func seedProjectWithPM(t *testing.T) (*Store, string, string) {
 func TestWorkflowTemplateCRUDAndVersion(t *testing.T) {
 	s := New()
 	userID := "u1"
-	tpl, appErr := s.CreateWorkflowTemplate(userID, " 产线模板 ", "", steps("剧本创作", "剧本解析"))
+	tpl, appErr := s.CreateWorkflowTemplate(Scope{UserID: userID}, " 产线模板 ", "", steps("剧本创作", "剧本解析"))
 	if appErr != nil {
 		t.Fatalf("create: %v", appErr)
 	}
@@ -49,7 +49,7 @@ func TestWorkflowTemplateCRUDAndVersion(t *testing.T) {
 	}
 
 	// update bumps version
-	updated, appErr := s.UpdateWorkflowTemplate(userID, tpl.ID, nil, nil, steps("剧本创作", "剧本解析", "分镜拆解"))
+	updated, appErr := s.UpdateWorkflowTemplate(Scope{UserID: userID}, tpl.ID, nil, nil, steps("剧本创作", "剧本解析", "分镜拆解"))
 	if appErr != nil {
 		t.Fatalf("update: %v", appErr)
 	}
@@ -61,21 +61,21 @@ func TestWorkflowTemplateCRUDAndVersion(t *testing.T) {
 	}
 
 	// list
-	items := s.ListWorkflowTemplates(userID)
+	items := s.ListWorkflowTemplates(Scope{UserID: userID})
 	if len(items) != 1 {
 		t.Fatalf("list len = %d, want 1", len(items))
 	}
 
 	// other user cannot see / mutate
-	if other := s.ListWorkflowTemplates("u2"); len(other) != 0 {
+	if other := s.ListWorkflowTemplates(Scope{UserID: "u2"}); len(other) != 0 {
 		t.Errorf("other user sees %d templates", len(other))
 	}
-	if _, appErr := s.GetWorkflowTemplate("u2", tpl.ID); appErr == nil {
+	if _, appErr := s.GetWorkflowTemplate(Scope{UserID: "u2"}, tpl.ID); appErr == nil {
 		t.Error("other user should not read template")
 	}
 
 	// copy creates a fresh v1
-	copied, appErr := s.CopyWorkflowTemplate(userID, tpl.ID)
+	copied, appErr := s.CopyWorkflowTemplate(Scope{UserID: userID}, tpl.ID)
 	if appErr != nil {
 		t.Fatalf("copy: %v", appErr)
 	}
@@ -87,19 +87,19 @@ func TestWorkflowTemplateCRUDAndVersion(t *testing.T) {
 	}
 
 	// delete
-	if _, appErr := s.DeleteWorkflowTemplate(userID, tpl.ID); appErr != nil {
+	if _, appErr := s.DeleteWorkflowTemplate(Scope{UserID: userID}, tpl.ID); appErr != nil {
 		t.Fatalf("delete: %v", appErr)
 	}
-	if _, appErr := s.GetWorkflowTemplate(userID, tpl.ID); appErr == nil {
+	if _, appErr := s.GetWorkflowTemplate(Scope{UserID: userID}, tpl.ID); appErr == nil {
 		t.Error("deleted template still readable")
 	}
 }
 
 func TestInheritWorkflowTemplate(t *testing.T) {
 	s, userID, projectID := seedProjectWithPM(t)
-	tpl, _ := s.CreateWorkflowTemplate(userID, "产线模板", "", steps("A", "B", "C"))
+	tpl, _ := s.CreateWorkflowTemplate(Scope{UserID: userID}, "产线模板", "", steps("A", "B", "C"))
 
-	p2, appErr := s.InheritWorkflowTemplate(userID, projectID, tpl.ID)
+	p2, appErr := s.InheritWorkflowTemplate(Scope{UserID: userID}, projectID, tpl.ID)
 	if appErr != nil {
 		t.Fatalf("inherit: %v", appErr)
 	}
@@ -118,7 +118,7 @@ func TestInheritWorkflowTemplate(t *testing.T) {
 	}
 
 	// cannot inherit from other user's template
-	if _, appErr := s.InheritWorkflowTemplate("u2", projectID, tpl.ID); appErr == nil {
+	if _, appErr := s.InheritWorkflowTemplate(Scope{UserID: "u2"}, projectID, tpl.ID); appErr == nil {
 		t.Error("other user should not inherit")
 	}
 }
@@ -159,8 +159,8 @@ func TestThreeWayMergeKinds(t *testing.T) {
 
 func TestApplyWorkflowSync(t *testing.T) {
 	s, userID, projectID := seedProjectWithPM(t)
-	tpl, _ := s.CreateWorkflowTemplate(userID, "产线模板", "", steps("a", "b", "c"))
-	inherited, _ := s.InheritWorkflowTemplate(userID, projectID, tpl.ID)
+	tpl, _ := s.CreateWorkflowTemplate(Scope{UserID: userID}, "产线模板", "", steps("a", "b", "c"))
+	inherited, _ := s.InheritWorkflowTemplate(Scope{UserID: userID}, projectID, tpl.ID)
 	wf := inherited.Workflows[0]
 	wfID := wf.ID
 
@@ -185,13 +185,13 @@ func TestApplyWorkflowSync(t *testing.T) {
 	_ = project2
 
 	// Template bumps to v2: updates b (same name), keeps a, removes c, adds d.
-	s.UpdateWorkflowTemplate(userID, tpl.ID, nil, nil, []model.WorkflowStep{
+	s.UpdateWorkflowTemplate(Scope{UserID: userID}, tpl.ID, nil, nil, []model.WorkflowStep{
 		steps("a")[0],
 		{Name: "b", Role: "tpl_b"},
 		steps("d")[0],
 	})
 
-	diff, appErr := s.ComputeWorkflowSyncDiff(userID, projectID, wfID)
+	diff, appErr := s.ComputeWorkflowSyncDiff(Scope{UserID: userID}, projectID, wfID)
 	if appErr != nil {
 		t.Fatalf("diff: %v", appErr)
 	}
@@ -203,7 +203,7 @@ func TestApplyWorkflowSync(t *testing.T) {
 	}
 
 	// Apply sync keeping c (remove_pending not confirmed).
-	synced, appErr := s.ApplyWorkflowSync(userID, projectID, wfID, nil)
+	synced, appErr := s.ApplyWorkflowSync(Scope{UserID: userID}, projectID, wfID, nil)
 	if appErr != nil {
 		t.Fatalf("apply sync: %v", appErr)
 	}
@@ -225,12 +225,12 @@ func TestApplyWorkflowSync(t *testing.T) {
 
 	// Sync again: template v3 removes d (a fresh remove_pending) and adds e.
 	// Confirm deletion of d.
-	s.UpdateWorkflowTemplate(userID, tpl.ID, nil, nil, []model.WorkflowStep{
+	s.UpdateWorkflowTemplate(Scope{UserID: userID}, tpl.ID, nil, nil, []model.WorkflowStep{
 		steps("a")[0],
 		{Name: "b", Role: "tpl_b"},
 		steps("e")[0],
 	})
-	synced2, appErr := s.ApplyWorkflowSync(userID, projectID, wfID, []string{"d"})
+	synced2, appErr := s.ApplyWorkflowSync(Scope{UserID: userID}, projectID, wfID, []string{"d"})
 	if appErr != nil {
 		t.Fatalf("apply sync 2: %v", appErr)
 	}
@@ -258,11 +258,11 @@ func TestApplyWorkflowSync(t *testing.T) {
 
 func TestDetachWorkflowFromTemplate(t *testing.T) {
 	s, userID, projectID := seedProjectWithPM(t)
-	tpl, _ := s.CreateWorkflowTemplate(userID, "tpl", "", steps("a", "b"))
-	inherited, _ := s.InheritWorkflowTemplate(userID, projectID, tpl.ID)
+	tpl, _ := s.CreateWorkflowTemplate(Scope{UserID: userID}, "tpl", "", steps("a", "b"))
+	inherited, _ := s.InheritWorkflowTemplate(Scope{UserID: userID}, projectID, tpl.ID)
 	wfID := inherited.Workflows[0].ID
 
-	detached, appErr := s.DetachWorkflowFromTemplate(userID, projectID, wfID)
+	detached, appErr := s.DetachWorkflowFromTemplate(Scope{UserID: userID}, projectID, wfID)
 	if appErr != nil {
 		t.Fatalf("detach: %v", appErr)
 	}
@@ -270,7 +270,7 @@ func TestDetachWorkflowFromTemplate(t *testing.T) {
 	if wf.ParentTemplateID != "" || wf.TemplateVersion != 0 || len(wf.TemplateSnapshot) != 0 {
 		t.Errorf("after detach meta = parent=%q ver=%d snap=%d", wf.ParentTemplateID, wf.TemplateVersion, len(wf.TemplateSnapshot))
 	}
-	if _, appErr := s.ComputeWorkflowSyncDiff(userID, projectID, wfID); appErr == nil {
+	if _, appErr := s.ComputeWorkflowSyncDiff(Scope{UserID: userID}, projectID, wfID); appErr == nil {
 		t.Error("detached workflow should not compute sync diff")
 	}
 }

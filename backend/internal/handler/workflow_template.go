@@ -26,7 +26,7 @@ type workflowTemplatePayload struct {
 // ---------- 全局模板 CRUD ----------
 
 func (h *WorkflowTemplateHandler) Create(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -35,7 +35,7 @@ func (h *WorkflowTemplateHandler) Create(c *gin.Context) {
 		transport.WriteError(c, transport.BadRequest("BAD_REQUEST", "invalid json body"))
 		return
 	}
-	t, appErr := h.store.CreateWorkflowTemplate(userID, req.Name, req.Description, req.Steps)
+	t, appErr := h.store.CreateWorkflowTemplate(sc, req.Name, req.Description, req.Steps)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -44,20 +44,20 @@ func (h *WorkflowTemplateHandler) Create(c *gin.Context) {
 }
 
 func (h *WorkflowTemplateHandler) List(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	items := h.store.ListWorkflowTemplates(userID)
+	items := h.store.ListWorkflowTemplates(sc)
 	transport.WriteList(c, items, len(items))
 }
 
 func (h *WorkflowTemplateHandler) Get(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	t, appErr := h.store.GetWorkflowTemplate(userID, c.Param("templateId"))
+	t, appErr := h.store.GetWorkflowTemplate(sc, c.Param("templateId"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -66,7 +66,7 @@ func (h *WorkflowTemplateHandler) Get(c *gin.Context) {
 }
 
 func (h *WorkflowTemplateHandler) Update(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -75,7 +75,7 @@ func (h *WorkflowTemplateHandler) Update(c *gin.Context) {
 		transport.WriteError(c, transport.BadRequest("BAD_REQUEST", "invalid json body"))
 		return
 	}
-	t, appErr := h.store.UpdateWorkflowTemplate(userID, c.Param("templateId"), &req.Name, &req.Description, req.Steps)
+	t, appErr := h.store.UpdateWorkflowTemplate(sc, c.Param("templateId"), &req.Name, &req.Description, req.Steps)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -84,11 +84,11 @@ func (h *WorkflowTemplateHandler) Update(c *gin.Context) {
 }
 
 func (h *WorkflowTemplateHandler) Copy(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	t, appErr := h.store.CopyWorkflowTemplate(userID, c.Param("templateId"))
+	t, appErr := h.store.CopyWorkflowTemplate(sc, c.Param("templateId"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -97,11 +97,11 @@ func (h *WorkflowTemplateHandler) Copy(c *gin.Context) {
 }
 
 func (h *WorkflowTemplateHandler) Delete(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	t, appErr := h.store.DeleteWorkflowTemplate(userID, c.Param("templateId"))
+	t, appErr := h.store.DeleteWorkflowTemplate(sc, c.Param("templateId"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -116,7 +116,7 @@ type inheritWorkflowRequest struct {
 }
 
 func (h *WorkflowTemplateHandler) Inherit(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -125,7 +125,7 @@ func (h *WorkflowTemplateHandler) Inherit(c *gin.Context) {
 		transport.WriteError(c, transport.BadRequest("BAD_REQUEST", "invalid json body"))
 		return
 	}
-	project, appErr := h.store.InheritWorkflowTemplate(userID, c.Param("projectId"), req.TemplateID)
+	project, appErr := h.store.InheritWorkflowTemplate(sc, c.Param("projectId"), req.TemplateID)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -134,11 +134,11 @@ func (h *WorkflowTemplateHandler) Inherit(c *gin.Context) {
 }
 
 func (h *WorkflowTemplateHandler) SyncDiff(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	diff, appErr := h.store.ComputeWorkflowSyncDiff(userID, c.Param("projectId"), c.Param("workflowId"))
+	diff, appErr := h.store.ComputeWorkflowSyncDiff(sc, c.Param("projectId"), c.Param("workflowId"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -151,7 +151,7 @@ type applySyncRequest struct {
 }
 
 func (h *WorkflowTemplateHandler) ApplySync(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -160,7 +160,7 @@ func (h *WorkflowTemplateHandler) ApplySync(c *gin.Context) {
 		transport.WriteError(c, transport.BadRequest("BAD_REQUEST", "invalid json body"))
 		return
 	}
-	project, appErr := h.store.ApplyWorkflowSync(userID, c.Param("projectId"), c.Param("workflowId"), req.RemoveSteps)
+	project, appErr := h.store.ApplyWorkflowSync(sc, c.Param("projectId"), c.Param("workflowId"), req.RemoveSteps)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -169,11 +169,11 @@ func (h *WorkflowTemplateHandler) ApplySync(c *gin.Context) {
 }
 
 func (h *WorkflowTemplateHandler) Detach(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	project, appErr := h.store.DetachWorkflowFromTemplate(userID, c.Param("projectId"), c.Param("workflowId"))
+	project, appErr := h.store.DetachWorkflowFromTemplate(sc, c.Param("projectId"), c.Param("workflowId"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return

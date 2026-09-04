@@ -42,10 +42,11 @@ func NewKnowledgeHandler(
 }
 
 func (h *KnowledgeHandler) Upload(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
+	userID := sc.UserID
 
 	// Apply upload limits: max file size 100MB + file type whitelist
 	applyUploadLimit(c)
@@ -84,7 +85,7 @@ func (h *KnowledgeHandler) Upload(c *gin.Context) {
 	}
 
 	if projectID := strings.TrimSpace(c.PostForm("project_id")); projectID != "" {
-		if appErr := h.store.ValidateProjectOwnership(userID, projectID); appErr != nil {
+		if appErr := h.store.ValidateProjectOwnership(sc, projectID); appErr != nil {
 			transport.WriteError(c, appErr)
 			return
 		}
@@ -102,7 +103,7 @@ func (h *KnowledgeHandler) Upload(c *gin.Context) {
 	}
 
 	// Create document record first to get ID
-	doc, appErr := h.store.CreateKnowledgeDocument(userID, doc)
+	doc, appErr := h.store.CreateKnowledgeDocument(sc, doc)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -134,7 +135,7 @@ func (h *KnowledgeHandler) Upload(c *gin.Context) {
 }
 
 func (h *KnowledgeHandler) List(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -143,7 +144,7 @@ func (h *KnowledgeHandler) List(c *gin.Context) {
 	status := strings.TrimSpace(c.Query("status"))
 	tag := strings.TrimSpace(c.Query("tag"))
 
-	docs := h.store.ListKnowledgeDocuments(userID, projectID, status, tag)
+	docs := h.store.ListKnowledgeDocuments(sc, projectID, status, tag)
 	if docs == nil {
 		docs = []*model.KnowledgeDocument{}
 	}
@@ -151,12 +152,12 @@ func (h *KnowledgeHandler) List(c *gin.Context) {
 }
 
 func (h *KnowledgeHandler) Get(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 
-	doc, appErr := h.store.GetKnowledgeDocument(userID, c.Param("id"))
+	doc, appErr := h.store.GetKnowledgeDocument(sc, c.Param("id"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -171,7 +172,7 @@ type updateKnowledgeDocRequest struct {
 }
 
 func (h *KnowledgeHandler) Update(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -182,7 +183,7 @@ func (h *KnowledgeHandler) Update(c *gin.Context) {
 		return
 	}
 
-	doc, appErr := h.store.UpdateKnowledgeDocument(userID, c.Param("id"), req.Title, req.Description, req.Tags)
+	doc, appErr := h.store.UpdateKnowledgeDocument(sc, c.Param("id"), req.Title, req.Description, req.Tags)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -191,12 +192,12 @@ func (h *KnowledgeHandler) Update(c *gin.Context) {
 }
 
 func (h *KnowledgeHandler) Delete(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 
-	doc, appErr := h.store.DeleteKnowledgeDocument(userID, c.Param("id"))
+	doc, appErr := h.store.DeleteKnowledgeDocument(sc, c.Param("id"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -214,13 +215,13 @@ func (h *KnowledgeHandler) Delete(c *gin.Context) {
 }
 
 func (h *KnowledgeHandler) ListChunks(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 
 	docID := c.Param("id")
-	if _, appErr := h.store.GetKnowledgeDocument(userID, docID); appErr != nil {
+	if _, appErr := h.store.GetKnowledgeDocument(sc, docID); appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}
@@ -237,12 +238,12 @@ func (h *KnowledgeHandler) ListChunks(c *gin.Context) {
 }
 
 func (h *KnowledgeHandler) Reprocess(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 
-	doc, appErr := h.store.GetKnowledgeDocument(userID, c.Param("id"))
+	doc, appErr := h.store.GetKnowledgeDocument(sc, c.Param("id"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -279,7 +280,7 @@ type searchResultItem struct {
 }
 
 func (h *KnowledgeHandler) Search(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -300,10 +301,10 @@ func (h *KnowledgeHandler) Search(c *gin.Context) {
 		req.MinScore = 0.7
 	}
 
-	results, err := h.vectorSearch(c, userID, req)
+	results, err := h.vectorSearch(c, sc, req)
 	if err != nil {
 		h.log.Warn("vector search failed, falling back to text search", zap.Error(err))
-		results, err = h.textSearch(c, userID, req)
+		results, err = h.textSearch(c, sc, req)
 		if err != nil {
 			transport.WriteError(c, transport.NewError(http.StatusInternalServerError, "INTERNAL_ERROR", "search failed"))
 			return
@@ -316,7 +317,7 @@ func (h *KnowledgeHandler) Search(c *gin.Context) {
 	transport.WriteList(c, results, len(results))
 }
 
-func (h *KnowledgeHandler) vectorSearch(c *gin.Context, userID string, req searchRequest) ([]searchResultItem, error) {
+func (h *KnowledgeHandler) vectorSearch(c *gin.Context, sc store.Scope, req searchRequest) ([]searchResultItem, error) {
 	if h.embedder == nil || h.qdrant == nil {
 		return nil, errors.New("vector search unavailable: embedding not configured")
 	}
@@ -329,9 +330,13 @@ func (h *KnowledgeHandler) vectorSearch(c *gin.Context, userID string, req searc
 		return nil, nil
 	}
 
-	// Build filter
+	// Build filter：带租户上下文按 org_id 过滤，否则按 user_id（与改造前一致）
+	filterKey, filterValue := "user_id", sc.UserID
+	if sc.HasOrg() {
+		filterKey, filterValue = "org_id", sc.OrgID
+	}
 	mustConditions := []knowledge.QdrantCondition{
-		{Key: "user_id", Match: map[string]any{"value": userID}},
+		{Key: filterKey, Match: map[string]any{"value": filterValue}},
 	}
 
 	var filter *knowledge.QdrantFilter
@@ -381,13 +386,13 @@ func (h *KnowledgeHandler) vectorSearch(c *gin.Context, userID string, req searc
 	return results, nil
 }
 
-func (h *KnowledgeHandler) textSearch(c *gin.Context, userID string, req searchRequest) ([]searchResultItem, error) {
+func (h *KnowledgeHandler) textSearch(c *gin.Context, sc store.Scope, req searchRequest) ([]searchResultItem, error) {
 	var projectID *string
 	if req.ProjectID != "" {
 		projectID = &req.ProjectID
 	}
 
-	chunks, err := h.store.SearchKnowledgeChunks(c.Request.Context(), userID, projectID, req.Query, req.TopK)
+	chunks, err := h.store.SearchKnowledgeChunks(c.Request.Context(), sc, projectID, req.Query, req.TopK)
 	if err != nil {
 		return nil, err
 	}

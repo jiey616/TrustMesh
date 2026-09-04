@@ -1,6 +1,7 @@
 package store
 
 import (
+	"sort"
 	"strings"
 	"time"
 
@@ -10,7 +11,7 @@ import (
 
 // ---------- 全局工作流模板 CRUD ----------
 
-func (s *Store) CreateWorkflowTemplate(userID, name, description string, steps []model.WorkflowStep) (*model.WorkflowTemplate, *transport.AppError) {
+func (s *Store) CreateWorkflowTemplate(sc Scope, name, description string, steps []model.WorkflowStep) (*model.WorkflowTemplate, *transport.AppError) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, transport.Validation("invalid workflow template", map[string]any{"name": "required"})
@@ -18,7 +19,7 @@ func (s *Store) CreateWorkflowTemplate(userID, name, description string, steps [
 	now := time.Now().UTC()
 	doc := &model.WorkflowTemplate{
 		ID:          "wt_" + newID(),
-		UserID:      userID,
+		UserID:      sc.UserID,
 		Name:        name,
 		Description: strings.TrimSpace(description),
 		Steps:       cloneSteps(steps),
@@ -28,11 +29,11 @@ func (s *Store) CreateWorkflowTemplate(userID, name, description string, steps [
 	}
 
 	s.mu.Lock()
-	doc.OrgID = s.personalOrgOfUnsafe(userID)
+	doc.OrgID = s.resolveOwnerOrgUnsafe(sc)
 
 	defer s.mu.Unlock()
 	s.workflowTemplates[doc.ID] = doc
-	s.userWorkflowTemplates[userID] = append(s.userWorkflowTemplates[userID], doc.ID)
+	s.userWorkflowTemplates[sc.UserID] = append(s.userWorkflowTemplates[sc.UserID], doc.ID)
 	if err := s.persistWorkflowTemplateUnsafe(doc); err != nil {
 		return nil, mongoWriteError(err)
 	}
@@ -41,10 +42,29 @@ func (s *Store) CreateWorkflowTemplate(userID, name, description string, steps [
 
 // ListWorkflowTemplates returns the user's global workflow templates,
 // newest first.
-func (s *Store) ListWorkflowTemplates(userID string) []*model.WorkflowTemplate {
+func (s *Store) ListWorkflowTemplates(sc Scope) []*model.WorkflowTemplate {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	ids := s.userWorkflowTemplates[userID]
+
+	// 带租户上下文时，user 分区索引只覆盖作者本人的模板，
+	// 必须全量扫描按归属裁决，否则同租户成员建的模板列不出来
+	// （Get/Update/Delete 走 visibleToScope 能访问，列表却看不见，属行为不一致）。
+	if sc.HasOrg() {
+		items := make([]*model.WorkflowTemplate, 0)
+		for _, t := range s.workflowTemplates {
+			if !visibleToScope(sc, t.OrgID, t.UserID) {
+				continue
+			}
+			items = append(items, cloneWorkflowTemplate(t))
+		}
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].CreatedAt.After(items[j].CreatedAt)
+		})
+		return items
+	}
+
+	// 无租户上下文：走 user 分区索引，与改造前完全一致
+	ids := s.userWorkflowTemplates[sc.UserID]
 	out := make([]*model.WorkflowTemplate, 0, len(ids))
 	for i := len(ids) - 1; i >= 0; i-- {
 		if t, ok := s.workflowTemplates[ids[i]]; ok {
@@ -54,28 +74,28 @@ func (s *Store) ListWorkflowTemplates(userID string) []*model.WorkflowTemplate {
 	return out
 }
 
-func (s *Store) GetWorkflowTemplate(userID, templateID string) (*model.WorkflowTemplate, *transport.AppError) {
+func (s *Store) GetWorkflowTemplate(sc Scope, templateID string) (*model.WorkflowTemplate, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	t, ok := s.workflowTemplates[templateID]
 	if !ok {
 		return nil, transport.NotFound("workflow template not found")
 	}
-	if t.UserID != userID {
+	if !visibleToScope(sc, t.OrgID, t.UserID) {
 		return nil, transport.Forbidden("access denied")
 	}
 	return cloneWorkflowTemplate(t), nil
 }
 
 // UpdateWorkflowTemplate updates a template and bumps its version on every save.
-func (s *Store) UpdateWorkflowTemplate(userID, templateID string, name, description *string, steps []model.WorkflowStep) (*model.WorkflowTemplate, *transport.AppError) {
+func (s *Store) UpdateWorkflowTemplate(sc Scope, templateID string, name, description *string, steps []model.WorkflowStep) (*model.WorkflowTemplate, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t, ok := s.workflowTemplates[templateID]
 	if !ok {
 		return nil, transport.NotFound("workflow template not found")
 	}
-	if t.UserID != userID {
+	if !visibleToScope(sc, t.OrgID, t.UserID) {
 		return nil, transport.Forbidden("access denied")
 	}
 	if name != nil {
@@ -100,21 +120,21 @@ func (s *Store) UpdateWorkflowTemplate(userID, templateID string, name, descript
 }
 
 // CopyWorkflowTemplate duplicates the user's own template as a fresh v1.
-func (s *Store) CopyWorkflowTemplate(userID, templateID string) (*model.WorkflowTemplate, *transport.AppError) {
+func (s *Store) CopyWorkflowTemplate(sc Scope, templateID string) (*model.WorkflowTemplate, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	src, ok := s.workflowTemplates[templateID]
 	if !ok {
 		return nil, transport.NotFound("workflow template not found")
 	}
-	if src.UserID != userID {
+	if !visibleToScope(sc, src.OrgID, src.UserID) {
 		return nil, transport.Forbidden("access denied")
 	}
 	now := time.Now().UTC()
 	doc := &model.WorkflowTemplate{
 		ID:          "wt_" + newID(),
-		UserID:      userID,
-		OrgID:      s.personalOrgOfUnsafe(userID),
+		UserID:      sc.UserID,
+		OrgID:      s.resolveOwnerOrgUnsafe(sc),
 		Name:        src.Name + "（副本）",
 		Description: src.Description,
 		Steps:       cloneSteps(src.Steps),
@@ -123,28 +143,28 @@ func (s *Store) CopyWorkflowTemplate(userID, templateID string) (*model.Workflow
 		UpdatedAt:   now,
 	}
 	s.workflowTemplates[doc.ID] = doc
-	s.userWorkflowTemplates[userID] = append(s.userWorkflowTemplates[userID], doc.ID)
+	s.userWorkflowTemplates[sc.UserID] = append(s.userWorkflowTemplates[sc.UserID], doc.ID)
 	if err := s.persistWorkflowTemplateUnsafe(doc); err != nil {
 		return nil, mongoWriteError(err)
 	}
 	return cloneWorkflowTemplate(doc), nil
 }
 
-func (s *Store) DeleteWorkflowTemplate(userID, templateID string) (*model.WorkflowTemplate, *transport.AppError) {
+func (s *Store) DeleteWorkflowTemplate(sc Scope, templateID string) (*model.WorkflowTemplate, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t, ok := s.workflowTemplates[templateID]
 	if !ok {
 		return nil, transport.NotFound("workflow template not found")
 	}
-	if t.UserID != userID {
+	if !visibleToScope(sc, t.OrgID, t.UserID) {
 		return nil, transport.Forbidden("access denied")
 	}
 	delete(s.workflowTemplates, templateID)
-	ids := s.userWorkflowTemplates[userID]
+	ids := s.userWorkflowTemplates[sc.UserID]
 	for i, id := range ids {
 		if id == templateID {
-			s.userWorkflowTemplates[userID] = append(ids[:i], ids[i+1:]...)
+			s.userWorkflowTemplates[sc.UserID] = append(ids[:i], ids[i+1:]...)
 			break
 		}
 	}
@@ -156,15 +176,15 @@ func (s *Store) DeleteWorkflowTemplate(userID, templateID string) (*model.Workfl
 
 // InheritWorkflowTemplate clones a global template into the project as a new
 // workflow (with inheritance metadata) so the project can customize it.
-func (s *Store) InheritWorkflowTemplate(userID, projectID, templateID string) (*model.Project, *transport.AppError) {
+func (s *Store) InheritWorkflowTemplate(sc Scope, projectID, templateID string) (*model.Project, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.projects[projectID]
-	if !ok || p.UserID != userID {
+	if !ok || !visibleToScope(sc, p.OrgID, p.UserID) {
 		return nil, transport.NotFound("project not found")
 	}
 	t, ok := s.workflowTemplates[templateID]
-	if !ok || t.UserID != userID {
+	if !ok || !visibleToScope(sc, t.OrgID, t.UserID) {
 		return nil, transport.NotFound("workflow template not found")
 	}
 
@@ -189,11 +209,11 @@ func (s *Store) InheritWorkflowTemplate(userID, projectID, templateID string) (*
 // template update against the project's inherited workflow.
 // base = template snapshot at inherit/last-sync, ours = project current,
 // theirs = template latest.
-func (s *Store) ComputeWorkflowSyncDiff(userID, projectID, workflowID string) (*model.WorkflowSyncDiff, *transport.AppError) {
+func (s *Store) ComputeWorkflowSyncDiff(sc Scope, projectID, workflowID string) (*model.WorkflowSyncDiff, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	p, ok := s.projects[projectID]
-	if !ok || p.UserID != userID {
+	if !ok || !visibleToScope(sc, p.OrgID, p.UserID) {
 		return nil, transport.NotFound("project not found")
 	}
 	wf := findWorkflowByID(p.Workflows, workflowID)
@@ -204,7 +224,7 @@ func (s *Store) ComputeWorkflowSyncDiff(userID, projectID, workflowID string) (*
 		return nil, transport.BadRequest("BAD_REQUEST", "workflow is not inherited from a global template")
 	}
 	t, ok := s.workflowTemplates[wf.ParentTemplateID]
-	if !ok || t.UserID != userID {
+	if !ok || !visibleToScope(sc, t.OrgID, t.UserID) {
 		return nil, transport.NotFound("parent workflow template not found")
 	}
 	if t.Version <= wf.TemplateVersion {
@@ -231,11 +251,11 @@ func (s *Store) ComputeWorkflowSyncDiff(userID, projectID, workflowID string) (*
 // inherited workflow. removeSteps lists step names marked remove_pending that
 // the user decided to drop. On success the workflow's TemplateSnapshot and
 // TemplateVersion advance to the template's latest.
-func (s *Store) ApplyWorkflowSync(userID, projectID, workflowID string, removeSteps []string) (*model.Project, *transport.AppError) {
+func (s *Store) ApplyWorkflowSync(sc Scope, projectID, workflowID string, removeSteps []string) (*model.Project, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.projects[projectID]
-	if !ok || p.UserID != userID {
+	if !ok || !visibleToScope(sc, p.OrgID, p.UserID) {
 		return nil, transport.NotFound("project not found")
 	}
 	idx := findWorkflowIndexByID(p.Workflows, workflowID)
@@ -247,7 +267,7 @@ func (s *Store) ApplyWorkflowSync(userID, projectID, workflowID string, removeSt
 		return nil, transport.BadRequest("BAD_REQUEST", "workflow is not inherited from a global template")
 	}
 	t, ok := s.workflowTemplates[wf.ParentTemplateID]
-	if !ok || t.UserID != userID {
+	if !ok || !visibleToScope(sc, t.OrgID, t.UserID) {
 		return nil, transport.NotFound("parent workflow template not found")
 	}
 	if t.Version <= wf.TemplateVersion {
@@ -317,11 +337,11 @@ func (s *Store) ApplyWorkflowSync(userID, projectID, workflowID string, removeSt
 
 // DetachWorkflowFromTemplate breaks the inheritance link, turning the workflow
 // into a plain private workflow (irreversible).
-func (s *Store) DetachWorkflowFromTemplate(userID, projectID, workflowID string) (*model.Project, *transport.AppError) {
+func (s *Store) DetachWorkflowFromTemplate(sc Scope, projectID, workflowID string) (*model.Project, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.projects[projectID]
-	if !ok || p.UserID != userID {
+	if !ok || !visibleToScope(sc, p.OrgID, p.UserID) {
 		return nil, transport.NotFound("project not found")
 	}
 	idx := findWorkflowIndexByID(p.Workflows, workflowID)

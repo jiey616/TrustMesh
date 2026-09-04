@@ -34,10 +34,11 @@ func NewProjectFileHandler(s *store.Store, storage project.FileStorage, log *zap
 
 // Upload handles POST /api/v1/projects/:projectId/files
 func (h *ProjectFileHandler) Upload(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
+	userID := sc.UserID
 
 	projectID := c.Param("projectId")
 
@@ -113,10 +114,11 @@ func (h *ProjectFileHandler) Upload(c *gin.Context) {
 
 // CreateFolder handles POST /api/v1/projects/:projectId/folders
 func (h *ProjectFileHandler) CreateFolder(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
+	userID := sc.UserID
 
 	projectID := c.Param("projectId")
 
@@ -145,10 +147,11 @@ func (h *ProjectFileHandler) CreateFolder(c *gin.Context) {
 
 // List handles GET /api/v1/projects/:projectId/files
 func (h *ProjectFileHandler) List(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
+	userID := sc.UserID
 
 	projectID := c.Param("projectId")
 	source := c.Query("source")
@@ -163,7 +166,7 @@ func (h *ProjectFileHandler) List(c *gin.Context) {
 	// If ListProjectFiles returned empty but we have no access, check explicitly.
 	if len(files) == 0 && source == "" && taskID == "" && agentID == "" {
 		// Verify the project exists and user has access.
-		if appErr := h.store.ValidateProjectOwnership(userID, projectID); appErr != nil {
+		if appErr := h.store.ValidateProjectOwnership(sc, projectID); appErr != nil {
 			transport.WriteError(c, appErr)
 			return
 		}
@@ -174,10 +177,11 @@ func (h *ProjectFileHandler) List(c *gin.Context) {
 
 // GetTree handles GET /api/v1/projects/:projectId/files/tree
 func (h *ProjectFileHandler) GetTree(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
+	userID := sc.UserID
 
 	projectID := c.Param("projectId")
 
@@ -187,10 +191,11 @@ func (h *ProjectFileHandler) GetTree(c *gin.Context) {
 
 // GetContent handles GET /api/v1/projects/:projectId/files/:fileId/content
 func (h *ProjectFileHandler) GetContent(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
+	userID := sc.UserID
 
 	fileID := c.Param("fileId")
 
@@ -286,10 +291,11 @@ func (h *ProjectFileHandler) tryRecoverMeetingMinutesFile(userID string, pf *mod
 
 // Delete handles DELETE /api/v1/projects/:projectId/files/:fileId
 func (h *ProjectFileHandler) Delete(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
+	userID := sc.UserID
 
 	fileID := c.Param("fileId")
 
@@ -321,10 +327,11 @@ func (h *ProjectFileHandler) Delete(c *gin.Context) {
 
 // Rename handles PATCH /api/v1/projects/:projectId/files/:fileId/rename
 func (h *ProjectFileHandler) Rename(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
+	userID := sc.UserID
 
 	projectID := c.Param("projectId")
 	fileID := c.Param("fileId")
@@ -352,10 +359,11 @@ func (h *ProjectFileHandler) Rename(c *gin.Context) {
 
 // Move handles PATCH /api/v1/projects/:projectId/files/:fileId/move
 func (h *ProjectFileHandler) Move(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
+	userID := sc.UserID
 
 	projectID := c.Param("projectId")
 	fileID := c.Param("fileId")
@@ -377,10 +385,11 @@ func (h *ProjectFileHandler) Move(c *gin.Context) {
 
 // BatchDelete handles POST /api/v1/projects/:projectId/files/batch-delete
 func (h *ProjectFileHandler) BatchDelete(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
+	userID := sc.UserID
 
 	projectID := c.Param("projectId")
 
@@ -396,10 +405,11 @@ func (h *ProjectFileHandler) BatchDelete(c *gin.Context) {
 
 // Browse handles GET /api/v1/projects/:projectId/files/browse
 func (h *ProjectFileHandler) Browse(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
+	userID := sc.UserID
 
 	projectID := c.Param("projectId")
 	parentID := c.Query("parent_id")
@@ -415,10 +425,11 @@ func (h *ProjectFileHandler) Browse(c *gin.Context) {
 
 // ListArtifacts handles GET /api/v1/projects/:projectId/files/artifacts
 func (h *ProjectFileHandler) ListArtifacts(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
+	userID := sc.UserID
 
 	projectID := c.Param("projectId")
 
