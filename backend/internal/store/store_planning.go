@@ -94,6 +94,7 @@ func (s *Store) CreateTaskPlanningWithFiles(userID, projectID, content string, f
 	task := &model.TaskDetail{
 		ID:        newID(),
 		UserID:    userID,
+		OrgID:     s.personalOrgOfUnsafe(userID),
 		ProjectID: project.ID,
 		Title:     content,
 		Status:    "planning",

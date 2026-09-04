@@ -218,6 +218,11 @@ func (s *Store) SaveArtifactWithFiling(artifact model.TaskArtifact, declared []m
 	}
 
 	// Verify todo belongs to the task if specified.
+	// 多租户阶段 1：交付物归属跟随任务。
+	if artifact.OrgID == "" {
+		artifact.OrgID = s.personalOrgOfUnsafe(task.UserID)
+	}
+
 	var ownerTodo *model.Todo
 	if artifact.TodoID != "" {
 		found := false

@@ -69,6 +69,7 @@ type Meeting struct {
 
 type MeetingMessage struct {
 	ID           string     `json:"id" bson:"_id"`
+	OrgID string `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属
 	MeetingID    string     `json:"meeting_id" bson:"meeting_id"`
 	SenderType   string     `json:"sender_type" bson:"sender_type"` // user | agent | system
 	SenderID     string     `json:"sender_id" bson:"sender_id"`

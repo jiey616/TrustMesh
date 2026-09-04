@@ -151,3 +151,49 @@ func TestScopeOwnershipHelpers(t *testing.T) {
 		t.Fatal("missing user context must not grant ownership")
 	}
 }
+
+// 阶段 1：注册即开通个人租户，保证增量数据永远有归属可回填。
+func TestCreateUserSeedsPersonalOrg(t *testing.T) {
+	s := New()
+	u, appErr := s.CreateUser("jiey@example.com", "Jiey", "hash")
+	if appErr != nil {
+		t.Fatalf("create user: %v", appErr)
+	}
+
+	orgs := s.ListUserOrganizations(u.ID)
+	if len(orgs) != 1 {
+		t.Fatalf("personal orgs = %d, want 1", len(orgs))
+	}
+	org := orgs[0]
+	if org.Kind != model.OrgKindPersonal || org.OwnerID != u.ID {
+		t.Fatalf("org = %+v", org)
+	}
+	if org.Slug != "u-"+u.ID {
+		t.Fatalf("slug = %q", org.Slug)
+	}
+	m, ok := s.GetMembership(org.ID, u.ID)
+	if !ok || m.Role != model.OrgRoleOwner {
+		t.Fatalf("owner membership missing: %+v", m)
+	}
+}
+
+func TestEnsurePersonalOrgIsIdempotent(t *testing.T) {
+	s := New()
+	first, err := s.EnsurePersonalOrg("u1", "Jiey")
+	if err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	second, err := s.EnsurePersonalOrg("u1", "Jiey Renamed")
+	if err != nil {
+		t.Fatalf("ensure again: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("expected the same org, got %q vs %q", second.ID, first.ID)
+	}
+	if got := s.ListUserOrganizations("u1"); len(got) != 1 {
+		t.Fatalf("orgs = %d, want 1", len(got))
+	}
+	if got := s.ListOrgMembers(first.ID); len(got) != 1 {
+		t.Fatalf("members = %d, want 1", len(got))
+	}
+}

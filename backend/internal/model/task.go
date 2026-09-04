@@ -172,6 +172,7 @@ const (
 
 type TaskArtifact struct {
 	TransferID    string    `json:"transfer_id" bson:"_id"`
+	OrgID string `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属
 	TaskID        string    `json:"task_id" bson:"task_id"`
 	TodoID        string    `json:"todo_id,omitempty" bson:"todo_id,omitempty"`
 	FileName      string    `json:"file_name" bson:"file_name"`

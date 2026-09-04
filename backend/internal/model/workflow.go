@@ -73,6 +73,7 @@ type Workflow struct {
 // 一份副本进项目（见 Workflow.ParentTemplateID），模板每次保存 Version 自动递增。
 type WorkflowTemplate struct {
 	ID          string         `json:"id" bson:"_id"`
+	OrgID string `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属
 	UserID      string         `json:"-" bson:"user_id"`
 	Name        string         `json:"name" bson:"name"`
 	Description string         `json:"description,omitempty" bson:"description,omitempty"`

@@ -4,6 +4,7 @@ import "time"
 
 type Event struct {
 	ID        string         `json:"id" bson:"_id"`
+	OrgID string `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属
 	UserID    string         `json:"-" bson:"user_id"`
 	ProjectID string         `json:"project_id" bson:"project_id"`
 	TaskID    string         `json:"task_id,omitempty" bson:"task_id,omitempty"`
@@ -19,6 +20,7 @@ type Event struct {
 
 type Notification struct {
 	ID        string     `json:"id" bson:"_id"`
+	OrgID string `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属
 	UserID    string     `json:"-" bson:"user_id"`
 	EventID   string     `json:"event_id" bson:"event_id"`
 	ProjectID string     `json:"project_id" bson:"project_id"`

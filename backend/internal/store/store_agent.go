@@ -79,6 +79,7 @@ func (s *Store) CreateAgent(userID, nodeID, name, role, description string, capa
 	agent := &model.Agent{
 		ID:           newID(),
 		UserID:       userID,
+		OrgID:        s.personalOrgOfUnsafe(userID),
 		Name:         name,
 		Description:  description,
 		Role:         role,

@@ -1,8 +1,9 @@
 # TrustMesh 多租户 + 企业管理 实施设计
 
-> 状态：**阶段 0 已完成**（2026-09-04，commit `5fa4a71`，已部署验证）；阶段 1 待排期
+> 状态：**阶段 0 + 阶段 1 已完成**（阶段 0 commit `5fa4a71`；阶段 1 见 §阶段 1 实况）；阶段 2 待排期
 > 日期：2026-09-04
 > 开工前备份：`deploy/backups/mongodump-trustmesh-20260904-214800.archive.gz`，git tag `pre-multitenant-stage0`
+> 阶段 1 备份：`deploy/backups/mongodump-trustmesh-20260904-223127-stage1.archive.gz`，git tag `pre-multitenant-stage1`
 > 决策来源：grill-me 会话，六个顶层分支全部闭合
 > 代码基线：`backend/internal/store` 为全内存状态机，Mongo 为持久化镜像
 
@@ -281,6 +282,39 @@ beforeRequest: [
 | 回滚 | 备份 Mongo（执行前 `mongodump`）+ git tag；异常时恢复备份 |
 | 风险 | 中（写操作）🔴 **执行前必须停 backend 并等状态落盘**（见项目铁律：stop → 轮询 exited → 改库 → start） |
 
+#### 阶段 1 实况（2026-09-04 完成）
+
+**改动**
+- 7 个实体补齐 `org_id`：`Event` / `Notification` / `TaskArtifact` / `AgentChat` / `WorkflowTemplate` / `ExternalApp` / `MeetingMessage`（阶段 0 已加 9 个 → 至此 16 个实体全覆盖）。
+- `EnsurePersonalOrg` 拆出 `ensurePersonalOrgUnsafe`（调用方持锁），`CreateUser` 内联调用：**注册即开通个人租户**，失败只 `log.Warn` 不阻断注册（可事后补偿）。
+- 新增 `personalOrgOfUnsafe(userID)`（调用方持锁）：解析作者的个人租户，供写入路径双写。
+- 写入双写 17 处：projects / tasks（4 处构造点）/ agents / comments / events / notifications / artifacts / project_files（3 处）/ workflow_templates（2 处）/ join_requests / external_apps / meetings / meeting_messages。
+
+**回填结果**（`deploy/org_backfill.js`，先 `APPLY=false` 预演再 `APPLY=true` 落盘）
+
+| 集合 | 条数 | 归属来源 |
+|---|---|---|
+| events | 4000 | `user_id` |
+| notifications | 1709 | `user_id` |
+| comments | 1439 | `user_id` |
+| artifacts | 281 | `task_id` → task.user_id |
+| project_files | 275 | `project_id` → project.user_id |
+| tasks | 142 | `user_id` |
+| agent_chats | 27 | `user_id` |
+| projects / join_requests | 11 / 8 | `user_id` |
+| knowledge_chunks / agents | 11 / 7 | `user_id` |
+| meeting_messages / meetings | 4 / 2 | `meeting_id` → meeting.org_id / `project_id` |
+| knowledge_documents / workflow_templates / external_apps | 1 / 1 / 1 | `user_id` / `created_by` |
+
+8 个 user → 8 个 personal org + 8 条 owner membership；**7,918 篇文档零孤儿**。
+
+**校验**（`deploy/org_verify.js`）：16 个集合覆盖率 `missing=0`；跨集合一致性 4 项 `mismatched=0`；task→org 孤儿 0 → `VERIFY OK`。
+
+**踩坑（🔴 下次必须避开）**
+1. 补丁脚本的幂等判定**不能只认 `OrgID:` 开头的行** —— 多行插入块（注释 + 赋值）会被重复写入。`meeting.go` / `store_artifact.go` / `store_workflow_template.go` 因此被插了两遍，靠 `git checkout` 回滚后重跑修复。已改为「插入块首行是否已存在」。
+2. 双写插入点**必须自动校验持锁状态**：`CreateWorkflowTemplate`、`CreateExternalApp` 的构造体位于 `s.mu.Lock()` **之前**；`GenerateMeetingMinutesFile` 全程不持锁。脚本内置「向上找最近 `func` → 区间内须有 `s.mu.Lock()` 或函数名含 `Unsafe`」校验，两处被拦截后改为「锁内赋值」与「只从入参派生」。
+3. `git add -A` 会把 `.playwright-cli/`、`.workbuddy/` 等日志临时文件一并暂存；本仓库只能按路径精确 `git add`。
+
 ### 阶段 2 — 后端归属收敛（**最重**）
 
 | 项 | 内容 |
@@ -330,8 +364,11 @@ beforeRequest: [
 
 | 脚本 | 用途 | 备注 |
 |---|---|---|
-| `deploy/migrate_org_backfill.py`（新增） | 存量 user → 个人 org；各集合回填 `org_id` | 需先停 backend 并确认 exited；执行前 `mongodump` |
-| `deploy/verify_org_backfill.py`（新增） | 回填校验：缺失计数 + 抽样核对 | 校验不通过立即停止后续阶段 |
+| `deploy/org_backfill.js`（已落地） | 存量 user → 个人 org；各集合回填 `org_id` | `mongosh trustmesh --eval "var APPLY=false;" org_backfill.js` 预演，`APPLY=true` 落盘；幂等，重跑安全 |
+| `deploy/org_verify.js`（已落地） | 回填校验：覆盖计数 + 跨集合一致性 + 孤儿归属 | 校验不通过立即停止后续阶段 |
+| `deploy/.tmp/patch_stage1_models.py`（已落地） | 7 个实体补 `org_id` 字段 | 按文件主导换行符回写，插完校验无 MIXED |
+| `deploy/.tmp/patch_stage1_store.py`（已落地） | `EnsurePersonalOrg` 拆 unsafe + `CreateUser` 接线 | 持锁路径必须调 unsafe 版，否则死锁 |
+| `deploy/.tmp/patch_stage1_dualwrite.py`（已落地） | 17 处写入点双写 `org_id` | 内置持锁校验，未通过直接报错 |
 | `deploy/migrate_agent_org_bind.py`（新增） | 存量 Agent 回填 org 绑定（复用 node_id ↔ org，不新发凭证） | 阶段 3 用 |
 | `deploy/.tmp/tokenize_styles.py` 等 | 前端治理脚本（已有） | 与本次无关，勿混淆 |
 

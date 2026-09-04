@@ -142,6 +142,7 @@ func (s *Store) maybeCreateNotificationUnsafe(event *model.Event) {
 	notification := &model.Notification{
 		ID:        newID(),
 		UserID:    event.UserID,
+		OrgID:     s.personalOrgOfUnsafe(event.UserID),
 		EventID:   event.ID,
 		ProjectID: event.ProjectID,
 		TaskID:    event.TaskID,

@@ -103,6 +103,7 @@ func (s *Store) CreateProject(userID, name, description, pmAgentID string) (*mod
 	project := &model.Project{
 		ID:          newID(),
 		UserID:      userID,
+		OrgID:       s.personalOrgOfUnsafe(userID),
 		Name:        name,
 		Description: description,
 		Status:      "active",

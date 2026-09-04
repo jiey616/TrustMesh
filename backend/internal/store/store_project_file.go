@@ -88,6 +88,7 @@ func (s *Store) CreateMeetingMinutesFile(meetingID, fileName, content string) (*
 	pf := &model.ProjectFile{
 		ID:         "pf_" + newID(),
 		ProjectID:  m.ProjectID,
+		OrgID:      s.personalOrgOfUnsafe(ownerID),
 		FileName:   fileName,
 		FileSize:   int64(len([]byte(content))),
 		MimeType:   "text/markdown",
@@ -142,6 +143,7 @@ func (s *Store) CreateFolder(userID, projectID, name, parentID string) (*model.P
 	folder := &model.ProjectFile{
 		ID:         "pf_" + newID(),
 		ProjectID:  projectID,
+		OrgID:      s.personalOrgOfUnsafe(userID),
 		ParentID:   parentID,
 		FileName:   name,
 		FileSize:   0,
@@ -428,6 +430,7 @@ func (s *Store) saveProjectFileFromArtifactUnsafe(artifact model.TaskArtifact) (
 	pf := &model.ProjectFile{
 		ID:         "pf_" + newID(),
 		ProjectID:  task.ProjectID,
+		OrgID:      s.personalOrgOfUnsafe(task.UserID),
 		TaskID:     artifact.TaskID,
 		AgentID:    artifact.FromAgentID,
 		AgentName:  artifact.FromAgentName,

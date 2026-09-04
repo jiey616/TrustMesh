@@ -37,6 +37,7 @@ type AgentChatSessionSummary struct {
 
 type AgentChat struct {
 	ID          string             `bson:"_id"`
+	OrgID string `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属
 	UserID      string             `bson:"user_id"`
 	AgentID     string             `bson:"agent_id"`
 	AgentNodeID string             `bson:"agent_node_id"`

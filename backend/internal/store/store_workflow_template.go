@@ -28,6 +28,8 @@ func (s *Store) CreateWorkflowTemplate(userID, name, description string, steps [
 	}
 
 	s.mu.Lock()
+	doc.OrgID = s.personalOrgOfUnsafe(userID)
+
 	defer s.mu.Unlock()
 	s.workflowTemplates[doc.ID] = doc
 	s.userWorkflowTemplates[userID] = append(s.userWorkflowTemplates[userID], doc.ID)
@@ -112,6 +114,7 @@ func (s *Store) CopyWorkflowTemplate(userID, templateID string) (*model.Workflow
 	doc := &model.WorkflowTemplate{
 		ID:          "wt_" + newID(),
 		UserID:      userID,
+		OrgID:      s.personalOrgOfUnsafe(userID),
 		Name:        src.Name + "（副本）",
 		Description: src.Description,
 		Steps:       cloneSteps(src.Steps),

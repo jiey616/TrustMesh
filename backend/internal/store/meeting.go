@@ -25,6 +25,7 @@ func (s *Store) CreateMeeting(userID string, m *model.Meeting) (*model.Meeting, 
 	m.CreatedAt = time.Now().UTC()
 	m.UpdatedAt = m.CreatedAt
 	m.CreatorID = userID
+	m.OrgID = s.personalOrgOfUnsafe(userID)
 	if m.Status == "" {
 		m.Status = model.MeetingWaiting
 	}
@@ -178,6 +179,10 @@ func (s *Store) AddMeetingMessage(msg *model.MeetingMessage) (*model.MeetingMess
 	defer s.mu.Unlock()
 
 	msg.ID = uuid.NewString()
+	// 多租户阶段 1：消息归属跟随所属会议。
+	if m, ok := s.meetings[msg.MeetingID]; ok && m.OrgID != "" {
+		msg.OrgID = m.OrgID
+	}
 	msg.CreatedAt = time.Now().UTC()
 
 	s.meetingMessages[msg.ID] = msg
@@ -394,6 +399,7 @@ func (s *Store) GenerateMeetingMinutesFile(userID string, meeting *model.Meeting
 	fileName := fmt.Sprintf("%s_会议纪要.md", sanitizeMinutesTitle(meeting.Title))
 	pf := &model.ProjectFile{
 		ProjectID: meeting.ProjectID,
+		OrgID:     meeting.OrgID,
 		FileName:  fileName,
 		FileSize:  int64(len([]byte(markdown))),
 		MimeType:  "text/markdown",

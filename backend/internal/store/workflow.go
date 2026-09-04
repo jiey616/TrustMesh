@@ -328,6 +328,7 @@ func (s *Store) CreateTaskByPMNodeWithMessageID(nodeID, messageID string, in Tas
 	task := &model.TaskDetail{
 		ID:           newID(),
 		UserID:       project.UserID,
+		OrgID:        s.personalOrgOfUnsafe(project.UserID),
 		ProjectID:    project.ID,
 		Title:        in.Title,
 		Description:  in.Description,
@@ -493,6 +494,7 @@ func (s *Store) CreateTaskByUser(userID string, in UserTaskCreateInput) (*model.
 	task := &model.TaskDetail{
 		ID:            newID(),
 		UserID:        userID,
+		OrgID:         s.personalOrgOfUnsafe(userID),
 		ProjectID:     project.ID,
 		Title:         in.Title,
 		Description:   in.Description,
@@ -1336,6 +1338,7 @@ func (s *Store) addCommentUnsafe(task *model.TaskDetail, todoID, actorType, acto
 	comment := &model.Comment{
 		ID:        newID(),
 		UserID:    task.UserID,
+		OrgID:     s.personalOrgOfUnsafe(task.UserID),
 		TaskID:    task.ID,
 		TodoID:    todoID,
 		ActorType: actorType,
@@ -2370,6 +2373,7 @@ func (s *Store) ConvertActionItems(userID string, refs []ActionItemRef, projectI
 		task := &model.TaskDetail{
 			ID:           newID(),
 			UserID:       userID,
+			OrgID:        s.personalOrgOfUnsafe(userID),
 			ProjectID:    projectID,
 			Title:        title,
 			Description:  fmt.Sprintf("由任务「%s」的结果待办自动转换生成（%d 项待办整合）", sourceTaskTitle(s, sourceTaskID), len(items)),
@@ -2559,6 +2563,7 @@ func dedupInts(xs []int) []int {
 	}
 	return out
 }
+
 // FindTaskForWorkflowStep returns the task in the same project whose owned
 // slice of the primary workflow covers the named step, together with the task
 // (artifacts filled) and the todo matched to that step. Used for cross-task

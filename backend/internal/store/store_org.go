@@ -255,11 +255,36 @@ func (s *Store) ListProjectMembers(projectID string) []model.ProjectMember {
 	return cloned
 }
 
-// EnsurePersonalOrg 保证用户拥有个人租户（阶段 1 回填用，阶段 0 不调用）。
+// EnsurePersonalOrg 保证用户拥有个人租户（阶段 1 起在注册时自动开通，存量用户由回填脚本补齐）。
 func (s *Store) EnsurePersonalOrg(userID, displayName string) (*model.Organization, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.ensurePersonalOrgUnsafe(userID, displayName)
+}
 
+// ensurePersonalOrgUnsafe 与 EnsurePersonalOrg 等价，但要求调用方已持有写锁，
+// 供 CreateUser 等持锁路径内联调用，避免重复加锁死锁。
+// personalOrgOfUnsafe 解析用户的个人租户 ID（调用方必须持锁）。
+// 阶段 1：新写入的资源统一挂到作者的个人租户下，保证增量数据不再是孤儿。
+// 返回空串表示用户尚无个人租户（回填前存量账号或降级场景），此时保持 org_id 为空，
+// 由后续回填/补偿任务兜底，不阻断写入。
+func (s *Store) personalOrgOfUnsafe(userID string) string {
+	if userID == "" {
+		return ""
+	}
+	for _, mid := range s.userOrgIndex[userID] {
+		m, ok := s.orgMemberships[mid]
+		if !ok {
+			continue
+		}
+		if org, ok := s.organizations[m.OrgID]; ok && org.Kind == model.OrgKindPersonal {
+			return org.ID
+		}
+	}
+	return ""
+}
+
+func (s *Store) ensurePersonalOrgUnsafe(userID, displayName string) (*model.Organization, *transport.AppError) {
 	for _, mid := range s.userOrgIndex[userID] {
 		m, ok := s.orgMemberships[mid]
 		if !ok {

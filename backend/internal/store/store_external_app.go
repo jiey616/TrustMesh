@@ -158,6 +158,7 @@ func (s *Store) CreateExternalApp(userID string, in CreateExternalAppInput) (*mo
 
 	s.mu.Lock()
 	s.externalApps[app.ID] = app
+	app.OrgID = s.personalOrgOfUnsafe(userID)
 	if err := s.persistExternalAppUnsafe(app); err != nil {
 		delete(s.externalApps, app.ID)
 		s.mu.Unlock()

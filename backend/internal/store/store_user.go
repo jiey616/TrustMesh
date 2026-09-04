@@ -4,6 +4,8 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
+
 	"trustmesh/backend/internal/model"
 	"trustmesh/backend/internal/transport"
 )
@@ -34,6 +36,12 @@ func (s *Store) CreateUser(email, name, passwordHash string) (*model.User, *tran
 	s.usersByMail[normalized] = id
 	if err := s.persistUserUnsafe(u); err != nil {
 		return nil, mongoWriteError(err)
+	}
+
+	// 多租户阶段 1：新用户同步开通个人租户，保证增量数据始终有归属。
+	// 个人租户是兜底设施，失败只告警、不阻断注册（可事后补偿）。
+	if _, appErr := s.ensurePersonalOrgUnsafe(u.ID, u.Name); appErr != nil && s.log != nil {
+		s.log.Warn("ensure personal org failed", zap.String("user_id", u.ID), zap.String("code", appErr.Code), zap.String("message", appErr.Message))
 	}
 
 	return copyUser(u), nil

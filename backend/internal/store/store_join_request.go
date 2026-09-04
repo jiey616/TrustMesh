@@ -92,6 +92,7 @@ func (s *Store) CreateJoinRequest(in CreateJoinRequestInput) (*model.JoinRequest
 	jr := &model.JoinRequest{
 		ID:             newID(),
 		UserID:         userID,
+		OrgID:          s.personalOrgOfUnsafe(userID),
 		TrustRequestID: in.TrustRequestID,
 		NodeID:         in.NodeID,
 		Name:           name,

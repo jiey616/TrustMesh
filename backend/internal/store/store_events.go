@@ -43,6 +43,7 @@ func (s *Store) addEventUnsafe(userID, projectID, taskID, todoID, actorType, act
 	event := model.Event{
 		ID:        newID(),
 		UserID:    userID,
+		OrgID:     s.personalOrgOfUnsafe(userID),
 		ProjectID: projectID,
 		TaskID:    taskID,
 		TodoID:    todoID,
