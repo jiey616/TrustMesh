@@ -329,12 +329,14 @@ export function ProjectBoardPage() {
                   key={taskSelectionState.autoSelectedTaskId}
                   taskId={taskSelectionState.autoSelectedTaskId}
                   onClose={() => selectTask(null)}
+                  onTaskCreated={(taskId) => setWorkspace({ kind: 'task', taskId })}
                 />
               ) : workspace?.kind === 'task' ? (
                 <TaskWorkspace
                   key={workspace.taskId}
                   taskId={workspace.taskId}
                   onClose={() => selectTask(null)}
+                  onTaskCreated={(taskId) => setWorkspace({ kind: 'task', taskId })}
                 />
               ) : (
                 <TaskWorkspace

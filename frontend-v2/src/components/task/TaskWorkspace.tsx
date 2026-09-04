@@ -32,7 +32,7 @@ import {
   useAppendTaskMessage,
   useAddTaskComment,
 } from '@/hooks/useTasks'
-import { useProject } from '@/hooks/useProjects'
+import { useProject, useWorkflowProgress } from '@/hooks/useProjects'
 import { useAgents } from '@/hooks/useAgents'
 import { FileSelector } from '@/components/shared/FileSelector'
 import { downloadProjectFile } from '@/api/projectFiles'
@@ -50,7 +50,7 @@ import { ThinkingIndicator } from '@/components/task/ThinkingIndicator'
 import { TaskCommentComposer, type TaskMentionCandidate, type TaskCommentSubmitInput } from '@/components/task/TaskCommentComposer'
 import { FileViewer } from '@/components/task/FileViewer'
 import { AgentAvatar } from '@/components/shared/AgentAvatar'
-import type { TaskMessage, Workflow, Event, EventType, TaskDetail, UIResponse } from '@/types'
+import type { TaskMessage, Workflow, WorkflowStepProgress, Event, EventType, TaskDetail, UIResponse } from '@/types'
 
 const { Title, Text } = Typography
 
@@ -831,6 +831,107 @@ function AttachedFilesSection({ files, projectId }: { files: Array<{ id: string;
  *  Main workspace
  * ============================================================ */
 
+/**
+ * 任务完成后的「进入下一流程」常驻横幅（可收起）：
+ * 仅当任务是总流程切片任务、状态为 done（failed/canceled 不弹）、
+ * 且总流程中该切片之后还有未编排（unassigned）的连续步骤时显示。
+ * 支持选择下一任务覆盖的步骤范围（默认连续未编排段全部），确认后
+ * 按切片创建新任务 → PM 自动开始规划 → 跳转到新任务。
+ */
+function NextFlowBanner({ task, onTaskCreated }: { task: TaskDetail; onTaskCreated?: (taskId: string) => void }) {
+  const { message } = App.useApp()
+  const projectId = task.project_id
+  const { data: project } = useProject(projectId)
+  const { data: progress } = useWorkflowProgress(projectId)
+  const createFromText = useCreateTaskFromText()
+  const [collapsed, setCollapsed] = useState(false)
+  const [endIdx, setEndIdx] = useState<number | null>(null)
+
+  const primaryWf =
+    project && project.primary_workflow_index >= 0 && Array.isArray(project.workflows)
+      ? project.workflows[project.primary_workflow_index]
+      : undefined
+  const ref = task.workflow_ref
+  const sameWf = !!ref && !!primaryWf && primaryWf.name === ref.workflow_name
+
+  // 总流程中该任务切片之后、尚未编排（无归属任务）的连续步骤段
+  const run: WorkflowStepProgress[] = useMemo(() => {
+    if (!sameWf || !progress?.steps?.length) return []
+    const byIndex = new Map(progress.steps.map((s) => [s.index, s]))
+    const out: WorkflowStepProgress[] = []
+    for (let i = ref!.step_to + 1; ; i++) {
+      const s = byIndex.get(i)
+      if (!s || s.status !== 'unassigned') break
+      out.push(s)
+    }
+    return out
+  }, [sameWf, progress, ref])
+
+  if (task.status !== 'done' || run.length === 0) return null
+
+  if (collapsed) {
+    return (
+      <div style={{ padding: '6px 16px 0', flexShrink: 0 }}>
+        <Button size="small" type="text" icon={<UnorderedListOutlined />} onClick={() => setCollapsed(false)}>
+          后续流程（{run.length} 步未开始）
+        </Button>
+      </div>
+    )
+  }
+
+  const slice = run.filter((s) => s.index <= (endIdx ?? run[run.length - 1].index))
+  const rangeOptions = run.map((s, k) => ({
+    value: s.index,
+    label: run.slice(0, k + 1).map((x) => x.name).join(' → '),
+  }))
+
+  const handleStart = async () => {
+    if (!project || !primaryWf) return
+    try {
+      const res = await createFromText.mutateAsync({
+        projectId,
+        content: `继续项目总流程：执行「${slice.map((s) => s.name).join('、')}」步骤`,
+        workflow: primaryWf,
+        workflow_index: project.primary_workflow_index,
+        step_from: slice[0].index,
+        step_to: slice[slice.length - 1].index,
+      })
+      message.success('下一流程任务已创建，PM 开始规划')
+      const newId = (res.data as { id: string }).id
+      if (newId) onTaskCreated?.(newId)
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '创建任务失败')
+    }
+  }
+
+  return (
+    <div
+      style={{
+        margin: '8px 16px 0',
+        padding: '8px 12px',
+        borderRadius: 'var(--radius-control)',
+        border: '1px solid rgba(16,185,129,0.4)',
+        background: 'rgba(16,185,129,0.14)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        flexWrap: 'wrap',
+        flexShrink: 0,
+      }}
+    >
+      <CheckCircleOutlined style={{ color: 'var(--success)', flexShrink: 0 }} />
+      <Text style={{ fontSize: 13, color: 'var(--text-primary)' }}>
+        任务完成，总流程后续还有 {run.length} 步未开始
+      </Text>
+      <Select size="small" style={{ minWidth: 180 }} value={slice[slice.length - 1].index} onChange={setEndIdx} options={rangeOptions} />
+      <Button size="small" type="primary" loading={createFromText.isPending} onClick={handleStart}>
+        开始下一流程
+      </Button>
+      <Button size="small" type="text" icon={<CloseOutlined />} aria-label="收起" onClick={() => setCollapsed(true)} />
+    </div>
+  )
+}
+
 export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closable = true, onOpenTask }: Props) {
   // Draft (new task) mode
   if (!taskId && projectId) {
@@ -993,6 +1094,9 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
           <Button type="text" icon={<CloseOutlined />} onClick={onClose} />
         </Space>
       </div>
+
+      {/* 任务完成且总流程还有后续未编排步骤时，提示进入下一流程（可收起） */}
+      <NextFlowBanner task={task} onTaskCreated={onTaskCreated} />
 
       {/* Cancel confirm */}
       {showCancel && (

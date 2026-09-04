@@ -39,12 +39,13 @@ function useNotificationNavigate() {
       navigate(`/agents/${item.actor_id}`)
       return
     }
-    if (item.project_id) {
-      navigate(`/projects/${item.project_id}`)
+    if (item.task_id) {
+      // 直达任务工作台（?task= 深链，ProjectBoardPage 已支持）
+      navigate(`/projects/${item.project_id ?? ''}?task=${item.task_id}`)
       return
     }
-    if (item.task_id) {
-      navigate(`/projects/${item.project_id ?? ''}`)
+    if (item.project_id) {
+      navigate(`/projects/${item.project_id}`)
     }
   }
 }

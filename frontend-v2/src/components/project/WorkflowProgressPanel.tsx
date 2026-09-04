@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Skeleton, Tooltip, App } from 'antd'
 import {
   CheckCircleOutlined,
@@ -80,6 +81,18 @@ export function WorkflowProgressPanel({ projectId }: Props) {
   const [selected, setSelected] = useState<number | null>(null)
   const [preview, setPreview] = useState<{ blob: Blob; fileName: string } | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
+  const navigate = useNavigate()
+
+  // 点击节点 = 展开产出预览；该步骤已绑定任务时同时打开任务工作台（?task= 深链）
+  const handleStepClick = (i: number) => {
+    const step = progress?.steps?.[i]
+    if (!step) return
+    const nextSelected = selected === i ? null : i
+    setSelected(nextSelected)
+    if (nextSelected !== null && step.task_id) {
+      navigate(`/projects/${projectId}?task=${step.task_id}`)
+    }
+  }
 
   if (isLoading) {
     return (
@@ -178,7 +191,7 @@ export function WorkflowProgressPanel({ projectId }: Props) {
               <Tooltip title={`${step.name} · ${cfg.label}${step.task_title ? `（${step.task_title}）` : ''}`}>
                 <button
                   type="button"
-                  onClick={() => setSelected(isSelected ? null : i)}
+                  onClick={() => handleStepClick(i)}
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
