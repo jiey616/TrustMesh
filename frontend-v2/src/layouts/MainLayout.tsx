@@ -161,7 +161,7 @@ export function MainLayout() {
           top: 0,
           bottom: 0,
           zIndex: 100,
-          background: 'rgba(8, 8, 18, 0.9)',
+          background: 'var(--canvas-elevated)',
           backdropFilter: 'var(--glass-blur)',
           WebkitBackdropFilter: 'var(--glass-blur)',
           borderRight: '1px solid var(--line)',
@@ -283,7 +283,7 @@ export function MainLayout() {
               display: 'flex',
               flexDirection: 'column',
               gap: 2,
-              background: 'rgba(8, 8, 18, 0.6)',
+              background: 'var(--surface-inset)',
             }}
           >
             <Tooltip title={collapsed ? '消息通知' : ''} placement="right">
