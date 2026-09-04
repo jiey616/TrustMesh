@@ -854,18 +854,32 @@ function NextFlowBanner({ task, onTaskCreated }: { task: TaskDetail; onTaskCreat
   const ref = task.workflow_ref
   const sameWf = !!ref && !!primaryWf && primaryWf.name === ref.workflow_name
 
-  // 总流程中该任务切片之后、尚未编排（无归属任务）的连续步骤段
+  // 总流程中该任务实际执行到的位置之后、尚未开始的连续步骤段。
+  // 不能只看 workflow_ref.step_to：PM 可能用 deliver_scope 截断了计划
+  //（实测 2026-09-04：切片声明 0-5，实际只执行到 3），且未开始的步骤
+  // 状态是 pending（被主任务绑住）而非 unassigned。
   const run: WorkflowStepProgress[] = useMemo(() => {
-    if (!sameWf || !progress?.steps?.length) return []
+    if (!sameWf || !progress?.steps?.length || !ref) return []
     const byIndex = new Map(progress.steps.map((s) => [s.index, s]))
-    const out: WorkflowStepProgress[] = []
-    for (let i = ref!.step_to + 1; ; i++) {
+    // 从切片起点逐格确认本任务连续 done 到哪一步
+    let execEnd = ref.step_from - 1
+    for (let i = Math.max(ref.step_from, 0); ; i++) {
       const s = byIndex.get(i)
-      if (!s || s.status !== 'unassigned') break
+      if (!s || s.task_id !== task.id || s.status !== 'done') break
+      execEnd = i
+    }
+    // 其后连续的 pending/unassigned 且归属为空或本任务的步骤 = 下一流程候选
+    const out: WorkflowStepProgress[] = []
+    for (let i = execEnd + 1; ; i++) {
+      const s = byIndex.get(i)
+      if (!s) break
+      const notStarted = s.status === 'pending' || s.status === 'unassigned'
+      const freeOrOurs = !s.task_id || s.task_id === task.id
+      if (!notStarted || !freeOrOurs) break
       out.push(s)
     }
     return out
-  }, [sameWf, progress, ref])
+  }, [sameWf, progress, ref, task.id])
 
   if (task.status !== 'done' || run.length === 0) return null
 
