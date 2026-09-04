@@ -36,7 +36,7 @@ func TestSendMessagePublishesChatMessageType(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("create join request: %v", appErr)
 	}
-	agent, appErr := st.ApproveJoinRequest(user.ID, jr.ID, store.JoinRequestOverrides{})
+	agent, appErr := st.ApproveJoinRequest(store.Scope{UserID: user.ID}, jr.ID, store.JoinRequestOverrides{})
 	if appErr != nil {
 		t.Fatalf("approve join request: %v", appErr)
 	}

@@ -558,12 +558,52 @@ func SystemScope() Scope { return Scope{System: true} }
 | 2-4 | Knowledge + WorkflowTemplate | ✅ 已上线 |
 | 2-5a | File（project_file + artifact 绑定） | ✅ 已上线 |
 | 2-5b | Comment + Meeting | ✅ 已上线 |
-| 2-6 | JoinRequest + ExternalApp | ⬜ 待开工 |
+| 2-6 | JoinRequest + ExternalApp | ✅ 已上线 |
 | 2-7 | Event + Notification 分区 map（§4.3） | ⬜ 待开工 |
 
 
 
-### 阶段 3 — 节点 org 绑定与 NATS 隔离（🔴 **跨仓库 + 跨环境**）
+#### 阶段 2-6 JoinRequest + ExternalApp（commit 见 git log，已上线）
+
+#### store 层（11 个函数收 Scope）
+- `store_join_request.go` 5 个：`ListJoinRequests` / `GetJoinRequest` /
+  `ApproveJoinRequest`（写路径）/ `RejectJoinRequest` / `PendingJoinRequestCount`
+- `store_external_app.go` 6 个：`CreateExternalApp`（写路径）/ `ListExternalApps` /
+  `GetExternalApp` / `UpdateExternalApp` / `DeleteExternalApp` /
+  `GetExternalAppForLaunch` / `RecordExternalAppLaunch`
+
+#### 归属语义（与前面批次不同，需注意）
+- **JoinRequest 的 userID 是邀请人，不是审批人**。申请由 agent 内部路径
+  （`trust_sync.go` → `CreateJoinRequest`）创建，无租户上下文，恒挂邀请人个人租户。
+- 「仅同租户」收敛后：同企业租户的其他成员**看不到**邀请人个人租户里的申请 ——
+  「仅同租户」语义天然满足；跨成员共享邀请待阶段 3 节点 org 绑定后再开。
+- `joinRequestVisible` 增加**邀请人兜底**：`jr.UserID == sc.UserID` 恒可见。
+  否则邀请人切到企业租户审批时按 org 比对看不到自己的邀请（org 是个人租户），
+  形成功能死锁。自己的数据对自己可见不构成越权。
+- ExternalApp 保持既有 `canAccessExternalApp` 可见性模型：public 对所有人可见，
+  private 走 `visibleToScope`（org 比对优先，作者兜底）。
+
+#### 补阶段 1 双写漏网（累计第 6 处）
+- **`ApproveJoinRequest` 审批创建/恢复 agent 的构造体从未设 `OrgID`** ——
+  企业租户下审批出的 agent 对同租户其他成员不可见。新建与恢复归档两条路径
+  都补 `s.resolveOwnerOrgUnsafe(sc)`；`jr.OrgID` 同步按审批上下文重解析。
+
+#### handler 层
+- `join_request.go`：List / Approve（GetJoinRequest + ApproveJoinRequest）/
+  Reject 共 5 处调用点 + 2 处鉴权行；GetInvitePrompt 保留 userID（提示词需要）。
+- `external_app.go`：6 个函数全部改 `sc := middleware.Scope(c)`；Launch 里
+  `FindUserByID(sc.UserID)` 保留 user 维度（SSO token 签发身份）。
+
+#### 测试（3 个新增）
+`TestJoinRequestScopedVisibility` / `TestApproveJoinRequestOwnerOrg` /
+`TestExternalAppScopedVisibility`。零值 Scope 非系统旁路断言沿用 2-5b 守卫。
+
+#### 部署冒烟
+- JoinRequest 列表 × 3 种租户头：无头 200 / 真实头 200 / 伪头 401，集合差集 0。
+- ExternalApp 列表 + 详情 × 3 种租户头：同上，集合差集 0；创建→详情→删除闭环。
+- 零 5xx 零 error。
+
+## 阶段 3 — 节点 org 绑定与 NATS 隔离（🔴 **跨仓库 + 跨环境**）
 
 > 方案已按容器核查结果重写：不新造凭证，复用现有 identity/trust 体系（见 §3 与 §0.5）。
 

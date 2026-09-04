@@ -20,7 +20,7 @@ func seedUser(t *testing.T) (*Store, string) {
 func TestCreateExternalAppStoresSecretAndViewOmitsIt(t *testing.T) {
 	s, userID := seedUser(t)
 
-	view, secret, appErr := s.CreateExternalApp(userID, CreateExternalAppInput{
+	view, secret, appErr := s.CreateExternalApp(Scope{UserID: userID}, CreateExternalAppInput{
 		Name:      "Demo Platform",
 		BaseURL:   "https://demo.example.com/home",
 		ClientID:  "demo-client",
@@ -65,7 +65,7 @@ func TestCreateExternalAppValidation(t *testing.T) {
 		{Name: "n", BaseURL: "https://x.com", ClientID: ""},
 	}
 	for i, in := range cases {
-		if _, _, err := s.CreateExternalApp(userID, in); err == nil {
+		if _, _, err := s.CreateExternalApp(Scope{UserID: userID}, in); err == nil {
 			t.Errorf("case %d: expected validation error", i)
 		}
 	}
@@ -78,7 +78,7 @@ func TestExternalAppUpdateDeleteOwnership(t *testing.T) {
 		t.Fatalf("create other user: %v", appErr)
 	}
 
-	view, _, appErr := s.CreateExternalApp(ownerID, CreateExternalAppInput{
+	view, _, appErr := s.CreateExternalApp(Scope{UserID: ownerID}, CreateExternalAppInput{
 		Name: "P", BaseURL: "https://p.com", ClientID: "c",
 	})
 	if appErr != nil {
@@ -87,33 +87,33 @@ func TestExternalAppUpdateDeleteOwnership(t *testing.T) {
 
 	// Non-owner cannot update.
 	disabled := model.ExternalAppStatusDisabled
-	if _, err := s.UpdateExternalApp(other.ID, view.ID, UpdateExternalAppInput{Status: &disabled}); err == nil {
+	if _, err := s.UpdateExternalApp(Scope{UserID: other.ID}, view.ID, UpdateExternalAppInput{Status: &disabled}); err == nil {
 		t.Error("non-owner update should be forbidden")
 	}
 
 	// A private app owned by someone else must be invisible.
-	if _, err := s.GetExternalApp(other.ID, view.ID); err == nil {
+	if _, err := s.GetExternalApp(Scope{UserID: other.ID}, view.ID); err == nil {
 		t.Error("non-owner should not read a private external app")
 	}
 
 	// Owner can disable.
-	if _, err := s.UpdateExternalApp(ownerID, view.ID, UpdateExternalAppInput{Status: &disabled}); err != nil {
+	if _, err := s.UpdateExternalApp(Scope{UserID: ownerID}, view.ID, UpdateExternalAppInput{Status: &disabled}); err != nil {
 		t.Fatalf("owner update: %v", err)
 	}
-	got, _ := s.GetExternalApp(ownerID, view.ID)
+	got, _ := s.GetExternalApp(Scope{UserID: ownerID}, view.ID)
 	if got.Status != model.ExternalAppStatusDisabled {
 		t.Errorf("status = %q, want disabled", got.Status)
 	}
 
 	// Non-owner cannot delete.
-	if err := s.DeleteExternalApp(other.ID, view.ID); err == nil {
+	if err := s.DeleteExternalApp(Scope{UserID: other.ID}, view.ID); err == nil {
 		t.Error("non-owner delete should be forbidden")
 	}
 	// Owner can delete.
-	if err := s.DeleteExternalApp(ownerID, view.ID); err != nil {
+	if err := s.DeleteExternalApp(Scope{UserID: ownerID}, view.ID); err != nil {
 		t.Fatalf("owner delete: %v", err)
 	}
-	if _, err := s.GetExternalApp(ownerID, view.ID); err == nil {
+	if _, err := s.GetExternalApp(Scope{UserID: ownerID}, view.ID); err == nil {
 		t.Error("app should be gone after delete")
 	}
 }
@@ -121,7 +121,7 @@ func TestExternalAppUpdateDeleteOwnership(t *testing.T) {
 func TestExternalAppMountMetadataDefaults(t *testing.T) {
 	s, userID := seedUser(t)
 
-	view, _, appErr := s.CreateExternalApp(userID, CreateExternalAppInput{
+	view, _, appErr := s.CreateExternalApp(Scope{UserID: userID}, CreateExternalAppInput{
 		Name: "P", BaseURL: "https://p.com", ClientID: "c",
 	})
 	if appErr != nil {
@@ -143,7 +143,7 @@ func TestExternalAppMountMetadataDefaults(t *testing.T) {
 func TestExternalAppMountMetadataOnCreate(t *testing.T) {
 	s, userID := seedUser(t)
 
-	view, _, appErr := s.CreateExternalApp(userID, CreateExternalAppInput{
+	view, _, appErr := s.CreateExternalApp(Scope{UserID: userID}, CreateExternalAppInput{
 		Name:       "Mounted",
 		BaseURL:    "https://p.com",
 		ClientID:   "c",
@@ -178,7 +178,7 @@ func TestExternalAppValidationOfMountFields(t *testing.T) {
 		{Name: "n", BaseURL: "https://p.com", ClientID: "c", Visibility: "everyone"},
 	}
 	for i, in := range bad {
-		if _, _, err := s.CreateExternalApp(userID, in); err == nil {
+		if _, _, err := s.CreateExternalApp(Scope{UserID: userID}, in); err == nil {
 			t.Errorf("case %d (%+v): expected validation error", i, in)
 		}
 	}
@@ -196,30 +196,30 @@ func TestListExternalAppsVisibilityFiltering(t *testing.T) {
 	}
 
 	// owner: private app, other: public app.
-	if _, _, err := s.CreateExternalApp(ownerID, CreateExternalAppInput{
+	if _, _, err := s.CreateExternalApp(Scope{UserID: ownerID}, CreateExternalAppInput{
 		Name: "Owner Private", BaseURL: "https://a.com", ClientID: "c",
 		Visibility: model.ExternalVisibilityPrivate,
 	}); err != nil {
 		t.Fatalf("create owner app: %v", err)
 	}
-	if _, _, err := s.CreateExternalApp(other.ID, CreateExternalAppInput{
+	if _, _, err := s.CreateExternalApp(Scope{UserID: other.ID}, CreateExternalAppInput{
 		Name: "Other Public", BaseURL: "https://b.com", ClientID: "c",
 		Visibility: model.ExternalVisibilityPublic,
 	}); err != nil {
 		t.Fatalf("create other app: %v", err)
 	}
 
-	ownerList := s.ListExternalApps(ownerID)
+	ownerList := s.ListExternalApps(Scope{UserID: ownerID})
 	if len(ownerList) != 2 {
 		t.Errorf("owner sees %d apps, want 2", len(ownerList))
 	}
 	// `other` only sees their own public app — the owner's private app is
 	// invisible to them, which is exactly the leak this change closes.
-	otherList := s.ListExternalApps(other.ID)
+	otherList := s.ListExternalApps(Scope{UserID: other.ID})
 	if len(otherList) != 1 || otherList[0].Name != "Other Public" {
 		t.Errorf("`other` sees %+v, want only their own public app", otherList)
 	}
-	thirdList := s.ListExternalApps(third.ID)
+	thirdList := s.ListExternalApps(Scope{UserID: third.ID})
 	if len(thirdList) != 1 || thirdList[0].Name != "Other Public" {
 		t.Errorf("bystander sees %+v, want only the public app", thirdList)
 	}
@@ -236,13 +236,13 @@ func TestListExternalAppsSortedBySortOrderThenName(t *testing.T) {
 		{"Beta", -1},
 	}
 	for _, sp := range specs {
-		if _, _, err := s.CreateExternalApp(userID, CreateExternalAppInput{
+		if _, _, err := s.CreateExternalApp(Scope{UserID: userID}, CreateExternalAppInput{
 			Name: sp.name, BaseURL: "https://p.com", ClientID: "c", SortOrder: sp.order,
 		}); err != nil {
 			t.Fatalf("create %s: %v", sp.name, err)
 		}
 	}
-	got := s.ListExternalApps(userID)
+	got := s.ListExternalApps(Scope{UserID: userID})
 	want := []string{"Beta", "Alpha", "Zeta"}
 	if len(got) != len(want) {
 		t.Fatalf("got %d apps, want %d", len(got), len(want))
@@ -261,7 +261,7 @@ func TestGetExternalAppForLaunchEnforcesVisibility(t *testing.T) {
 		t.Fatalf("create other user: %v", appErr)
 	}
 
-	view, _, appErr := s.CreateExternalApp(ownerID, CreateExternalAppInput{
+	view, _, appErr := s.CreateExternalApp(Scope{UserID: ownerID}, CreateExternalAppInput{
 		Name: "P", BaseURL: "https://p.com", ClientID: "c",
 	})
 	if appErr != nil {
@@ -270,19 +270,19 @@ func TestGetExternalAppForLaunchEnforcesVisibility(t *testing.T) {
 
 	// Launching mints a token, so visibility must gate it. Invisible apps
 	// return NotFound rather than Forbidden to avoid disclosing existence.
-	if _, err := s.GetExternalAppForLaunch(other.ID, view.ID); err == nil {
+	if _, err := s.GetExternalAppForLaunch(Scope{UserID: other.ID}, view.ID); err == nil {
 		t.Error("non-owner should not be able to launch a private app")
 	}
-	if _, err := s.GetExternalAppForLaunch(ownerID, view.ID); err != nil {
+	if _, err := s.GetExternalAppForLaunch(Scope{UserID: ownerID}, view.ID); err != nil {
 		t.Errorf("owner launch lookup failed: %v", err)
 	}
 	// A public app is launchable by anyone.
-	if _, err := s.UpdateExternalApp(ownerID, view.ID, UpdateExternalAppInput{
+	if _, err := s.UpdateExternalApp(Scope{UserID: ownerID}, view.ID, UpdateExternalAppInput{
 		Visibility: strPtr(model.ExternalVisibilityPublic),
 	}); err != nil {
 		t.Fatalf("make public: %v", err)
 	}
-	if _, err := s.GetExternalAppForLaunch(other.ID, view.ID); err != nil {
+	if _, err := s.GetExternalAppForLaunch(Scope{UserID: other.ID}, view.ID); err != nil {
 		t.Errorf("public app should be launchable by others: %v", err)
 	}
 }
@@ -294,7 +294,7 @@ func TestExternalAppLaunchURLAssembly(t *testing.T) {
 	// here, so we assert the store path issues a token-bearing raw record and
 	// that List omits the secret.
 	s, userID := seedUser(t)
-	view, secret, appErr := s.CreateExternalApp(userID, CreateExternalAppInput{
+	view, secret, appErr := s.CreateExternalApp(Scope{UserID: userID}, CreateExternalAppInput{
 		Name: "P", BaseURL: "https://p.com/path?foo=bar", ClientID: "c",
 	})
 	if appErr != nil {
@@ -305,7 +305,7 @@ func TestExternalAppLaunchURLAssembly(t *testing.T) {
 	}
 	// List projection must never include the secret (ExternalAppView has no
 	// ClientSecret field by design).
-	_ = s.ListExternalApps(userID)
+	_ = s.ListExternalApps(Scope{UserID: userID})
 	if !strings.Contains(view.BaseURL, "foo=bar") {
 		t.Errorf("base_url lost existing query: %q", view.BaseURL)
 	}

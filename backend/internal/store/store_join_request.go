@@ -152,11 +152,54 @@ func (s *Store) CreateJoinRequest(in CreateJoinRequestInput) (*model.JoinRequest
 	return copyJoinRequest(jr), nil
 }
 
-func (s *Store) ListJoinRequests(userID, status string) []model.JoinRequest {
+// joinRequestVisible 加入申请可见性裁决。
+// 申请由 agent 通过 trust_sync 提交（无用户会话），归属 = 邀请码生成者及其租户。
+// 用户拍板：审批可见范围为「仅同租户」。
+func (s *Store) joinRequestVisible(sc Scope, jr *model.JoinRequest) bool {
+	if jr == nil {
+		return false
+	}
+	if sc.System {
+		return true
+	}
+	// 无主申请（agent 未带邀请人，UserID 与 OrgID 皆空）：既有行为是广播给
+	// 所有用户可见（CreateJoinRequest 的 fallback 分支），保持零回归。
+	// ⚠️ 已知敞口：这类申请跨租户可见，待阶段 3 节点 org 绑定后彻底收口。
+	if jr.UserID == "" && jr.OrgID == "" {
+		return sc.UserID != ""
+	}
+	// 邀请人本人永远可见：申请由 agent 内部路径创建（无租户上下文），恒挂邀请人
+	// 个人租户；若邀请人此时切到企业租户审批，按 org 比对会看不到自己的邀请。
+	// 自己的数据对自己可见不构成越权。
+	if jr.UserID != "" && jr.UserID == sc.UserID {
+		return true
+	}
+	return visibleToScope(sc, jr.OrgID, jr.UserID)
+}
+
+func (s *Store) ListJoinRequests(sc Scope, status string) []model.JoinRequest {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	ids := s.userJoinRequests[userID]
+	// 带租户上下文时，user 分区索引只覆盖邀请人本人的申请，
+	// 必须全量扫描按归属裁决，否则同租户成员看不到别人邀请的申请。
+	// 无租户上下文：走分区索引，与改造前完全一致。
+	if sc.HasOrg() {
+		items := make([]model.JoinRequest, 0)
+		for _, jr := range s.joinRequests {
+			if status != "" && jr.Status != status {
+				continue
+			}
+			if !s.joinRequestVisible(sc, jr) {
+				continue
+			}
+			items = append(items, *copyJoinRequest(jr))
+		}
+		sort.Slice(items, func(i, j int) bool { return items[i].CreatedAt.After(items[j].CreatedAt) })
+		return items
+	}
+
+	ids := s.userJoinRequests[sc.UserID]
 	items := make([]model.JoinRequest, 0, len(ids))
 	for _, id := range ids {
 		jr, ok := s.joinRequests[id]
@@ -172,23 +215,23 @@ func (s *Store) ListJoinRequests(userID, status string) []model.JoinRequest {
 	return items
 }
 
-func (s *Store) GetJoinRequest(userID, requestID string) (*model.JoinRequest, *transport.AppError) {
+func (s *Store) GetJoinRequest(sc Scope, requestID string) (*model.JoinRequest, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	jr, ok := s.joinRequests[requestID]
-	if !ok {
+	if !ok || !s.joinRequestVisible(sc, jr) {
 		return nil, transport.NotFound("join request not found")
 	}
 	return copyJoinRequest(jr), nil
 }
 
-func (s *Store) ApproveJoinRequest(userID, requestID string, overrides JoinRequestOverrides) (*model.Agent, *transport.AppError) {
+func (s *Store) ApproveJoinRequest(sc Scope, requestID string, overrides JoinRequestOverrides) (*model.Agent, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	jr, ok := s.joinRequests[requestID]
-	if !ok {
+	if !ok || !s.joinRequestVisible(sc, jr) {
 		return nil, transport.NotFound("join request not found")
 	}
 	if jr.Status != "pending" {
@@ -229,7 +272,8 @@ func (s *Store) ApproveJoinRequest(userID, requestID string, overrides JoinReque
 			a.Role = role
 			a.Capabilities = capabilities
 			a.Product = defaultProduct(jr.AgentProduct) // 恢复时同步产品标识
-			a.UserID = userID                         // 恢复时归属审批用户（旧用户可能已删除/变更）
+			a.UserID = sc.UserID                       // 恢复时归属审批用户（旧用户可能已删除/变更）
+			a.OrgID = s.resolveOwnerOrgUnsafe(sc)     // 同步归属租户
 			a.Archived = false
 			a.Status = "offline"
 			a.UpdatedAt = now
@@ -242,7 +286,8 @@ func (s *Store) ApproveJoinRequest(userID, requestID string, overrides JoinReque
 		// Create new agent
 		agent = &model.Agent{
 			ID:           newID(),
-			UserID:       userID,
+			UserID:       sc.UserID,
+			OrgID:        s.resolveOwnerOrgUnsafe(sc),
 			Name:         name,
 			Description:  description,
 			Role:         role,
@@ -267,7 +312,8 @@ func (s *Store) ApproveJoinRequest(userID, requestID string, overrides JoinReque
 	// Mark join request as approved
 	jr.Status = "approved"
 	jr.ApprovedTrustMeshAgentID = agent.ID
-	jr.UserID = userID
+	jr.UserID = sc.UserID
+	jr.OrgID = s.resolveOwnerOrgUnsafe(sc)
 	resolvedAt := now
 	jr.ResolvedAt = &resolvedAt
 	if err := s.persistJoinRequestUnsafe(jr); err != nil {
@@ -279,12 +325,12 @@ func (s *Store) ApproveJoinRequest(userID, requestID string, overrides JoinReque
 	return clone, nil
 }
 
-func (s *Store) RejectJoinRequest(userID, requestID string) *transport.AppError {
+func (s *Store) RejectJoinRequest(sc Scope, requestID string) *transport.AppError {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	jr, ok := s.joinRequests[requestID]
-	if !ok {
+	if !ok || !s.joinRequestVisible(sc, jr) {
 		return transport.NotFound("join request not found")
 	}
 	if jr.Status != "pending" {
@@ -293,7 +339,7 @@ func (s *Store) RejectJoinRequest(userID, requestID string) *transport.AppError 
 
 	now := time.Now().UTC()
 	jr.Status = "rejected"
-	jr.UserID = userID
+	jr.UserID = sc.UserID
 	jr.ResolvedAt = &now
 	if err := s.persistJoinRequestUnsafe(jr); err != nil {
 		return mongoWriteError(err)
@@ -301,12 +347,24 @@ func (s *Store) RejectJoinRequest(userID, requestID string) *transport.AppError 
 	return nil
 }
 
-func (s *Store) PendingJoinRequestCount(userID string) int {
+func (s *Store) PendingJoinRequestCount(sc Scope) int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	// 与 ListJoinRequests 同构：带租户上下文全量扫描按归属裁决，
+	// 无租户上下文走分区索引。
+	if sc.HasOrg() {
+		count := 0
+		for _, jr := range s.joinRequests {
+			if jr.Status == "pending" && s.joinRequestVisible(sc, jr) {
+				count++
+			}
+		}
+		return count
+	}
+
 	count := 0
-	for _, id := range s.userJoinRequests[userID] {
+	for _, id := range s.userJoinRequests[sc.UserID] {
 		if jr, ok := s.joinRequests[id]; ok && jr.Status == "pending" {
 			count++
 		}

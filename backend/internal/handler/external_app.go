@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"trustmesh/backend/internal/auth"
+	"trustmesh/backend/internal/middleware"
 	"trustmesh/backend/internal/store"
 	"trustmesh/backend/internal/transport"
 )
@@ -40,16 +41,13 @@ type createExternalAppRequest struct {
 // generated client_secret (shown once — copy it into the external platform's
 // SSO config to verify TrustMesh-issued tokens).
 func (h *ExternalAppHandler) Create(c *gin.Context) {
-	userID, ok := currentUserID(c)
-	if !ok {
-		return
-	}
+	sc := middleware.Scope(c)
 	var req createExternalAppRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		transport.WriteError(c, transport.BadRequest("BAD_REQUEST", "invalid json body"))
 		return
 	}
-	view, secret, appErr := h.store.CreateExternalApp(userID, store.CreateExternalAppInput{
+	view, secret, appErr := h.store.CreateExternalApp(sc, store.CreateExternalAppInput{
 		Name:       req.Name,
 		BaseURL:    req.BaseURL,
 		ClientID:   req.ClientID,
@@ -76,23 +74,17 @@ func (h *ExternalAppHandler) Create(c *gin.Context) {
 // List returns the external platforms visible to the caller (safe view, no
 // secret): every public app plus the caller's own private registrations.
 func (h *ExternalAppHandler) List(c *gin.Context) {
-	userID, ok := currentUserID(c)
-	if !ok {
-		return
-	}
-	items := h.store.ListExternalApps(userID)
+	sc := middleware.Scope(c)
+	items := h.store.ListExternalApps(sc)
 	transport.WriteData(c, 200, gin.H{"external_apps": items})
 }
 
 // Get returns a single external platform (safe view), only if visible to the
 // caller.
 func (h *ExternalAppHandler) Get(c *gin.Context) {
-	userID, ok := currentUserID(c)
-	if !ok {
-		return
-	}
+	sc := middleware.Scope(c)
 	id := c.Param("id")
-	view, appErr := h.store.GetExternalApp(userID, id)
+	view, appErr := h.store.GetExternalApp(sc, id)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -115,17 +107,14 @@ type updateExternalAppRequest struct {
 
 // Update modifies an external platform. Only the creator may update it.
 func (h *ExternalAppHandler) Update(c *gin.Context) {
-	userID, ok := currentUserID(c)
-	if !ok {
-		return
-	}
+	sc := middleware.Scope(c)
 	id := c.Param("id")
 	var req updateExternalAppRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		transport.WriteError(c, transport.BadRequest("BAD_REQUEST", "invalid json body"))
 		return
 	}
-	view, appErr := h.store.UpdateExternalApp(userID, id, store.UpdateExternalAppInput{
+	view, appErr := h.store.UpdateExternalApp(sc, id, store.UpdateExternalAppInput{
 		Name:       req.Name,
 		BaseURL:    req.BaseURL,
 		SSOType:    req.SSOType,
@@ -146,12 +135,9 @@ func (h *ExternalAppHandler) Update(c *gin.Context) {
 
 // Delete disconnects an external platform (revokes token issuance).
 func (h *ExternalAppHandler) Delete(c *gin.Context) {
-	userID, ok := currentUserID(c)
-	if !ok {
-		return
-	}
+	sc := middleware.Scope(c)
 	id := c.Param("id")
-	if appErr := h.store.DeleteExternalApp(userID, id); appErr != nil {
+	if appErr := h.store.DeleteExternalApp(sc, id); appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}
@@ -168,17 +154,14 @@ type launchExternalAppRequest struct {
 // the external platform must set Referrer-Policy: no-referrer and keep the TTL
 // short to limit leakage.
 func (h *ExternalAppHandler) Launch(c *gin.Context) {
-	userID, ok := currentUserID(c)
-	if !ok {
-		return
-	}
+	sc := middleware.Scope(c)
 	id := c.Param("id")
 	var req launchExternalAppRequest
 	_ = c.ShouldBindJSON(&req)
 
 	// Visibility is enforced here: launching mints a token, so a user must not
 	// be able to launch an app they cannot see.
-	app, appErr := h.store.GetExternalAppForLaunch(userID, id)
+	app, appErr := h.store.GetExternalAppForLaunch(sc, id)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -187,7 +170,7 @@ func (h *ExternalAppHandler) Launch(c *gin.Context) {
 		transport.WriteError(c, transport.BadRequest("APP_DISABLED", "external app is disabled"))
 		return
 	}
-	user, ok := h.store.FindUserByID(userID)
+	user, ok := h.store.FindUserByID(sc.UserID)
 	if !ok {
 		transport.WriteError(c, transport.Unauthorized("user not found"))
 		return
@@ -211,7 +194,7 @@ func (h *ExternalAppHandler) Launch(c *gin.Context) {
 	}
 
 	launchURL := buildLaunchURL(app.BaseURL, token, req.ProjectID, req.TaskID)
-	h.store.RecordExternalAppLaunch(userID, app.ID, app.Name, req.ProjectID, req.TaskID)
+	h.store.RecordExternalAppLaunch(sc, app.ID, app.Name, req.ProjectID, req.TaskID)
 
 	transport.WriteData(c, 200, gin.H{
 		"app_id":     app.ID,

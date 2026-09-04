@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"trustmesh/backend/internal/clawsynapse"
 	"trustmesh/backend/internal/config"
+	"trustmesh/backend/internal/middleware"
 	"trustmesh/backend/internal/store"
 	"trustmesh/backend/internal/transport"
 )
@@ -81,12 +82,9 @@ clawsynapse trust request --target %s \
 }
 
 func (h *JoinRequestHandler) List(c *gin.Context) {
-	userID, ok := currentUserID(c)
-	if !ok {
-		return
-	}
+	sc := middleware.Scope(c)
 	status := strings.TrimSpace(c.Query("status"))
-	items := h.store.ListJoinRequests(userID, status)
+	items := h.store.ListJoinRequests(sc, status)
 	transport.WriteList(c, items, len(items))
 }
 
@@ -98,17 +96,13 @@ type approveJoinRequestRequest struct {
 }
 
 func (h *JoinRequestHandler) Approve(c *gin.Context) {
-	userID, ok := currentUserID(c)
-	if !ok {
-		return
-	}
 	requestID := c.Param("id")
 
 	var req approveJoinRequestRequest
 	_ = c.ShouldBindJSON(&req)
 
 	// Get the join request to find trust request ID
-	jr, appErr := h.store.GetJoinRequest(userID, requestID)
+	jr, appErr := h.store.GetJoinRequest(middleware.Scope(c), requestID)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -143,7 +137,7 @@ func (h *JoinRequestHandler) Approve(c *gin.Context) {
 	}
 
 	// Approve in store and create agent
-	agent, appErr := h.store.ApproveJoinRequest(userID, requestID, store.JoinRequestOverrides{
+	agent, appErr := h.store.ApproveJoinRequest(middleware.Scope(c), requestID, store.JoinRequestOverrides{
 		Name:         req.Name,
 		Role:         req.Role,
 		Description:  req.Description,
@@ -158,14 +152,10 @@ func (h *JoinRequestHandler) Approve(c *gin.Context) {
 }
 
 func (h *JoinRequestHandler) Reject(c *gin.Context) {
-	userID, ok := currentUserID(c)
-	if !ok {
-		return
-	}
 	requestID := c.Param("id")
 
 	// Get the join request to find trust request ID
-	jr, appErr := h.store.GetJoinRequest(userID, requestID)
+	jr, appErr := h.store.GetJoinRequest(middleware.Scope(c), requestID)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -186,7 +176,7 @@ func (h *JoinRequestHandler) Reject(c *gin.Context) {
 		}
 	}
 
-	if appErr := h.store.RejectJoinRequest(userID, requestID); appErr != nil {
+	if appErr := h.store.RejectJoinRequest(middleware.Scope(c), requestID); appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}

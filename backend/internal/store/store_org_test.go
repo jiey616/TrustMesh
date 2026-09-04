@@ -2,6 +2,7 @@ package store
 
 import (
 	"testing"
+	"time"
 
 	"trustmesh/backend/internal/model"
 )
@@ -1306,5 +1307,145 @@ func TestTaskCommentScopedAndOrgInheritance(t *testing.T) {
 	}
 	if _, err := s.AddTaskComment(Scope{UserID: "u9", OrgID: orgB.ID}, "tA", TaskCommentInput{Content: "越权"}); err == nil {
 		t.Fatal("tA must not be commentable under orgB")
+	}
+}
+func seedJoinRequestFixture(s *Store, orgA *model.Organization) *model.JoinRequest {
+	// 邀请人 u1（orgA 创建者）发起，agent 节点提交申请（内部路径）
+	// CreateJoinRequest 校验 s.users[inviter] 且走 personalOrgOfUnsafe(inviter)
+	// 需先注册用户 + 确保个人租户存在
+	u, err := s.CreateUser("jiey@example.com", "Jiey", "hash")
+	if err != nil {
+		panic("create user: " + err.Error())
+	}
+	if _, err := s.EnsurePersonalOrg(u.ID, "Jiey"); err != nil {
+		panic("ensure personal org: " + err.Error())
+	}
+	jr, err := s.CreateJoinRequest(CreateJoinRequestInput{
+		TrustRequestID: "tr-1",
+		UserID:         u.ID,
+		NodeID:         "node-jr-1",
+		Name:           " invited-agent",
+		Description:    "test agent",
+		Role:           "developer",
+		ReceivedAt:     time.Now().UTC(),
+	})
+	if err != nil {
+		panic("seed join request: " + err.Error())
+	}
+	if jr.OrgID == "" {
+		panic("seed join request: OrgID must inherit inviter personal org")
+	}
+	_ = orgA
+	return jr
+}
+
+func TestJoinRequestScopedVisibility(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	orgB, _ := s.CreateOrganization("u9", "Globex", "globex", model.OrgKindEnterprise)
+	if _, err := s.AddOrgMember(orgA.ID, "u2", model.OrgRoleMember); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	jr := seedJoinRequestFixture(s, orgA)
+
+	// 无租户头：与改造前一致（按邀请人判断）
+	if got := s.ListJoinRequests(Scope{UserID: jr.UserID}, ""); len(got) != 1 {
+		t.Fatalf("inviter without org ctx should see own invite, got %d", len(got))
+	}
+	if _, err := s.GetJoinRequest(Scope{UserID: jr.UserID}, jr.ID); err != nil {
+		t.Fatalf("inviter without org ctx should read jr: %v", err)
+	}
+
+	// 有租户头：申请恒挂邀请人个人租户（agent 内部路径无租户上下文），
+	// 同企业租户的其他成员不可见 —— 「仅同租户」语义天然满足；
+	// 跨成员共享邀请待阶段 3 节点 org 绑定后再开。
+	if got := s.ListJoinRequests(Scope{UserID: "u2", OrgID: orgA.ID}, ""); len(got) != 0 {
+		t.Fatalf("orgA member must not see inviter-personal invite, got %d", len(got))
+	}
+	// 邀请人在企业上下文下仍能看到自己的邀请（邀请人兜底）
+	if _, err := s.GetJoinRequest(Scope{UserID: jr.UserID, OrgID: orgA.ID}, jr.ID); err != nil {
+		t.Fatalf("inviter under orgA ctx should read own jr: %v", err)
+	}
+	if s.PendingJoinRequestCount(Scope{UserID: jr.UserID, OrgID: orgA.ID}) != 1 {
+		t.Fatal("pending count should be 1 for inviter under org ctx")
+	}
+
+	// 跨租户不可见（u9 是 orgB 的真实成员）
+	if got := s.ListJoinRequests(Scope{UserID: "u9", OrgID: orgB.ID}, ""); len(got) != 0 {
+		t.Fatalf("orgB must not expose invite to u9, got %d", len(got))
+	}
+	if _, err := s.GetJoinRequest(Scope{UserID: "u9", OrgID: orgB.ID}, jr.ID); err == nil {
+		t.Fatal("jr must not be visible under orgB")
+	}
+	if err := s.RejectJoinRequest(Scope{UserID: "u9", OrgID: orgB.ID}, jr.ID); err == nil {
+		t.Fatal("cross-org reject must fail")
+	}
+
+	// 系统旁路放行
+	if _, err := s.GetJoinRequest(SystemScope(), jr.ID); err != nil {
+		t.Fatalf("system scope must bypass: %v", err)
+	}
+	// 🔴 零值 Scope 不是系统旁路
+	if _, err := s.GetJoinRequest(Scope{}, jr.ID); err == nil {
+		t.Fatal("zero Scope must not bypass ownership")
+	}
+}
+
+func TestApproveJoinRequestOwnerOrg(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	jr := seedJoinRequestFixture(s, orgA)
+
+	// 企业租户上下文审批：agent 与申请都应挂到审批人当前租户
+	agent, err := s.ApproveJoinRequest(Scope{UserID: jr.UserID, OrgID: orgA.ID}, jr.ID, JoinRequestOverrides{})
+	if err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if agent.OrgID != orgA.ID {
+		t.Fatalf("agent.OrgID = %q, want %q", agent.OrgID, orgA.ID)
+	}
+	if agent.UserID != jr.UserID {
+		t.Fatalf("agent.UserID = %q, want inviter", agent.UserID)
+	}
+}
+
+func TestExternalAppScopedVisibility(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	orgB, _ := s.CreateOrganization("u9", "Globex", "globex", model.OrgKindEnterprise)
+	if _, err := s.AddOrgMember(orgA.ID, "u2", model.OrgRoleMember); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+
+	view, _, err := s.CreateExternalApp(Scope{UserID: "u1", OrgID: orgA.ID}, CreateExternalAppInput{
+		Name: "appA", BaseURL: "https://a.example.com", ClientID: "cid-a",
+	})
+	if err != nil {
+		t.Fatalf("create appA: %v", err)
+	}
+	if got := s.ListExternalApps(Scope{UserID: "u1", OrgID: orgA.ID}); len(got) != 1 {
+		t.Fatalf("u1 in orgA should see 1 app, got %d", len(got))
+	}
+	if _, err := s.GetExternalApp(Scope{UserID: "u2", OrgID: orgA.ID}, view.ID); err != nil {
+		t.Fatalf("u2 in orgA should read appA: %v", err)
+	}
+
+	// 跨租户不可见
+	if got := s.ListExternalApps(Scope{UserID: "u9", OrgID: orgB.ID}); len(got) != 0 {
+		t.Fatalf("orgB must not expose appA to u9, got %d", len(got))
+	}
+	if _, err := s.GetExternalApp(Scope{UserID: "u9", OrgID: orgB.ID}, view.ID); err == nil {
+		t.Fatal("appA must not be visible under orgB")
+	}
+	if _, err := s.GetExternalAppForLaunch(Scope{UserID: "u9", OrgID: orgB.ID}, view.ID); err == nil {
+		t.Fatal("appA must not be launchable under orgB")
+	}
+	if err := s.DeleteExternalApp(Scope{UserID: "u9", OrgID: orgB.ID}, view.ID); err == nil {
+		t.Fatal("cross-org delete must fail")
+	}
+
+	// 无租户头：作者本人可见（零回归）
+	if got := s.ListExternalApps(Scope{UserID: "u1"}); len(got) != 1 {
+		t.Fatalf("u1 without org ctx should see own app, got %d", len(got))
 	}
 }
