@@ -1,6 +1,6 @@
 # TrustMesh 多租户 + 企业管理 实施设计
 
-> 状态：**阶段 0 + 阶段 1 已完成，阶段 2 分批推进中**（阶段 0 commit `5fa4a71`；阶段 1 见 §阶段 1 实况；阶段 2 见 §阶段 2 实况，**2-1 Project / 2-2 Task / 2-3 Agent / 2-4 Knowledge+Template / 2-5a File 均已上线**）
+> 状态：**阶段 0 + 阶段 1 已完成，阶段 2 分批推进中**（阶段 0 commit `5fa4a71`；阶段 1 见 §阶段 1 实况；阶段 2 见 §阶段 2 实况，**2-1 Project / 2-2 Task / 2-3 Agent / 2-4 Knowledge+Template / 2-5a File / 2-5b Comment+Meeting 均已上线**）
 > 日期：2026-09-04
 > 开工前备份：`deploy/backups/mongodump-trustmesh-20260904-214800.archive.gz`，git tag `pre-multitenant-stage0`
 > 阶段 1 备份：`deploy/backups/mongodump-trustmesh-20260904-223127-stage1.archive.gz`，git tag `pre-multitenant-stage1`
@@ -483,9 +483,84 @@ func visibleToScope(sc Scope, ownerOrgID, ownerUserID string) bool {
 | 2-3 | Agent 归属收敛 | ✅ 已上线 |
 | 2-4 | Knowledge + WorkflowTemplate | ✅ 已上线 |
 | 2-5a | File（project_file + artifact 绑定） | ✅ 已上线 |
-| 2-5b | Comment + Meeting | ⬜ 待开工 |
+### 2-5b Comment + Meeting 归属收敛（已完成并上线）
+
+| 项 | 内容 |
+|---|---|
+| 签名收敛 | `workflow.go` 2 个：`AddTaskComment`（写路径）/ `ListTaskComments`；`meeting.go` 10 个：`CreateMeeting` / `GetMeeting` / `ListMeetings` / `ListMeetingsByStatus` / `UpdateMeetingStatus` / `AddMeetingMessage` / `ListMeetingMessages` / `UpdateMeetingSummary` / `UpdateMeetingMinutes` / `AddMeetingTodo` / `GenerateMeetingMinutesFile` |
+| 写路径落点 | `CreateMeeting` 的 `OrgID` 改 `resolveOwnerOrgUnsafe(sc)`；`addCommentUnsafe` 的 `OrgID` 改继承 `task.OrgID` |
+| Handler | `meeting.go` 8 处鉴权行 + 12 处调用点；`task.go` 评论 2 处；`project_file.go` 纪要恢复路径 |
+| 内部路径 | `clawsynapse/webhook.go` 30 处 + `timeout_monitor.go` 4 处 + `meeting.go` 4 处改用 `SystemScope()` |
+| 测试 | 新增 4 个：`TestMeetingScopedVisibility` / `TestSystemScopeBypassesMeetingOwnership` / `TestCreateMeetingOwnerOrg` / `TestTaskCommentScopedAndOrgInheritance` |
+
+#### 🔴 修掉一个改造前就存在的越权漏洞
+
+`GetMeeting(_ string, ...)` / `ListMeetings(_ string, ...)` / `ListMeetingsByStatus` /
+`ListMeetingMessages` / `UpdateMeetingSummary` / `UpdateMeetingMinutes` /
+`AddMeetingTodo` 七个函数的 userID 形参**被写成 `_`（完全丢弃）**，HTTP 请求
+不做任何归属校验 —— 任何登录用户凭 meetingID 就能读写任意会议、发消息、加待办。
+`AddMeetingMessage` 干脆没有 userID 形参。内部路径（agent webhook 20+ 处）则
+一律显式传 `""` 绕过。
+
+#### 🔴 补掉阶段 1 的两处双写漏网
+
+1. **`CreateMeeting` 恒挂作者个人租户**。企业租户下建的会议 `org_id` 是个人
+   租户，同租户成员带租户头看不到（与 2-2 / 2-4 / 2-5a 同类）。
+2. **`addCommentUnsafe` 的 `OrgID` 从 `personalOrgOfUnsafe(task.UserID)` 派生**。
+   评论是任务的附属资源，归属必须跟随任务，不能跟作者 —— 否则企业租户下
+   评论挂个人租户、与所属任务的 org 不一致。
+
+#### 关键设计决策：`SystemScope()` 显式系统旁路
+
+恢复校验后，内部路径（agent webhook 30 处、timeout_monitor 4 处）必须保持
+零回归。这里**不能**靠「UserID 为空」蒙混放行 —— 那是「忘了传 userID」和
+「故意放行」分不清，等于给越权留后门。做法：
+
+```go
+type Scope struct {
+    UserID string
+    OrgID  string
+    Role   string
+    // System 标记内部系统路径（agent webhook / timeout_monitor / 后台定时器），
+    // 不做归属裁决直接放行。🔴 HTTP 路径永远拿不到 System Scope。
+    System bool
+}
+
+func SystemScope() Scope { return Scope{System: true} }
+```
+
+`visibleToScope` / `projectVisible` / `meetingVisible` 一律在开头 `if sc.System
+{ return true }`。**零值 `Scope{}` 不是系统旁路** —— 这条断言已写进
+`TestSystemScopeBypassesMeetingOwnership`，是这个安全属性的回归守卫。
+
+配套：`meetingVisible(sc, m)` 优先走项目裁决（继承 2-1 的项目成员白名单），
+项目不在内存（懒加载边界）时退回会议自身的 `OrgID` / `CreatorID`。
+
+**踩坑（🔴 下次必须避开）**
+
+1. **`meetingVisible` 由调用者持锁**（与 `projectVisible` 同一约定）。`GetMeeting`
+   原本是 `RLock` → `RUnlock` → 返回，裁决必须挪进锁内；懒加载分支同理。
+   搞反会 data race，加锁则会死锁（Go 的 `sync.RWMutex` 不可重入）。
+2. **Go 编译器默认最多报 10 个错误**。`webhook_transfer_test.go` 实际有 6 处
+   `ListTaskComments` 调用点，编译器只报了前 4 处 —— 按报错数写 `expect` 会漏。
+   批量替换前先用 `grep -c` 数真实总数。
+3. **`GenerateMeetingMinutesFile` 的 `ownerID := userID` 兜底逻辑要按 Scope 语义
+   重写**：HTTP 路径用请求者身份做真实校验，只有 `sc.System` 才兜底到项目
+   owner / 会议创建者。原代码无锁读 `s.projects`（既有 race），顺手用 RLock 包住。
+
+**后续批次排期**
+
+| 批次 | 范围 | 状态 |
+|---|---|---|
+| 2-1 | Project（7 函数 + handler + 裁决层） | ✅ 已上线 |
+| 2-2 | Task 归属收敛 | ✅ 已上线 |
+| 2-3 | Agent 归属收敛 | ✅ 已上线 |
+| 2-4 | Knowledge + WorkflowTemplate | ✅ 已上线 |
+| 2-5a | File（project_file + artifact 绑定） | ✅ 已上线 |
+| 2-5b | Comment + Meeting | ✅ 已上线 |
 | 2-6 | JoinRequest + ExternalApp | ⬜ 待开工 |
 | 2-7 | Event + Notification 分区 map（§4.3） | ⬜ 待开工 |
+
 
 
 ### 阶段 3 — 节点 org 绑定与 NATS 隔离（🔴 **跨仓库 + 跨环境**）

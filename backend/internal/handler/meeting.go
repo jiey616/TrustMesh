@@ -58,7 +58,8 @@ type createMeetingRequest struct {
 }
 
 func (h *MeetingHandler) Create(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
+	userID := sc.UserID
 	if !ok {
 		return
 	}
@@ -97,7 +98,7 @@ func (h *MeetingHandler) Create(c *gin.Context) {
 		}
 	}
 
-	result, appErr := h.store.CreateMeeting(userID, meeting)
+	result, appErr := h.store.CreateMeeting(sc, meeting)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -115,13 +116,13 @@ func (h *MeetingHandler) Create(c *gin.Context) {
 }
 
 func (h *MeetingHandler) Get(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 	meetingID := c.Param("id")
 
-	meeting, appErr := h.store.GetMeeting(userID, meetingID)
+	meeting, appErr := h.store.GetMeeting(sc, meetingID)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -130,13 +131,13 @@ func (h *MeetingHandler) Get(c *gin.Context) {
 }
 
 func (h *MeetingHandler) List(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 	projectID := c.Param("projectId")
 
-	items := h.store.ListMeetings(userID, projectID)
+	items := h.store.ListMeetings(sc, projectID)
 	transport.WriteList(c, items, len(items))
 }
 
@@ -145,13 +146,14 @@ type sendMessageRequest struct {
 }
 
 func (h *MeetingHandler) SendMessage(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
+	userID := sc.UserID
 	if !ok {
 		return
 	}
 	meetingID := c.Param("id")
 
-	meeting, appErr := h.store.GetMeeting(userID, meetingID)
+	meeting, appErr := h.store.GetMeeting(sc, meetingID)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -175,14 +177,14 @@ func (h *MeetingHandler) SendMessage(c *gin.Context) {
 		Content:    strings.TrimSpace(req.Content),
 	}
 
-	result, appErr := h.store.AddMeetingMessage(msg)
+	result, appErr := h.store.AddMeetingMessage(sc, msg)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}
 
 	if meeting.Status == model.MeetingWaiting {
-		_ = h.store.UpdateMeetingStatus(userID, meetingID, model.MeetingInProgress)
+		_ = h.store.UpdateMeetingStatus(sc, meetingID, model.MeetingInProgress)
 	}
 
 	// Forward to PM agent (host) — PM will moderate and involve executors
@@ -194,24 +196,24 @@ func (h *MeetingHandler) SendMessage(c *gin.Context) {
 }
 
 func (h *MeetingHandler) ListMessages(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 	meetingID := c.Param("id")
 
-	items := h.store.ListMeetingMessages(userID, meetingID)
+	items := h.store.ListMeetingMessages(sc, meetingID)
 	transport.WriteList(c, items, len(items))
 }
 
 func (h *MeetingHandler) Start(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 	meetingID := c.Param("id")
 
-	appErr := h.store.UpdateMeetingStatus(userID, meetingID, model.MeetingInProgress)
+	appErr := h.store.UpdateMeetingStatus(sc, meetingID, model.MeetingInProgress)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -220,7 +222,8 @@ func (h *MeetingHandler) Start(c *gin.Context) {
 }
 
 func (h *MeetingHandler) End(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
+	userID := sc.UserID
 	if !ok {
 		return
 	}
@@ -230,24 +233,24 @@ func (h *MeetingHandler) End(c *gin.Context) {
 	h.stopMeetingTimeout(meetingID)
 
 	// Conclude meeting
-	_ = h.store.UpdateMeetingStatus(userID, meetingID, model.MeetingCompleted)
+	_ = h.store.UpdateMeetingStatus(sc, meetingID, model.MeetingCompleted)
 
 	// Ensure meeting minutes exist. The host (PM agent) is expected to upload
 	// minutes via chat.message (metadata.action="minutes"). If it didn't (e.g.
 	// the meeting was ended without a host-generated summary), auto-generate a
 	// transcript-based minutes document so the requirement is always satisfied.
 	if h.fileStorage != nil {
-		meeting, _ := h.store.GetMeeting(userID, meetingID)
+		meeting, _ := h.store.GetMeeting(sc, meetingID)
 		if meeting != nil && meeting.MinutesFileID == "" {
-			if fileID, genErr := h.generateAndSaveMinutes(userID, meeting); genErr == nil && fileID != "" {
-				h.appendSystemMeetingNote(meeting, "📄 已自动生成会议纪要并上传至项目文件管理（主持人未主动上传）。")
+			if fileID, genErr := h.generateAndSaveMinutes(sc, meeting); genErr == nil && fileID != "" {
+				h.appendSystemMeetingNote(sc, meeting, "📄 已自动生成会议纪要并上传至项目文件管理（主持人未主动上传）。")
 			}
 		}
 	}
 
 	// Send [会议已结束] signal — skill instructs agents to ACK and stop
 	if h.clawClient != nil {
-		meeting, _ := h.store.GetMeeting(userID, meetingID)
+		meeting, _ := h.store.GetMeeting(sc, meetingID)
 		if meeting != nil {
 			h.broadcastMeetingEnd(context.Background(), meeting, userID)
 		}
@@ -258,7 +261,7 @@ func (h *MeetingHandler) End(c *gin.Context) {
 
 // AddTodo adds a meeting todo (called after summary generated).
 func (h *MeetingHandler) AddTodo(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -270,7 +273,7 @@ func (h *MeetingHandler) AddTodo(c *gin.Context) {
 		return
 	}
 
-	meeting, appErr := h.store.AddMeetingTodo(userID, meetingID, req)
+	meeting, appErr := h.store.AddMeetingTodo(sc, meetingID, req)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -573,12 +576,12 @@ var agendaSplitRe = regexp.MustCompile(`[。\n;；]+`)
 // stores it in project file management. Used as a fallback when the host (PM
 // agent) did not upload minutes via chat.message (metadata.action="minutes").
 // Returns the created project file ID (empty on failure).
-func (h *MeetingHandler) generateAndSaveMinutes(userID string, meeting *model.Meeting) (string, error) {
-	return h.store.GenerateMeetingMinutesFile(userID, meeting)
+func (h *MeetingHandler) generateAndSaveMinutes(sc store.Scope, meeting *model.Meeting) (string, error) {
+	return h.store.GenerateMeetingMinutesFile(sc, meeting)
 }
 
 // appendSystemMeetingNote records a system note in the meeting transcript.
-func (h *MeetingHandler) appendSystemMeetingNote(meeting *model.Meeting, text string) {
+func (h *MeetingHandler) appendSystemMeetingNote(sc store.Scope, meeting *model.Meeting, text string) {
 	msg := &model.MeetingMessage{
 		MeetingID:  meeting.ID,
 		SenderType: "system",
@@ -586,7 +589,7 @@ func (h *MeetingHandler) appendSystemMeetingNote(meeting *model.Meeting, text st
 		SenderName: "系统",
 		Content:    text,
 	}
-	_, _ = h.store.AddMeetingMessage(msg)
+	_, _ = h.store.AddMeetingMessage(sc, msg)
 }
 
 // buildMeetingMinutesFileName produces a safe file name for meeting minutes.
@@ -708,16 +711,16 @@ func (h *MeetingHandler) timeoutMeeting(meetingID string) {
 	delete(h.meetingTimers, meetingID)
 	h.meetingTimerMu.Unlock()
 
-	_ = h.store.UpdateMeetingStatus("", meetingID, model.MeetingCompleted)
+	_ = h.store.UpdateMeetingStatus(store.SystemScope(), meetingID, model.MeetingCompleted)
 
-	meeting, _ := h.store.GetMeeting("", meetingID)
+	meeting, _ := h.store.GetMeeting(store.SystemScope(), meetingID)
 	if meeting == nil {
 		return
 	}
 
 	if meeting.MinutesFileID == "" && h.fileStorage != nil {
-		if fileID, err := h.generateAndSaveMinutes("", meeting); err == nil && fileID != "" {
-			h.appendSystemMeetingNote(meeting, "⏰ 会议超时自动收尾，已自动生成会议纪要并上传至项目文件管理。")
+		if fileID, err := h.generateAndSaveMinutes(store.SystemScope(), meeting); err == nil && fileID != "" {
+			h.appendSystemMeetingNote(store.SystemScope(), meeting, "⏰ 会议超时自动收尾，已自动生成会议纪要并上传至项目文件管理。")
 		}
 	}
 
@@ -734,7 +737,7 @@ func (h *MeetingHandler) timeoutMeeting(meetingID string) {
 // meeting that was about to time out still does, and one with time left keeps
 // its remaining budget).
 func (h *MeetingHandler) RecoverTimeouts(ctx context.Context) {
-	meetings := h.store.ListMeetingsByStatus("", model.MeetingInProgress)
+	meetings := h.store.ListMeetingsByStatus(store.SystemScope(), model.MeetingInProgress)
 	for _, m := range meetings {
 		last := m.UpdatedAt
 		if last.IsZero() {

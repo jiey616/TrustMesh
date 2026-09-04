@@ -423,7 +423,7 @@ func (h *WebhookHandler) handleTaskReply(c *gin.Context, webhook protocol.Webhoo
 	payload.Content = stripBracketReplyPrefix(strings.TrimSpace(payload.Content))
 
 	// Check if this is a meeting reply (sessionKey = meeting id)
-	if meeting, _ := h.store.GetMeeting("", payload.TaskID); meeting != nil {
+	if meeting, _ := h.store.GetMeeting(store.SystemScope(), payload.TaskID); meeting != nil {
 		// Ignore messages if meeting is already completed
 		if h.isMeetingCompleted(payload.TaskID) {
 			transport.WriteData(c, http.StatusOK, gin.H{"status": "ignored", "reason": "meeting completed"})
@@ -446,7 +446,7 @@ func (h *WebhookHandler) handleTaskReply(c *gin.Context, webhook protocol.Webhoo
 			Content:    msgContent,
 			UIBlocks:   uiBlocks,
 		}
-		if _, appErr := h.store.AddMeetingMessage(msg); appErr != nil {
+		if _, appErr := h.store.AddMeetingMessage(store.SystemScope(), msg); appErr != nil {
 			transport.WriteError(c, appErr)
 			return
 		}
@@ -459,7 +459,7 @@ func (h *WebhookHandler) handleTaskReply(c *gin.Context, webhook protocol.Webhoo
 	// Also check sessionKey — executor task.reply messages may use the task
 	// ID as TaskID but the meeting ID as SessionKey. Store a copy in the
 	// meeting transcript so the meeting page shows executor responses.
-	if meeting, _ := h.store.GetMeeting("", webhook.SessionKey); meeting != nil {
+	if meeting, _ := h.store.GetMeeting(store.SystemScope(), webhook.SessionKey); meeting != nil {
 		if !h.isMeetingCompleted(webhook.SessionKey) {
 			skContent := payload.Content
 			if extracted := extractContentFromTaskWrapper(payload.Content); extracted != "" {
@@ -473,7 +473,7 @@ func (h *WebhookHandler) handleTaskReply(c *gin.Context, webhook protocol.Webhoo
 				Content:    skContent,
 				UIBlocks:   payload.UIBlocks,
 			}
-			if _, appErr := h.store.AddMeetingMessage(msg); appErr == nil {
+			if _, appErr := h.store.AddMeetingMessage(store.SystemScope(), msg); appErr == nil {
 				h.broadcastMeetingReply(context.Background(), meeting, webhook.From, skContent)
 			} else if h.log != nil {
 				h.log.Warn("failed to store executor meeting reply", zap.Error(appErr))
@@ -533,7 +533,7 @@ func (h *WebhookHandler) handleTaskResponse(c *gin.Context, webhook protocol.Web
 	}
 
 	// Check if this is a meeting response (taskID = meeting id)
-	if meeting, _ := h.store.GetMeeting("", taskID); meeting != nil {
+	if meeting, _ := h.store.GetMeeting(store.SystemScope(), taskID); meeting != nil {
 		if h.isMeetingCompleted(taskID) {
 			transport.WriteData(c, http.StatusOK, gin.H{"status": "ignored", "reason": "meeting completed"})
 			return
@@ -545,7 +545,7 @@ func (h *WebhookHandler) handleTaskResponse(c *gin.Context, webhook protocol.Web
 			SenderName: h.resolveMeetingSenderName(webhook.From),
 			Content:    content,
 		}
-		if _, appErr := h.store.AddMeetingMessage(storeMsg); appErr != nil {
+		if _, appErr := h.store.AddMeetingMessage(store.SystemScope(), storeMsg); appErr != nil {
 			transport.WriteError(c, appErr)
 			return
 		}
@@ -1689,7 +1689,7 @@ func (h *WebhookHandler) handleTaskComment(c *gin.Context, webhook protocol.Webh
 	payload.Content = stripBracketReplyPrefix(strings.TrimSpace(payload.Content))
 
 	// Check if this is a meeting comment (task_id = meeting id)
-	if meeting, _ := h.store.GetMeeting("", payload.TaskID); meeting != nil {
+	if meeting, _ := h.store.GetMeeting(store.SystemScope(), payload.TaskID); meeting != nil {
 		if h.isMeetingCompleted(payload.TaskID) {
 			transport.WriteData(c, http.StatusOK, gin.H{"status": "ignored", "reason": "meeting completed"})
 			return
@@ -1701,7 +1701,7 @@ func (h *WebhookHandler) handleTaskComment(c *gin.Context, webhook protocol.Webh
 			SenderName: h.resolveMeetingSenderName(webhook.From),
 			Content:    payload.Content,
 		}
-		if _, appErr := h.store.AddMeetingMessage(msg); appErr != nil {
+		if _, appErr := h.store.AddMeetingMessage(store.SystemScope(), msg); appErr != nil {
 			transport.WriteError(c, appErr)
 			return
 		}
@@ -3105,7 +3105,7 @@ func extractContentFromTaskWrapper(raw string) string {
 
 // isMeetingCompleted checks if a meeting (by ID) is in completed status.
 func (h *WebhookHandler) isMeetingCompleted(meetingID string) bool {
-	meeting, err := h.store.GetMeeting("", meetingID)
+	meeting, err := h.store.GetMeeting(store.SystemScope(), meetingID)
 	if err != nil || meeting == nil {
 		return false
 	}
@@ -3290,16 +3290,16 @@ func (h *WebhookHandler) handleMeetingMessage(c *gin.Context, payload protocol.W
 		return
 	}
 
-	if _, appErr := h.store.AddMeetingMessage(storeMsg); appErr != nil {
+	if _, appErr := h.store.AddMeetingMessage(store.SystemScope(), storeMsg); appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}
 
 	// Update meeting to in_progress if still waiting
-	_ = h.store.UpdateMeetingStatus("", msg.MeetingID, model.MeetingInProgress)
+	_ = h.store.UpdateMeetingStatus(store.SystemScope(), msg.MeetingID, model.MeetingInProgress)
 
 	// Broadcast to other participants
-	meeting, _ := h.store.GetMeeting("", msg.MeetingID)
+	meeting, _ := h.store.GetMeeting(store.SystemScope(), msg.MeetingID)
 	if meeting != nil {
 		h.broadcastMeetingReply(context.Background(), meeting, payload.From, msg.Content)
 	}
@@ -3329,7 +3329,7 @@ func (h *WebhookHandler) isMeetingSessionKey(sessionKey string) bool {
 	if sessionKey == "" {
 		return false
 	}
-	m, err := h.store.GetMeeting("", sessionKey)
+	m, err := h.store.GetMeeting(store.SystemScope(), sessionKey)
 	return err == nil && m != nil
 }
 
@@ -3395,7 +3395,7 @@ func (h *WebhookHandler) handleMeetingChatUnified(c *gin.Context, webhook protoc
 		return
 	}
 
-	meeting, _ := h.store.GetMeeting("", meetingID)
+	meeting, _ := h.store.GetMeeting(store.SystemScope(), meetingID)
 	if meeting == nil {
 		transport.WriteData(c, http.StatusOK, gin.H{"status": "ok", "ignored": true})
 		return
@@ -3468,7 +3468,7 @@ func (h *WebhookHandler) handleMeetingChatUnified(c *gin.Context, webhook protoc
 		Content:      cleaned,
 		UIBlocks:     msg.UIBlocks,
 	}
-	if _, appErr := h.store.AddMeetingMessage(storeMsg); appErr != nil {
+	if _, appErr := h.store.AddMeetingMessage(store.SystemScope(), storeMsg); appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}
@@ -3476,7 +3476,7 @@ func (h *WebhookHandler) handleMeetingChatUnified(c *gin.Context, webhook protoc
 	// Record the outgoing for de-duplication only after we know it will be stored.
 	markMeetingOutgoing(meetingID, webhook.From, target, phase)
 
-	_ = h.store.UpdateMeetingStatus("", meetingID, model.MeetingInProgress)
+	_ = h.store.UpdateMeetingStatus(store.SystemScope(), meetingID, model.MeetingInProgress)
 
 	h.broadcastMeetingReplyUnified(context.Background(), meeting, webhook.From, msg, cleaned)
 
@@ -3523,7 +3523,7 @@ func (h *WebhookHandler) handleMeetingResponse(c *gin.Context, webhook protocol.
 		return
 	}
 
-	meeting, _ := h.store.GetMeeting("", meetingID)
+	meeting, _ := h.store.GetMeeting(store.SystemScope(), meetingID)
 	if meeting == nil {
 		transport.WriteData(c, http.StatusOK, gin.H{"status": "ok", "ignored": true})
 		return
@@ -3579,12 +3579,12 @@ func (h *WebhookHandler) handleMeetingResponse(c *gin.Context, webhook protocol.
 		Content:      cleaned,
 		UIBlocks:     msg.UIBlocks,
 	}
-	if _, appErr := h.store.AddMeetingMessage(storeMsg); appErr != nil {
+	if _, appErr := h.store.AddMeetingMessage(store.SystemScope(), storeMsg); appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}
 
-	_ = h.store.UpdateMeetingStatus("", meetingID, model.MeetingInProgress)
+	_ = h.store.UpdateMeetingStatus(store.SystemScope(), meetingID, model.MeetingInProgress)
 
 	// Forward to the host so it receives the "participant done" signal and can
 	// advance the agenda. Use the unified router (participant → host).
@@ -3609,9 +3609,9 @@ func (h *WebhookHandler) handleMeetingControlUnified(c *gin.Context, webhook pro
 
 	switch ctl.Action {
 	case "start":
-		_ = h.store.UpdateMeetingStatus("", ctl.MeetingID, model.MeetingInProgress)
+		_ = h.store.UpdateMeetingStatus(store.SystemScope(), ctl.MeetingID, model.MeetingInProgress)
 	case "conclude":
-		_ = h.store.UpdateMeetingStatus("", ctl.MeetingID, model.MeetingCompleted)
+		_ = h.store.UpdateMeetingStatus(store.SystemScope(), ctl.MeetingID, model.MeetingCompleted)
 	case "minutes":
 		markdown := ctl.Content
 		if ctl.MinutesData != nil && ctl.MinutesData.FullMarkdown != "" {
@@ -3622,7 +3622,7 @@ func (h *WebhookHandler) handleMeetingControlUnified(c *gin.Context, webhook pro
 		transport.WriteData(c, http.StatusOK, gin.H{"status": "ok", "pong": true})
 		return
 	case "status":
-		meeting, _ := h.store.GetMeeting("", ctl.MeetingID)
+		meeting, _ := h.store.GetMeeting(store.SystemScope(), ctl.MeetingID)
 		if meeting != nil {
 			transport.WriteData(c, http.StatusOK, gin.H{"status": "ok", "meeting_status": meeting.Status, "participant_count": len(meeting.Participants)})
 		} else {
@@ -3940,12 +3940,12 @@ func (h *WebhookHandler) handleMeetingChat(c *gin.Context, webhook protocol.Webh
 		transport.WriteData(c, http.StatusOK, gin.H{"status": "ignored", "reason": "meeting completed"})
 		return
 	}
-	if _, appErr := h.store.AddMeetingMessage(storeMsg); appErr != nil {
+	if _, appErr := h.store.AddMeetingMessage(store.SystemScope(), storeMsg); appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}
-	_ = h.store.UpdateMeetingStatus("", meetingID, model.MeetingInProgress)
-	meeting, _ := h.store.GetMeeting("", meetingID)
+	_ = h.store.UpdateMeetingStatus(store.SystemScope(), meetingID, model.MeetingInProgress)
+	meeting, _ := h.store.GetMeeting(store.SystemScope(), meetingID)
 	if meeting != nil {
 		h.broadcastMeetingReply(context.Background(), meeting, webhook.From, content)
 	}
@@ -3962,9 +3962,9 @@ func (h *WebhookHandler) handleMeetingChat(c *gin.Context, webhook protocol.Webh
 func (h *WebhookHandler) applyMeetingControl(c *gin.Context, meetingID, action, content string) {
 	switch action {
 	case "start":
-		_ = h.store.UpdateMeetingStatus("", meetingID, model.MeetingInProgress)
+		_ = h.store.UpdateMeetingStatus(store.SystemScope(), meetingID, model.MeetingInProgress)
 	case "conclude", "summarize":
-		_ = h.store.UpdateMeetingStatus("", meetingID, model.MeetingCompleted)
+		_ = h.store.UpdateMeetingStatus(store.SystemScope(), meetingID, model.MeetingCompleted)
 	case "minutes":
 		h.saveMeetingMinutes(c, meetingID, content)
 	}
@@ -3981,7 +3981,7 @@ func (h *WebhookHandler) saveMeetingMinutes(c *gin.Context, meetingID, markdown 
 		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "meeting minutes content is empty"))
 		return
 	}
-	meeting, appErr := h.store.GetMeeting("", meetingID)
+	meeting, appErr := h.store.GetMeeting(store.SystemScope(), meetingID)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -4007,7 +4007,7 @@ func (h *WebhookHandler) saveMeetingMinutes(c *gin.Context, meetingID, markdown 
 		return
 	}
 	_ = h.store.SetProjectFileLocalPath(pf.ID, localPath)
-	_ = h.store.UpdateMeetingMinutes("", meetingID, markdown, pf.ID)
+	_ = h.store.UpdateMeetingMinutes(store.SystemScope(), meetingID, markdown, pf.ID)
 
 	h.appendSystemMeetingMessage(meeting, fmt.Sprintf("📄 会议纪要已生成并上传至项目文件管理：%s", fileName))
 	transport.WriteData(c, http.StatusOK, gin.H{"status": "ok", "file_id": pf.ID})
@@ -4024,7 +4024,7 @@ func (h *WebhookHandler) appendSystemMeetingMessage(meeting *model.Meeting, text
 		SenderName: "系统",
 		Content:    text,
 	}
-	if _, appErr := h.store.AddMeetingMessage(msg); appErr != nil && h.log != nil {
+	if _, appErr := h.store.AddMeetingMessage(store.SystemScope(), msg); appErr != nil && h.log != nil {
 		h.log.Warn("failed to append system meeting message", zap.String("meeting_id", meeting.ID), zap.Error(appErr))
 	}
 }

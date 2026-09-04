@@ -1091,3 +1091,220 @@ func TestBindArtifactOutputScoped(t *testing.T) {
 		t.Fatal("tA must not be bindable under orgB")
 	}
 }
+
+
+// ─── 阶段 2-5b：Meeting + Comment 归属收敛 ───
+
+func seedMeetingFixture(s *Store, orgA, orgB *model.Organization) {
+	s.projects["pA"] = &model.Project{ID: "pA", OrgID: orgA.ID, UserID: "u1", Name: "A 的项目"}
+	s.projects["pB"] = &model.Project{ID: "pB", OrgID: orgB.ID, UserID: "u9", Name: "B 的项目"}
+	s.meetings["mA"] = &model.Meeting{
+		ID: "mA", ProjectID: "pA", OrgID: orgA.ID, CreatorID: "u1",
+		Title: "A 的会议", Status: model.MeetingWaiting,
+	}
+	s.projectMeetings["pA"] = []string{"mA"}
+	s.meetingMessages["msgA"] = &model.MeetingMessage{
+		ID: "msgA", MeetingID: "mA", OrgID: orgA.ID,
+		SenderType: "user", SenderID: "u1", Content: "hi",
+	}
+	s.meetingMessageIndex["mA"] = []string{"msgA"}
+}
+
+// TestMeetingScopedVisibility 覆盖会议域读/写路径的归属裁决。
+// 改造前这些函数的 userID 形参被写成 `_`（完全丢弃），HTTP 请求不做任何校验。
+func TestMeetingScopedVisibility(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	orgB, _ := s.CreateOrganization("u9", "Globex", "globex", model.OrgKindEnterprise)
+	if _, err := s.AddOrgMember(orgA.ID, "u2", model.OrgRoleMember); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	seedMeetingFixture(s, orgA, orgB)
+
+	// 无租户头：与改造前一致（按会议创建者判断）
+	if got := s.ListMeetings(Scope{UserID: "u1"}, "pA"); len(got) != 1 {
+		t.Fatalf("u1 without org ctx should see own meeting, got %d", len(got))
+	}
+	if _, err := s.GetMeeting(Scope{UserID: "u2"}, "mA"); err == nil {
+		t.Fatal("u2 without org ctx must not read mA")
+	}
+
+	// 有租户头：同租户成员可见（项目成员白名单生效）
+	if got := s.ListMeetings(Scope{UserID: "u2", OrgID: orgA.ID}, "pA"); len(got) != 1 {
+		t.Fatalf("u2 in orgA should see mA, got %d", len(got))
+	}
+	if _, err := s.GetMeeting(Scope{UserID: "u2", OrgID: orgA.ID}, "mA"); err != nil {
+		t.Fatalf("u2 in orgA should read mA: %v", err)
+	}
+	if got := s.ListMeetingMessages(Scope{UserID: "u2", OrgID: orgA.ID}, "mA"); len(got) != 1 {
+		t.Fatalf("u2 in orgA should read mA messages, got %d", len(got))
+	}
+
+	// 跨租户不可见（u9 是 orgB 的真实成员）
+	if got := s.ListMeetings(Scope{UserID: "u9", OrgID: orgB.ID}, "pA"); len(got) != 0 {
+		t.Fatalf("orgB must not expose pA meetings to u9, got %d", len(got))
+	}
+	if _, err := s.GetMeeting(Scope{UserID: "u9", OrgID: orgB.ID}, "mA"); err == nil {
+		t.Fatal("mA must not be visible under orgB")
+	}
+	if got := s.ListMeetingMessages(Scope{UserID: "u9", OrgID: orgB.ID}, "mA"); len(got) != 0 {
+		t.Fatalf("orgB must not read mA messages, got %d", len(got))
+	}
+
+	// 写路径同样收口
+	if err := s.UpdateMeetingStatus(Scope{UserID: "u9", OrgID: orgB.ID}, "mA", model.MeetingCompleted); err == nil {
+		t.Fatal("mA must not be updatable under orgB")
+	}
+	if err := s.UpdateMeetingSummary(Scope{UserID: "u9", OrgID: orgB.ID}, "mA", "sf-1"); err == nil {
+		t.Fatal("UpdateMeetingSummary must reject cross-org")
+	}
+	if err := s.UpdateMeetingMinutes(Scope{UserID: "u9", OrgID: orgB.ID}, "mA", "md", "mf-1"); err == nil {
+		t.Fatal("UpdateMeetingMinutes must reject cross-org")
+	}
+	if _, err := s.AddMeetingTodo(Scope{UserID: "u9", OrgID: orgB.ID}, "mA", model.MeetingTodoItem{Description: "x"}); err == nil {
+		t.Fatal("AddMeetingTodo must reject cross-org")
+	}
+	if _, err := s.AddMeetingMessage(Scope{UserID: "u9", OrgID: orgB.ID}, &model.MeetingMessage{
+		MeetingID: "mA", SenderType: "user", SenderID: "u9", Content: "越权发言",
+	}); err == nil {
+		t.Fatal("AddMeetingMessage must reject cross-org (改造前任何登录用户都能往任意会议发消息)")
+	}
+
+	// 越权调用不得改写任何状态
+	if s.meetings["mA"].Status != model.MeetingWaiting {
+		t.Fatal("mA status mutated by cross-org call")
+	}
+	if s.meetings["mA"].SummaryFileID != "" || s.meetings["mA"].MinutesFileID != "" {
+		t.Fatal("mA mutated by cross-org call")
+	}
+	if len(s.meetingMessageIndex["mA"]) != 1 {
+		t.Fatal("cross-org message was appended")
+	}
+}
+
+// TestSystemScopeBypassesMeetingOwnership 系统旁路语义。
+// 内部路径（agent webhook / timeout_monitor）没有用户会话，改造前一律传 ""
+// 绕过校验；收敛后必须显式 SystemScope() 才放行。
+func TestSystemScopeBypassesMeetingOwnership(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	orgB, _ := s.CreateOrganization("u9", "Globex", "globex", model.OrgKindEnterprise)
+	seedMeetingFixture(s, orgA, orgB)
+
+	// 系统路径显式放行
+	if _, err := s.GetMeeting(SystemScope(), "mA"); err != nil {
+		t.Fatalf("SystemScope should read mA: %v", err)
+	}
+	if err := s.UpdateMeetingStatus(SystemScope(), "mA", model.MeetingCompleted); err != nil {
+		t.Fatalf("SystemScope should update mA status: %v", err)
+	}
+	if got := s.ListMeetingMessages(SystemScope(), "mA"); len(got) != 1 {
+		t.Fatalf("SystemScope should read mA messages, got %d", len(got))
+	}
+	if got := s.ListMeetings(SystemScope(), "pA"); len(got) != 1 {
+		t.Fatalf("SystemScope should list pA meetings, got %d", len(got))
+	}
+	if _, err := s.AddMeetingMessage(SystemScope(), &model.MeetingMessage{
+		MeetingID: "mA", SenderType: "agent", SenderID: "node-1", Content: "agent 发言",
+	}); err != nil {
+		t.Fatalf("SystemScope should allow agent message: %v", err)
+	}
+
+	// 🔴 零值 Scope 不是系统旁路 —— 不能因为「忘了传 UserID」就放行，
+	// 否则等于给越权留后门（改造前正是靠传 "" 蒙混过关的）。
+	if _, err := s.GetMeeting(Scope{}, "mA"); err == nil {
+		t.Fatal("zero-value Scope must NOT bypass ownership")
+	}
+	if got := s.ListMeetings(Scope{}, "pA"); len(got) != 0 {
+		t.Fatalf("zero-value Scope must NOT list meetings, got %d", len(got))
+	}
+}
+
+// TestCreateMeetingOwnerOrg 覆盖阶段 1 漏掉的双写：
+// CreateMeeting 的 OrgID 恒挂作者个人租户，企业租户下建的会议带租户头看不到。
+func TestCreateMeetingOwnerOrg(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	if _, err := s.AddOrgMember(orgA.ID, "u2", model.OrgRoleMember); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	if _, err := s.EnsurePersonalOrg("u1", "Jiey"); err != nil {
+		t.Fatalf("ensure personal org: %v", err)
+	}
+	var personal *model.Organization
+	for _, o := range s.ListUserOrganizations("u1") {
+		if o.Kind == model.OrgKindPersonal {
+			personal = o
+		}
+	}
+	if personal == nil {
+		t.Fatal("personal org missing")
+	}
+	s.projects["pA"] = &model.Project{ID: "pA", OrgID: orgA.ID, UserID: "u1", Name: "A 的项目"}
+
+	// 带租户上下文：挂到当前活跃租户（作者是同租户成员 u2）
+	m, err := s.CreateMeeting(Scope{UserID: "u2", OrgID: orgA.ID}, &model.Meeting{ProjectID: "pA", Title: "同租户会议"})
+	if err != nil {
+		t.Fatalf("create meeting under org ctx: %v", err)
+	}
+	if m.OrgID != orgA.ID {
+		t.Fatalf("meeting should land in the active org, got %q want %q", m.OrgID, orgA.ID)
+	}
+	if m.CreatorID != "u2" {
+		t.Fatalf("creator should be the caller, got %q", m.CreatorID)
+	}
+	// 同租户另一个成员必须能看到
+	if got := s.ListMeetings(Scope{UserID: "u1", OrgID: orgA.ID}, "pA"); len(got) != 1 {
+		t.Fatalf("u1 should see the org meeting created by u2, got %d", len(got))
+	}
+
+	// 无租户上下文：退回个人租户
+	m2, err := s.CreateMeeting(Scope{UserID: "u1"}, &model.Meeting{ProjectID: "pA", Title: "个人会议"})
+	if err != nil {
+		t.Fatalf("create meeting without org ctx: %v", err)
+	}
+	if m2.OrgID != personal.ID {
+		t.Fatalf("meeting should land in personal org, got %q want %q", m2.OrgID, personal.ID)
+	}
+}
+
+// TestTaskCommentScopedAndOrgInheritance 评论域归属收敛 + 评论归属继承任务。
+func TestTaskCommentScopedAndOrgInheritance(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	orgB, _ := s.CreateOrganization("u9", "Globex", "globex", model.OrgKindEnterprise)
+	if _, err := s.AddOrgMember(orgA.ID, "u2", model.OrgRoleMember); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	s.tasks["tA"] = &model.TaskDetail{ID: "tA", OrgID: orgA.ID, UserID: "u1", Title: "A 的任务"}
+
+	// 无租户头：他人不可评论 / 不可读
+	if _, err := s.AddTaskComment(Scope{UserID: "u2"}, "tA", TaskCommentInput{Content: "hi"}); err == nil {
+		t.Fatal("u2 without org ctx must not comment on tA")
+	}
+	if _, err := s.ListTaskComments(Scope{UserID: "u2"}, "tA"); err == nil {
+		t.Fatal("u2 without org ctx must not read tA comments")
+	}
+
+	// 有租户头：同租户成员可评论
+	c, err := s.AddTaskComment(Scope{UserID: "u2", OrgID: orgA.ID}, "tA", TaskCommentInput{Content: "hi"})
+	if err != nil {
+		t.Fatalf("u2 in orgA should comment on tA: %v", err)
+	}
+	// 🔴 评论归属必须继承所属任务：改造前从作者个人租户派生，
+	// 企业租户下评论会挂到个人租户、与任务的 org 不一致。
+	if c.OrgID != orgA.ID {
+		t.Fatalf("comment must inherit task org, got %q want %q", c.OrgID, orgA.ID)
+	}
+	if got, err := s.ListTaskComments(Scope{UserID: "u2", OrgID: orgA.ID}, "tA"); err != nil || len(got) != 1 {
+		t.Fatalf("u2 in orgA should read tA comments: got=%d err=%v", len(got), err)
+	}
+
+	// 跨租户不可见
+	if _, err := s.ListTaskComments(Scope{UserID: "u9", OrgID: orgB.ID}, "tA"); err == nil {
+		t.Fatal("tA comments must not be visible under orgB")
+	}
+	if _, err := s.AddTaskComment(Scope{UserID: "u9", OrgID: orgB.ID}, "tA", TaskCommentInput{Content: "越权"}); err == nil {
+		t.Fatal("tA must not be commentable under orgB")
+	}
+}

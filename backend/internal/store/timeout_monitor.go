@@ -315,7 +315,7 @@ func (s *Store) checkMeetingTimeouts() {
 	concluded := 0
 	minutesGenerated := 0
 	for _, id := range candidates {
-		meeting, appErr := s.GetMeeting("", id)
+		meeting, appErr := s.GetMeeting(SystemScope(), id)
 		if appErr != nil || meeting == nil {
 			continue
 		}
@@ -324,12 +324,12 @@ func (s *Store) checkMeetingTimeouts() {
 		}
 
 		if meeting.MinutesFileID == "" {
-			if fileID, err := s.GenerateMeetingMinutesFile("", meeting); err != nil {
+			if fileID, err := s.GenerateMeetingMinutesFile(SystemScope(), meeting); err != nil {
 				s.log.Warn("failed to auto-generate meeting minutes",
 					zap.String("meeting_id", id), zap.Error(err))
 			} else if fileID != "" {
 				minutesGenerated++
-				_, _ = s.AddMeetingMessage(&model.MeetingMessage{
+				_, _ = s.AddMeetingMessage(SystemScope(), &model.MeetingMessage{
 					MeetingID:  id,
 					SenderType: "system",
 					SenderID:   "system",
@@ -339,7 +339,7 @@ func (s *Store) checkMeetingTimeouts() {
 			}
 		}
 
-		if err := s.UpdateMeetingStatus("", id, model.MeetingCompleted); err == nil {
+		if err := s.UpdateMeetingStatus(SystemScope(), id, model.MeetingCompleted); err == nil {
 			concluded++
 			s.log.Warn("meeting idle timeout, auto-concluded",
 				zap.String("meeting_id", id),

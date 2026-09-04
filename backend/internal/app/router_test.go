@@ -1280,7 +1280,7 @@ func TestUserRealtimeStreamPushesDomainEvents(t *testing.T) {
 		t.Fatalf("unexpected task.updated payload: %#v", taskInProgress)
 	}
 
-	if _, appErr := application.Store.AddTaskComment(userID, task.ID, store.TaskCommentInput{
+	if _, appErr := application.Store.AddTaskComment(store.Scope{UserID: userID}, task.ID, store.TaskCommentInput{
 		TaskID:  task.ID,
 		Content: "Please add refresh token support as well",
 	}); appErr != nil {

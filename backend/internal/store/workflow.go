@@ -1276,7 +1276,7 @@ func (s *Store) CancelTask(userID string, in TaskCancelInput) (*model.TaskDetail
 	return s.copyTaskWithArtifactsUnsafe(task), nil
 }
 
-func (s *Store) AddTaskComment(userID, taskID string, in TaskCommentInput) (*model.Comment, *transport.AppError) {
+func (s *Store) AddTaskComment(sc Scope, taskID string, in TaskCommentInput) (*model.Comment, *transport.AppError) {
 	taskID = strings.TrimSpace(taskID)
 	in.Content = strings.TrimSpace(in.Content)
 	in.TodoID = strings.TrimSpace(in.TodoID)
@@ -1288,7 +1288,7 @@ func (s *Store) AddTaskComment(userID, taskID string, in TaskCommentInput) (*mod
 	defer s.mu.Unlock()
 
 	task, ok := s.tasks[taskID]
-	if !ok || task.UserID != userID {
+	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 		return nil, transport.NotFound("task not found")
 	}
 	if in.TodoID != "" {
@@ -1303,10 +1303,10 @@ func (s *Store) AddTaskComment(userID, taskID string, in TaskCommentInput) (*mod
 
 	now := time.Now().UTC()
 	userName := ""
-	if u, ok := s.users[userID]; ok {
+	if u, ok := s.users[sc.UserID]; ok {
 		userName = u.Name
 	}
-	comment := s.addCommentUnsafe(task, in.TodoID, "user", userID, userName, in.Content, mentions, now)
+	comment := s.addCommentUnsafe(task, in.TodoID, "user", sc.UserID, userName, in.Content, mentions, now)
 	if err := s.persistCommentUnsafe(comment); err != nil {
 		return nil, mongoWriteError(err)
 	}
@@ -1315,7 +1315,7 @@ func (s *Store) AddTaskComment(userID, taskID string, in TaskCommentInput) (*mod
 	return comment, nil
 }
 
-func (s *Store) ListTaskComments(userID, taskID string) ([]model.Comment, *transport.AppError) {
+func (s *Store) ListTaskComments(sc Scope, taskID string) ([]model.Comment, *transport.AppError) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return nil, transport.Validation("task_id required", nil)
@@ -1325,7 +1325,7 @@ func (s *Store) ListTaskComments(userID, taskID string) ([]model.Comment, *trans
 	defer s.mu.RUnlock()
 
 	task, ok := s.tasks[taskID]
-	if !ok || task.UserID != userID {
+	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 		return nil, transport.NotFound("task not found")
 	}
 	comments := s.taskComments[taskID]
@@ -1336,10 +1336,13 @@ func (s *Store) ListTaskComments(userID, taskID string) ([]model.Comment, *trans
 
 func (s *Store) addCommentUnsafe(task *model.TaskDetail, todoID, actorType, actorID, actorName, content string, mentions []model.CommentMention, at time.Time) *model.Comment {
 	comment := &model.Comment{
-		ID:        newID(),
-		UserID:    task.UserID,
-		OrgID:     s.personalOrgOfUnsafe(task.UserID),
-		TaskID:    task.ID,
+		ID:     newID(),
+		UserID: task.UserID,
+		// 阶段 1 双写漏网：原本从作者个人租户派生，企业租户下评论会挂到
+		// 个人租户、与所属任务的 org 不一致。评论是任务的附属资源，
+		// 归属必须跟随任务。
+		OrgID:  task.OrgID,
+		TaskID: task.ID,
 		TodoID:    todoID,
 		ActorType: actorType,
 		ActorID:   actorID,

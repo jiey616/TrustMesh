@@ -8,6 +8,14 @@ type Scope struct {
 	UserID string
 	OrgID  string
 	Role   string // owner | admin | member
+	// System 标记内部系统路径（agent webhook / timeout_monitor / 后台定时器等
+	// 没有用户会话的调用）。系统路径不做归属裁决，直接放行。
+	//
+	// 这是既有行为：改造前这些调用点一律传空 userID 绕过校验。阶段 2 收敛后
+	// 不能让它们「碰巧」因为 UserID 为空而继续放行 —— 语义上「故意放行」与
+	// 「忘了传 userID」必须可区分，否则等于给越权留后门。
+	// 🔴 HTTP 路径永远拿不到 System Scope：currentScope 不会设置它。
+	System bool
 }
 
 // HasOrg 判断本次请求是否带上了有效租户上下文。
@@ -35,6 +43,10 @@ func ownedByUser(sc Scope, ownerUserID string) bool {
 // 阶段 1 已完成全量回填，存量资源都有 org_id；个别没回填到的资源
 // （ownerOrgID 为空）在无租户上下文时仍能按 user 维度兜底命中。
 func visibleToScope(sc Scope, ownerOrgID, ownerUserID string) bool {
+	// 内部系统路径（无用户会话）：不做归属裁决，与改造前传 "" 的行为一致。
+	if sc.System {
+		return true
+	}
 	// 只有「请求带租户上下文」且「资源已回填 org」时才走 org 裁决；
 	// 其余一律退回 user 维度，保证无租户头的存量客户端零回归。
 	if sc.HasOrg() && ownerOrgID != "" {
@@ -53,12 +65,42 @@ func (s *Store) resolveOwnerOrgUnsafe(sc Scope) string {
 	return s.personalOrgOfUnsafe(sc.UserID)
 }
 
+// SystemScope 返回内部系统路径使用的归属上下文。
+// 用于 agent webhook、timeout_monitor、内部定时器等没有用户会话的调用点 ——
+// 它们改造前一律传空 userID 绕过校验，语义上就是系统旁路。
+// 🔴 只能由 store 包内部与 clawsynapse webhook 构造，HTTP handler 禁止使用。
+func SystemScope() Scope {
+	return Scope{System: true}
+}
+
+// meetingVisible 会议可见性裁决。
+// 会议挂在项目下，优先走项目裁决以继承「项目成员白名单」；项目不在内存
+// （懒加载边界）时退回会议自身归属 —— 数据缺失时宁可漏、不可泄。
+func (s *Store) meetingVisible(sc Scope, m *model.Meeting) bool {
+	if m == nil {
+		return false
+	}
+	if sc.System {
+		return true
+	}
+	if m.ProjectID != "" {
+		if p, ok := s.projects[m.ProjectID]; ok {
+			return s.projectVisible(sc, p)
+		}
+	}
+	return visibleToScope(sc, m.OrgID, m.CreatorID)
+}
+
 // projectVisible 项目可见性裁决：
 //   - 无租户上下文：退回 user 维度判断（阶段 0 的唯一生效路径）
 //   - 有租户上下文：先看 org 归属；私有项目（有成员白名单）要求成员命中
 func (s *Store) projectVisible(sc Scope, p *model.Project) bool {
 	if p == nil {
 		return false
+	}
+	// 内部系统路径：不做归属裁决（见 Scope.System 注释）。
+	if sc.System {
+		return true
 	}
 	// 无租户上下文（存量客户端 / 内部路径）：一律 user 维度，与改造前完全一致。
 	if !sc.HasOrg() {

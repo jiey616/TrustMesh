@@ -17,15 +17,18 @@ import (
 
 // ─── Meeting CRUD ───
 
-func (s *Store) CreateMeeting(userID string, m *model.Meeting) (*model.Meeting, *transport.AppError) {
+func (s *Store) CreateMeeting(sc Scope, m *model.Meeting) (*model.Meeting, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	m.ID = uuid.NewString()
 	m.CreatedAt = time.Now().UTC()
 	m.UpdatedAt = m.CreatedAt
-	m.CreatorID = userID
-	m.OrgID = s.personalOrgOfUnsafe(userID)
+	m.CreatorID = sc.UserID
+	// 阶段 1 双写漏网：原本恒挂作者个人租户，企业租户下新建会议会落到
+	// 个人租户、带租户头反而看不到。与 2-2 CreateTask / 2-4 CreateKnowledgeDocument
+	// / 2-5a SaveProjectFile 同类。
+	m.OrgID = s.resolveOwnerOrgUnsafe(sc)
 	if m.Status == "" {
 		m.Status = model.MeetingWaiting
 	}
@@ -44,13 +47,19 @@ func (s *Store) CreateMeeting(userID string, m *model.Meeting) (*model.Meeting, 
 	return m, nil
 }
 
-func (s *Store) GetMeeting(_ string, meetingID string) (*model.Meeting, *transport.AppError) {
+func (s *Store) GetMeeting(sc Scope, meetingID string) (*model.Meeting, *transport.AppError) {
 	s.mu.RLock()
 	m, ok := s.meetings[meetingID]
-	s.mu.RUnlock()
 	if ok {
+		// 裁决必须在锁内：meetingVisible 读 s.projects / s.projectMembers
+		visible := s.meetingVisible(sc, m)
+		s.mu.RUnlock()
+		if !visible {
+			return nil, transport.NotFound("meeting not found")
+		}
 		return m, nil
 	}
+	s.mu.RUnlock()
 
 	// Lazy-load from MongoDB so callers keep working after a backend restart
 	// (the in-memory map is empty until meetings are re-accessed).
@@ -62,17 +71,26 @@ func (s *Store) GetMeeting(_ string, meetingID string) (*model.Meeting, *transpo
 			s.mu.Lock()
 			s.meetings[meetingID] = &mm
 			s.projectMeetings[mm.ProjectID] = append(s.projectMeetings[mm.ProjectID], mm.ID)
+			visible := s.meetingVisible(sc, &mm)
 			s.mu.Unlock()
+			if !visible {
+				return nil, transport.NotFound("meeting not found")
+			}
 			return &mm, nil
 		}
 	}
 	return nil, transport.NotFound("meeting not found")
 }
 
-func (s *Store) ListMeetings(_ string, projectID string) []*model.Meeting {
+func (s *Store) ListMeetings(sc Scope, projectID string) []*model.Meeting {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	// 项目不在内存（懒加载边界）时不裁决，行为与改造前一致 ——
+	// 宁可沿用旧行为，也不因数据缺失误伤。
+	if p, ok := s.projects[projectID]; ok && !s.projectVisible(sc, p) {
+		return []*model.Meeting{}
+	}
 	ids := s.projectMeetings[projectID]
 	out := make([]*model.Meeting, 0, len(ids))
 	for _, id := range ids {
@@ -90,7 +108,7 @@ func (s *Store) ListMeetings(_ string, projectID string) []*model.Meeting {
 // from MongoDB (not only the in-memory cache) so it works correctly after a
 // backend restart when the in-memory map is empty. Results are also re-fed
 // into the in-memory cache for subsequent access.
-func (s *Store) ListMeetingsByStatus(_ string, status model.MeetingStatus) []*model.Meeting {
+func (s *Store) ListMeetingsByStatus(sc Scope, status model.MeetingStatus) []*model.Meeting {
 	if s.mongoEnabled {
 		ctx, cancel := s.mongoContext()
 		defer cancel()
@@ -99,26 +117,31 @@ func (s *Store) ListMeetingsByStatus(_ string, status model.MeetingStatus) []*mo
 			var out []*model.Meeting
 			if cur.All(ctx, &out) == nil {
 				s.mu.Lock()
+				kept := make([]*model.Meeting, 0, len(out))
 				for _, m := range out {
 					if _, exists := s.meetings[m.ID]; !exists {
 						s.meetings[m.ID] = m
 						s.projectMeetings[m.ProjectID] = append(s.projectMeetings[m.ProjectID], m.ID)
 					}
+					// 缓存照灌，但只返回本次 Scope 可见的会议
+					if s.meetingVisible(sc, m) {
+						kept = append(kept, m)
+					}
 				}
 				s.mu.Unlock()
-				return out
+				return kept
 			}
 		}
 	}
 	return nil
 }
 
-func (s *Store) UpdateMeetingStatus(userID string, meetingID string, status model.MeetingStatus) *transport.AppError {
+func (s *Store) UpdateMeetingStatus(sc Scope, meetingID string, status model.MeetingStatus) *transport.AppError {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	m, ok := s.meetings[meetingID]
-	if !ok {
+	if !ok || !s.meetingVisible(sc, m) {
 		return transport.NotFound("meeting not found")
 	}
 	prevStatus := m.Status
@@ -137,7 +160,7 @@ func (s *Store) UpdateMeetingStatus(userID string, meetingID string, status mode
 
 	// 办公室 SSE：会议状态变化时向前端推送，这样 3D 办公室才能驱动数字员工走过去开会。
 	if prevStatus != status {
-		targetUser := userID
+		targetUser := sc.UserID
 		if targetUser == "" {
 			targetUser = m.CreatorID
 		}
@@ -174,9 +197,15 @@ func (s *Store) UpdateMeetingStatus(userID string, meetingID string, status mode
 
 // ─── Meeting Message CRUD ───
 
-func (s *Store) AddMeetingMessage(msg *model.MeetingMessage) (*model.MeetingMessage, *transport.AppError) {
+func (s *Store) AddMeetingMessage(sc Scope, msg *model.MeetingMessage) (*model.MeetingMessage, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// 改造前本函数没有任何归属校验：任何登录用户都能往任意 meetingID 发消息。
+	// 内部 webhook（agent 发言）用 SystemScope 显式放行。
+	if !s.meetingVisible(sc, s.meetings[msg.MeetingID]) {
+		return nil, transport.NotFound("meeting not found")
+	}
 
 	msg.ID = uuid.NewString()
 	// 多租户阶段 1：消息归属跟随所属会议。
@@ -247,10 +276,14 @@ func (s *Store) publishMeetingMessageUnsafe(m *model.Meeting, msg *model.Meeting
 	}, msg.CreatedAt)
 }
 
-func (s *Store) ListMeetingMessages(_ string, meetingID string) []*model.MeetingMessage {
+func (s *Store) ListMeetingMessages(sc Scope, meetingID string) []*model.MeetingMessage {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	// 会议不在内存（懒加载边界）时不裁决，沿用改造前行为。
+	if m, ok := s.meetings[meetingID]; ok && !s.meetingVisible(sc, m) {
+		return []*model.MeetingMessage{}
+	}
 	ids := s.meetingMessageIndex[meetingID]
 	out := make([]*model.MeetingMessage, 0, len(ids))
 	for _, id := range ids {
@@ -266,12 +299,12 @@ func (s *Store) ListMeetingMessages(_ string, meetingID string) []*model.Meeting
 
 // ─── Meeting Summary / Todos / Agenda ───
 
-func (s *Store) UpdateMeetingSummary(_ string, meetingID, summaryFileID string) *transport.AppError {
+func (s *Store) UpdateMeetingSummary(sc Scope, meetingID, summaryFileID string) *transport.AppError {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	m, ok := s.meetings[meetingID]
-	if !ok {
+	if !ok || !s.meetingVisible(sc, m) {
 		return transport.NotFound("meeting not found")
 	}
 	m.SummaryFileID = summaryFileID
@@ -291,12 +324,12 @@ func (s *Store) UpdateMeetingSummary(_ string, meetingID, summaryFileID string) 
 
 // UpdateMeetingMinutes stores the generated meeting minutes (markdown text) and
 // the linked project file ID on the meeting record.
-func (s *Store) UpdateMeetingMinutes(_ string, meetingID, minutes, minutesFileID string) *transport.AppError {
+func (s *Store) UpdateMeetingMinutes(sc Scope, meetingID, minutes, minutesFileID string) *transport.AppError {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	m, ok := s.meetings[meetingID]
-	if !ok {
+	if !ok || !s.meetingVisible(sc, m) {
 		return transport.NotFound("meeting not found")
 	}
 	m.Minutes = minutes
@@ -323,7 +356,7 @@ func (s *Store) UpdateMeetingMinutes(_ string, meetingID, minutes, minutesFileID
 //
 // Returns the generated project file ID, or an empty string if generation was
 // skipped (no file storage configured, or already has minutes).
-func (s *Store) GenerateMeetingMinutesFile(userID string, meeting *model.Meeting) (string, error) {
+func (s *Store) GenerateMeetingMinutesFile(sc Scope, meeting *model.Meeting) (string, error) {
 	if s.fileStorage == nil {
 		return "", fmt.Errorf("file storage not configured")
 	}
@@ -331,7 +364,15 @@ func (s *Store) GenerateMeetingMinutesFile(userID string, meeting *model.Meeting
 		return meeting.MinutesFileID, nil
 	}
 
-	messages := s.ListMeetingMessages(userID, meeting.ID)
+	// 归属校验（本函数后面会调 SaveProjectFile 拿写锁，裁决必须先放锁）
+	s.mu.RLock()
+	visible := s.meetingVisible(sc, meeting)
+	s.mu.RUnlock()
+	if !visible {
+		return "", fmt.Errorf("meeting not found")
+	}
+
+	messages := s.ListMeetingMessages(sc, meeting.ID)
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("# 会议纪要：%s\n\n", meeting.Title))
@@ -407,19 +448,25 @@ func (s *Store) GenerateMeetingMinutesFile(userID string, meeting *model.Meeting
 		MeetingID: meeting.ID,
 	}
 
-	// Resolve the project owner for the ownership check inside SaveProjectFile.
-	// Callers such as the timeout monitor may pass an empty userID; fall back to
-	// the project owner (or meeting creator) so minutes are always attributable.
-	ownerID := userID
-	if ownerID == "" {
+	// 落纪要文件要走 SaveProjectFile 的项目归属校验，归属上下文分两种：
+	//   - HTTP 路径：直接用请求者身份，做真实的项目归属校验
+	//   - 系统路径（timeout_monitor 等无用户会话）：兜底到项目 owner / 会议创建者，
+	//     保证纪要始终可归属，不会因为空 UserID 被拒
+	fileScope := sc
+	if sc.System {
+		ownerID := ""
+		s.mu.RLock()
 		if p, ok := s.projects[meeting.ProjectID]; ok && p.UserID != "" {
 			ownerID = p.UserID
-		} else if meeting.CreatorID != "" {
+		}
+		s.mu.RUnlock()
+		if ownerID == "" {
 			ownerID = meeting.CreatorID
 		}
+		fileScope = Scope{UserID: ownerID}
 	}
 
-	pf, appErr := s.SaveProjectFile(Scope{UserID: ownerID}, meeting.ProjectID, pf)
+	pf, appErr := s.SaveProjectFile(fileScope, meeting.ProjectID, pf)
 	if appErr != nil {
 		return "", fmt.Errorf("save project file: %w", appErr)
 	}
@@ -428,7 +475,7 @@ func (s *Store) GenerateMeetingMinutesFile(userID string, meeting *model.Meeting
 		return "", fmt.Errorf("store minutes file: %w", err)
 	}
 	_ = s.SetProjectFileLocalPath(pf.ID, localPath)
-	_ = s.UpdateMeetingMinutes("", meeting.ID, markdown, pf.ID)
+	_ = s.UpdateMeetingMinutes(sc, meeting.ID, markdown, pf.ID)
 	return pf.ID, nil
 }
 
@@ -444,12 +491,12 @@ func sanitizeMinutesTitle(title string) string {
 	return base
 }
 
-func (s *Store) AddMeetingTodo(_ string, meetingID string, todo model.MeetingTodoItem) (*model.Meeting, *transport.AppError) {
+func (s *Store) AddMeetingTodo(sc Scope, meetingID string, todo model.MeetingTodoItem) (*model.Meeting, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	m, ok := s.meetings[meetingID]
-	if !ok {
+	if !ok || !s.meetingVisible(sc, m) {
 		return nil, transport.NotFound("meeting not found")
 	}
 	todo.ID = uuid.NewString()

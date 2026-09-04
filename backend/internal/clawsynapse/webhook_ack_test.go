@@ -125,7 +125,7 @@ func TestTaskPlanReadyBadPayloadAppendsSystemComment(t *testing.T) {
 	if w.Code != 400 {
 		t.Fatalf("expected 400 BAD_PAYLOAD, got %d", w.Code)
 	}
-	comments, appErr := s.ListTaskComments(user.ID, task.ID)
+	comments, appErr := s.ListTaskComments(store.Scope{UserID: user.ID}, task.ID)
 	if appErr != nil {
 		t.Fatalf("list comments: %v", appErr)
 	}

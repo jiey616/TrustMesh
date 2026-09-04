@@ -137,7 +137,7 @@ func TestTransferReceivedRejectionAppendsSystemComment(t *testing.T) {
 	if w.Code == 200 {
 		t.Fatalf("expected rejection for unknown todo, got 200")
 	}
-	comments, appErr := s.ListTaskComments(userID, taskID)
+	comments, appErr := s.ListTaskComments(store.Scope{UserID: userID}, taskID)
 	if appErr != nil {
 		t.Fatalf("list comments: %v", appErr)
 	}
@@ -178,7 +178,7 @@ func TestTransferReceivedBadPayloadAppendsSystemComment(t *testing.T) {
 	if w.Code != 400 {
 		t.Fatalf("expected 400 BAD_PAYLOAD, got %d", w.Code)
 	}
-	comments, appErr := s.ListTaskComments(userID, taskID)
+	comments, appErr := s.ListTaskComments(store.Scope{UserID: userID}, taskID)
 	if appErr != nil {
 		t.Fatalf("list comments: %v", appErr)
 	}
@@ -257,7 +257,7 @@ func TestTransferReceivedDuplicateStaysQuiet(t *testing.T) {
 		t.Fatalf("expected the duplicate to be rejected, got 200")
 	}
 
-	comments, appErr := s.ListTaskComments(userID, taskID)
+	comments, appErr := s.ListTaskComments(store.Scope{UserID: userID}, taskID)
 	if appErr != nil {
 		t.Fatalf("list comments: %v", appErr)
 	}
@@ -297,7 +297,7 @@ func TestTransferRejectionWarnedOnce(t *testing.T) {
 		}
 	}
 
-	comments, appErr := s.ListTaskComments(userID, taskID)
+	comments, appErr := s.ListTaskComments(store.Scope{UserID: userID}, taskID)
 	if appErr != nil {
 		t.Fatalf("list comments: %v", appErr)
 	}
@@ -445,7 +445,7 @@ func TestTransferMultiOutputWarnsOnly(t *testing.T) {
 		t.Fatalf("kind=%q output_name=%q, want process with no slot",
 			artifacts[0].Kind, artifacts[0].OutputName)
 	}
-	comments, appErr := s.ListTaskComments(userID, taskID)
+	comments, appErr := s.ListTaskComments(store.Scope{UserID: userID}, taskID)
 	if appErr != nil {
 		t.Fatalf("list comments: %v", appErr)
 	}
@@ -480,7 +480,7 @@ func TestUnboundWarningThrottled(t *testing.T) {
 			t.Fatalf("upload %s: expected 200, got %d", name, w.Code)
 		}
 	}
-	comments, appErr := s.ListTaskComments(userID, taskID)
+	comments, appErr := s.ListTaskComments(store.Scope{UserID: userID}, taskID)
 	if appErr != nil {
 		t.Fatalf("list comments: %v", appErr)
 	}

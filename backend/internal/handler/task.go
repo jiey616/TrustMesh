@@ -538,9 +538,6 @@ func (h *TaskHandler) AddComment(c *gin.Context) {
 		return
 	}
 
-	// 归属判断统一走 sc；其余仅按作者维度使用的地方保留 userID。
-	userID := sc.UserID
-
 	var body struct {
 		Content  string `json:"content"`
 		TodoID   string `json:"todo_id"`
@@ -558,7 +555,7 @@ func (h *TaskHandler) AddComment(c *gin.Context) {
 		mentions = append(mentions, store.TaskCommentMentionInput{AgentID: mention.AgentID})
 	}
 
-	comment, appErr := h.store.AddTaskComment(userID, c.Param("id"), store.TaskCommentInput{
+	comment, appErr := h.store.AddTaskComment(sc, c.Param("id"), store.TaskCommentInput{
 		TaskID:   c.Param("id"),
 		TodoID:   body.TodoID,
 		Content:  body.Content,
@@ -610,11 +607,11 @@ func (h *TaskHandler) Cancel(c *gin.Context) {
 }
 
 func (h *TaskHandler) ListComments(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	comments, appErr := h.store.ListTaskComments(userID, c.Param("id"))
+	comments, appErr := h.store.ListTaskComments(sc, c.Param("id"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return

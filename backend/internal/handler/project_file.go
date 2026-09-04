@@ -191,7 +191,6 @@ func (h *ProjectFileHandler) GetContent(c *gin.Context) {
 	if !ok {
 		return
 	}
-	userID := sc.UserID
 
 	fileID := c.Param("fileId")
 
@@ -212,7 +211,7 @@ func (h *ProjectFileHandler) GetContent(c *gin.Context) {
 			// Lazy recovery: meeting minutes content is persisted on the meeting
 			// record, so a missing on-disk file can be rebuilt on demand. This
 			// keeps minutes downloadable/previewable even after a storage reset.
-			if h.tryRecoverMeetingMinutesFile(userID, pf) {
+			if h.tryRecoverMeetingMinutesFile(sc, pf) {
 				file, err = os.Open(pf.LocalPath)
 			}
 			if err != nil {
@@ -258,11 +257,11 @@ func (h *ProjectFileHandler) GetContent(c *gin.Context) {
 // successfully re-created and pf.LocalPath updated in memory. Used as a lazy
 // recovery path inside GetContent so minutes remain downloadable even if the
 // underlying storage (the project-files volume) was reset and lost the bytes.
-func (h *ProjectFileHandler) tryRecoverMeetingMinutesFile(userID string, pf *model.ProjectFile) bool {
+func (h *ProjectFileHandler) tryRecoverMeetingMinutesFile(sc store.Scope, pf *model.ProjectFile) bool {
 	if pf.Source != "meeting_minutes" || pf.MeetingID == "" || h.storage == nil {
 		return false
 	}
-	meeting, appErr := h.store.GetMeeting("", pf.MeetingID)
+	meeting, appErr := h.store.GetMeeting(sc, pf.MeetingID)
 	if appErr != nil || meeting == nil || strings.TrimSpace(meeting.Minutes) == "" {
 		return false
 	}
