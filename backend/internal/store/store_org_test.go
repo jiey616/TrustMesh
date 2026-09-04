@@ -581,3 +581,179 @@ func TestCreateTaskOwnerOrg(t *testing.T) {
 		_ = err
 	}
 }
+// ---------- 阶段 2-3：Agent / AgentChat 归属收敛 ----------
+
+// seedAgentFixture 构造 orgA(u1 拥有，u2 成员) 与 orgB(u9 拥有) 各一个 agent，
+// 另放一条未回填 org_id 的存量 agent，用于验证兜底语义。
+func seedAgentFixture(s *Store, orgA, orgB *model.Organization) {
+	s.agents["aA"] = &model.Agent{
+		ID: "aA", OrgID: orgA.ID, UserID: "u1", NodeID: "nodeA",
+		Name: "Agent A", Role: "pm", Status: "online",
+	}
+	s.agents["aA-legacy"] = &model.Agent{
+		ID: "aA-legacy", UserID: "u1", NodeID: "nodeLegacy",
+		Name: "Legacy Agent", Role: "executor", Status: "online",
+	}
+	s.agents["aB"] = &model.Agent{
+		ID: "aB", OrgID: orgB.ID, UserID: "u9", NodeID: "nodeB",
+		Name: "Agent B", Role: "executor", Status: "online",
+	}
+}
+
+// TestAgentScopedVisibility 覆盖 Agent 读路径的三级裁决。
+func TestAgentScopedVisibility(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	orgB, _ := s.CreateOrganization("u9", "Globex", "globex", model.OrgKindEnterprise)
+	if _, err := s.AddOrgMember(orgA.ID, "u2", model.OrgRoleMember); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	seedAgentFixture(s, orgA, orgB)
+
+	// ListAgents —— 无租户头：只看自己的
+	if got := s.ListAgents(Scope{UserID: "u1"}); len(got) != 2 {
+		t.Fatalf("u1 without org ctx should see own 2 agents, got %d", len(got))
+	}
+	if got := s.ListAgents(Scope{UserID: "u2"}); len(got) != 0 {
+		t.Fatalf("u2 without org ctx should see nothing, got %d", len(got))
+	}
+	// ListAgents —— 有租户头：同租户成员可见（未回填的存量 agent 不对他人放行）
+	if got := s.ListAgents(Scope{UserID: "u2", OrgID: orgA.ID}); len(got) != 1 || got[0].ID != "aA" {
+		t.Fatalf("u2 in orgA should see only the org-backed agent, got %+v", got)
+	}
+	// ListAgents —— 跨租户：不可见
+	if got := s.ListAgents(Scope{UserID: "u9", OrgID: orgB.ID}); len(got) != 1 || got[0].ID != "aB" {
+		t.Fatalf("orgB should only see aB, got %+v", got)
+	}
+
+	// GetAgent
+	if _, err := s.GetAgent(Scope{UserID: "u2"}, "aA"); err == nil {
+		t.Fatal("u2 without org ctx must not read aA")
+	}
+	if _, err := s.GetAgent(Scope{UserID: "u2", OrgID: orgA.ID}, "aA"); err != nil {
+		t.Fatalf("u2 in orgA should read aA: %v", err)
+	}
+	if _, err := s.GetAgent(Scope{UserID: "u1", OrgID: orgB.ID}, "aA"); err == nil {
+		t.Fatal("aA must not be visible under orgB")
+	}
+	// 未回填 agent 对作者本人在租户上下文下仍可见
+	if _, err := s.GetAgent(Scope{UserID: "u1", OrgID: orgA.ID}, "aA-legacy"); err != nil {
+		t.Fatalf("legacy agent should stay visible to its owner: %v", err)
+	}
+
+	// UpdateAgent / DeleteAgent 同源裁决
+	if _, err := s.UpdateAgent(Scope{UserID: "u2"}, "aA", UpdateAgentInput{Name: strPtr("renamed")}); err == nil {
+		t.Fatal("u2 without org ctx must not update aA")
+	}
+	if _, err := s.UpdateAgent(Scope{UserID: "u2", OrgID: orgA.ID}, "aA", UpdateAgentInput{Name: strPtr("renamed")}); err != nil {
+		t.Fatalf("u2 in orgA should update aA: %v", err)
+	}
+	if err := s.DeleteAgent(Scope{UserID: "u9", OrgID: orgB.ID}, "aA"); err == nil {
+		t.Fatal("cross-org delete must be rejected")
+	}
+	if err := s.DeleteAgent(Scope{UserID: "u1", OrgID: orgA.ID}, "aA-legacy"); err != nil {
+		t.Fatalf("owner should delete own legacy agent: %v", err)
+	}
+
+	// GetAgentStats / GetAgentInsights / ListAgentTasks 同源裁决
+	if _, err := s.GetAgentStats(Scope{UserID: "u2"}, "aB"); err == nil {
+		t.Fatal("u2 without org ctx must not read aB stats")
+	}
+	if _, err := s.GetAgentStats(Scope{UserID: "u9", OrgID: orgB.ID}, "aB"); err != nil {
+		t.Fatalf("u9 in orgB should read aB stats: %v", err)
+	}
+	if _, err := s.GetAgentInsights(Scope{UserID: "u2"}, "aB"); err == nil {
+		t.Fatal("u2 without org ctx must not read aB insights")
+	}
+	if _, err := s.ListAgentTasks(Scope{UserID: "u2"}, "aB", ""); err == nil {
+		t.Fatal("u2 without org ctx must not list aB tasks")
+	}
+	if _, err := s.ListAgentTasks(Scope{UserID: "u9", OrgID: orgB.ID}, "aB", ""); err != nil {
+		t.Fatalf("u9 in orgB should list aB tasks: %v", err)
+	}
+}
+
+// TestCreateAgentOwnerOrg 新建 Agent 必须挂到活跃租户，
+// 无租户上下文时退回个人租户。
+func TestCreateAgentOwnerOrg(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	if _, err := s.AddOrgMember(orgA.ID, "u2", model.OrgRoleMember); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	if _, err := s.EnsurePersonalOrg("u1", "Jiey"); err != nil {
+		t.Fatalf("ensure personal org: %v", err)
+	}
+	var personal *model.Organization
+	for _, o := range s.ListUserOrganizations("u1") {
+		if o.Kind == model.OrgKindPersonal {
+			personal = o
+		}
+	}
+	if personal == nil {
+		t.Fatal("personal org missing")
+	}
+
+	// 带租户上下文：挂活跃租户（作者是 u2）
+	agent, err := s.CreateAgent(Scope{UserID: "u2", OrgID: orgA.ID}, "nodeX", "Exec X", "developer", "desc", nil)
+	if err != nil {
+		t.Fatalf("create agent under org ctx: %v", err)
+	}
+	if agent.OrgID != orgA.ID {
+		t.Fatalf("agent should land in the active org, got %q want %q", agent.OrgID, orgA.ID)
+	}
+	if agent.UserID != "u2" {
+		t.Fatalf("agent author should be the caller, got %q", agent.UserID)
+	}
+
+	// 无租户上下文：退回个人租户
+	agent2, err := s.CreateAgent(Scope{UserID: "u1"}, "nodeY", "Exec Y", "developer", "desc", nil)
+	if err != nil {
+		t.Fatalf("create agent without org ctx: %v", err)
+	}
+	if agent2.OrgID != personal.ID {
+		t.Fatalf("agent should land in personal org, got %q want %q", agent2.OrgID, personal.ID)
+	}
+}
+
+// TestAgentChatIsUserScoped Agent 会话是「某人 ↔ 某 agent」的一对一私人对话：
+// agent 可见性走租户（org 成员可与租户内的 agent 对话），但会话归属仍按 user。
+func TestAgentChatIsUserScoped(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	if _, err := s.AddOrgMember(orgA.ID, "u2", model.OrgRoleMember); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	s.agents["aA"] = &model.Agent{
+		ID: "aA", OrgID: orgA.ID, UserID: "u1", NodeID: "nodeA",
+		Name: "Agent A", Role: "pm", Status: "online",
+	}
+
+	// u2 能看到租户内的 agent，因此可以与它对话（agent 维度走 org）
+	if _, err := s.agentForUserUnsafe(Scope{UserID: "u2", OrgID: orgA.ID}, "aA"); err != nil {
+		t.Fatalf("org member should be able to talk to an org agent: %v", err)
+	}
+	// 无租户头则不行（与改造前一致）
+	if _, err := s.agentForUserUnsafe(Scope{UserID: "u2"}, "aA"); err == nil {
+		t.Fatal("outsider without org ctx must not use the agent")
+	}
+
+	// 会话本身按 user 分区：u2 开了会话，u1 看不到它
+	if _, _, err := s.AppendAgentChatUserMessage(Scope{UserID: "u2", OrgID: orgA.ID}, "aA", "hello"); err != nil {
+		t.Fatalf("append chat message: %v", err)
+	}
+	detail, err := s.GetActiveAgentChat(Scope{UserID: "u2", OrgID: orgA.ID}, "aA")
+	if err != nil || detail == nil {
+		t.Fatalf("u2 should see own active chat: %v", err)
+	}
+	if len(detail.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(detail.Messages))
+	}
+	own, err := s.GetActiveAgentChat(Scope{UserID: "u1", OrgID: orgA.ID}, "aA")
+	if err != nil {
+		t.Fatalf("u1 reading own (empty) chat: %v", err)
+	}
+	if own != nil {
+		t.Fatal("u1 must not see u2's personal chat session")
+	}
+}

@@ -23,7 +23,7 @@ func seedProjectWithPM(t *testing.T) (*Store, string, string) {
 	if appErr != nil {
 		t.Fatalf("create user: %v", appErr)
 	}
-	pm, appErr := s.CreateAgent(user.ID, "node-pm-001", "PM Agent", "pm", "pm", []string{"plan"})
+	pm, appErr := s.CreateAgent(Scope{UserID: user.ID}, "node-pm-001", "PM Agent", "pm", "pm", []string{"plan"})
 	if appErr != nil {
 		t.Fatalf("create pm: %v", appErr)
 	}

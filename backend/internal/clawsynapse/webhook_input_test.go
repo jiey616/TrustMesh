@@ -19,11 +19,11 @@ func TestResolvePrevStepName(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("create user: %v", appErr)
 	}
-	pm, appErr := s.CreateAgent(user.ID, "node-pm-001", "PM Agent", "pm", "pm", []string{"plan"})
+	pm, appErr := s.CreateAgent(store.Scope{UserID: user.ID}, "node-pm-001", "PM Agent", "pm", "pm", []string{"plan"})
 	if appErr != nil {
 		t.Fatalf("create pm: %v", appErr)
 	}
-	dev, appErr := s.CreateAgent(user.ID, "node-dev-001", "Dev", "developer", "dev", nil)
+	dev, appErr := s.CreateAgent(store.Scope{UserID: user.ID}, "node-dev-001", "Dev", "developer", "dev", nil)
 	if appErr != nil {
 		t.Fatalf("create dev: %v", appErr)
 	}

@@ -87,7 +87,7 @@ func TestAgentUsageAndDeleteConflictDetails(t *testing.T) {
 		t.Fatalf("create task: %v", appErr)
 	}
 
-	agents := s.ListAgents(userID)
+	agents := s.ListAgents(Scope{UserID: userID})
 	if len(agents) != 2 {
 		t.Fatalf("expected 2 agents, got %d", len(agents))
 	}
@@ -109,7 +109,7 @@ func TestAgentUsageAndDeleteConflictDetails(t *testing.T) {
 		t.Fatalf("unexpected developer usage: %#v", developerUsage)
 	}
 
-	agent, appErr := s.GetAgent(userID, developer.ID)
+	agent, appErr := s.GetAgent(Scope{UserID: userID}, developer.ID)
 	if appErr != nil {
 		t.Fatalf("get agent: %v", appErr)
 	}
@@ -118,13 +118,13 @@ func TestAgentUsageAndDeleteConflictDetails(t *testing.T) {
 	}
 
 	// 删除有引用的 agent 应该软删除（归档）而非报错
-	appErr = s.DeleteAgent(userID, developer.ID)
+	appErr = s.DeleteAgent(Scope{UserID: userID}, developer.ID)
 	if appErr != nil {
 		t.Fatalf("expected soft delete to succeed, got: %v", appErr)
 	}
 
 	// 归档后 ListAgents 不应包含该 agent
-	agentsAfterArchive := s.ListAgents(userID)
+	agentsAfterArchive := s.ListAgents(Scope{UserID: userID})
 	for _, a := range agentsAfterArchive {
 		if a.ID == developer.ID {
 			t.Fatal("archived agent should not appear in ListAgents")
@@ -132,7 +132,7 @@ func TestAgentUsageAndDeleteConflictDetails(t *testing.T) {
 	}
 
 	// GetAgent 仍可查看归档 agent
-	archivedAgent, appErr := s.GetAgent(userID, developer.ID)
+	archivedAgent, appErr := s.GetAgent(Scope{UserID: userID}, developer.ID)
 	if appErr != nil {
 		t.Fatalf("GetAgent on archived agent should succeed: %v", appErr)
 	}
@@ -141,7 +141,7 @@ func TestAgentUsageAndDeleteConflictDetails(t *testing.T) {
 	}
 
 	// 再次删除归档 agent 应返回 not found
-	appErr = s.DeleteAgent(userID, developer.ID)
+	appErr = s.DeleteAgent(Scope{UserID: userID}, developer.ID)
 	if appErr == nil || appErr.Status != 404 {
 		t.Fatalf("expected not found for already archived agent, got: %v", appErr)
 	}
@@ -862,11 +862,11 @@ func seedWorkflowState(t *testing.T) (*Store, string, stringAgent, stringAgent, 
 	if appErr != nil {
 		t.Fatalf("create user: %v", appErr)
 	}
-	pm, appErr := s.CreateAgent(user.ID, "node-pm-001", "PM Agent", "pm", "pm", []string{"plan"})
+	pm, appErr := s.CreateAgent(Scope{UserID: user.ID}, "node-pm-001", "PM Agent", "pm", "pm", []string{"plan"})
 	if appErr != nil {
 		t.Fatalf("create pm: %v", appErr)
 	}
-	developer, appErr := s.CreateAgent(user.ID, "node-dev-001", "Developer", "developer", "dev", []string{"backend"})
+	developer, appErr := s.CreateAgent(Scope{UserID: user.ID}, "node-dev-001", "Developer", "developer", "dev", []string{"backend"})
 	if appErr != nil {
 		t.Fatalf("create developer: %v", appErr)
 	}

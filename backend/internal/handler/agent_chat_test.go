@@ -85,7 +85,7 @@ func TestSendMessageReturnsSuccessWhenRemoteDeliverySucceededButLocalStatusUpdat
 	if appErr != nil {
 		t.Fatalf("create user: %v", appErr)
 	}
-	agent, appErr := st.CreateAgent(user.ID, "node-chat-001", "Chat Agent", "developer", "dev", []string{"conversation"})
+	agent, appErr := st.CreateAgent(store.Scope{UserID: user.ID}, "node-chat-001", "Chat Agent", "developer", "dev", []string{"conversation"})
 	if appErr != nil {
 		t.Fatalf("create agent: %v", appErr)
 	}
@@ -131,20 +131,20 @@ func TestListSessionsReturnsChatHistory(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("create user: %v", appErr)
 	}
-	agent, appErr := st.CreateAgent(user.ID, "node-chat-002", "Chat Agent", "developer", "dev", []string{"conversation"})
+	agent, appErr := st.CreateAgent(store.Scope{UserID: user.ID}, "node-chat-002", "Chat Agent", "developer", "dev", []string{"conversation"})
 	if appErr != nil {
 		t.Fatalf("create agent: %v", appErr)
 	}
 	now := time.Now().UTC()
 	st.SyncAgentPresence([]store.AgentPresence{{NodeID: agent.NodeID, LastSeenAt: now}}, now)
 
-	if _, _, appErr := st.AppendAgentChatUserMessage(user.ID, agent.ID, "older"); appErr != nil {
+	if _, _, appErr := st.AppendAgentChatUserMessage(store.Scope{UserID: user.ID}, agent.ID, "older"); appErr != nil {
 		t.Fatalf("append first message: %v", appErr)
 	}
-	if appErr := st.ResetAgentChat(user.ID, agent.ID); appErr != nil {
+	if appErr := st.ResetAgentChat(store.Scope{UserID: user.ID}, agent.ID); appErr != nil {
 		t.Fatalf("reset second chat: %v", appErr)
 	}
-	second, _, appErr := st.AppendAgentChatUserMessage(user.ID, agent.ID, "newer")
+	second, _, appErr := st.AppendAgentChatUserMessage(store.Scope{UserID: user.ID}, agent.ID, "newer")
 	if appErr != nil {
 		t.Fatalf("append second message: %v", appErr)
 	}
@@ -178,14 +178,14 @@ func TestResetReturnsNullDraftState(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("create user: %v", appErr)
 	}
-	agent, appErr := st.CreateAgent(user.ID, "node-chat-003", "Chat Agent", "developer", "dev", []string{"conversation"})
+	agent, appErr := st.CreateAgent(store.Scope{UserID: user.ID}, "node-chat-003", "Chat Agent", "developer", "dev", []string{"conversation"})
 	if appErr != nil {
 		t.Fatalf("create agent: %v", appErr)
 	}
 	now := time.Now().UTC()
 	st.SyncAgentPresence([]store.AgentPresence{{NodeID: agent.NodeID, LastSeenAt: now}}, now)
 
-	if _, _, appErr := st.AppendAgentChatUserMessage(user.ID, agent.ID, "hello"); appErr != nil {
+	if _, _, appErr := st.AppendAgentChatUserMessage(store.Scope{UserID: user.ID}, agent.ID, "hello"); appErr != nil {
 		t.Fatalf("append first message: %v", appErr)
 	}
 

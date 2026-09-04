@@ -1,6 +1,6 @@
 # TrustMesh 多租户 + 企业管理 实施设计
 
-> 状态：**阶段 0 + 阶段 1 已完成，阶段 2 分批推进中**（阶段 0 commit `5fa4a71`；阶段 1 见 §阶段 1 实况；阶段 2 见 §阶段 2 实况，**2-1 Project 已上线**）
+> 状态：**阶段 0 + 阶段 1 已完成，阶段 2 分批推进中**（阶段 0 commit `5fa4a71`；阶段 1 见 §阶段 1 实况；阶段 2 见 §阶段 2 实况，**2-1 Project / 2-2 Task / 2-3 Agent 均已上线**）
 > 日期：2026-09-04
 > 开工前备份：`deploy/backups/mongodump-trustmesh-20260904-214800.archive.gz`，git tag `pre-multitenant-stage0`
 > 阶段 1 备份：`deploy/backups/mongodump-trustmesh-20260904-223127-stage1.archive.gz`，git tag `pre-multitenant-stage1`
@@ -388,13 +388,35 @@ func visibleToScope(sc Scope, ownerOrgID, ownerUserID string) bool {
 5. **尾随换行会 split 出空串**，整行块匹配因此永远失败 —— 匹配前先 `rstrip("\n")`。
 6. **容器重启后 JWT 失效**，冒烟脚本必须**每次重新登录**再取 token，不能复用旧 token。
 
+### 2-3 Agent 归属收敛（已完成并上线）
+
+| 项 | 内容 |
+|---|---|
+| 签名收敛 | `store_agent.go` 8 个函数 `userID string` → `sc Scope`：`CreateAgent`（写路径）/ `ListAgents` / `GetAgent` / `UpdateAgent` / `DeleteAgent` / `GetAgentStats` / `GetAgentInsights` / `ListAgentTasks`；`store_agent_chat.go` 6 个公开函数 + `agentForUserUnsafe` |
+| 写路径落点 | `CreateAgent` 的 `OrgID` 改 `resolveOwnerOrgUnsafe(sc)` —— **带租户头建的 agent 挂活跃租户，否则挂个人租户** |
+| Handler | `handler/agent.go` 11 处 + `handler/agent_chat.go` 6 处鉴权行 `currentUserID(c)` → `currentScope(c)` |
+| 补漏（action_items） | `workflow.go` 的 `ListActionItems`（`task.UserID != userID` → `visibleToScope`）+ `ConvertActionItems`（**里层解析 executor agent 按 user 维度找**，企业租户下成员 A 无法把待办派给成员 B 建的 agent；且新建 task 仍落 `personalOrgOfUnsafe`）。连同 `handler/action_items.go` 3 处调用点一并收敛 |
+| 中间件修复 | 🔴 `middleware.Scope()` 在只跑了 `RequireAuth` 而没跑 `OrgScope` 时**退回 `store.Scope{UserID: UserID(c)}`**，与「未带 `X-Org-Id` 的存量客户端」语义一致。此前返回零值 Scope，导致 12 个直接 `c.Set("user_id", ...)` 的 handler 测试集体 401 |
+| 测试 | 新增 3 个：`TestAgentScopedVisibility`（无头=改造前行为 / 同租户可见 / 跨租户不可见）、`TestCreateAgentOwnerOrg`（带租户头挂活跃租户 / 无头挂个人租户）、`TestAgentChatIsUserScoped`（会话归属按 user） |
+
+**关键设计决策**
+
+1. **实体吃 Scope，会话按 user**。同租户成员共享 agent 可见性（org 成员可与租户内的 agent 对话），但 **`activeAgentChatKey` 仍是 `(userID, agentID)` 分区** —— 会话是「某人 ↔ 某 agent」的一对一私人对话，不做租户共享。因此 `GetActiveAgentChat` / `ListAgentChatSessions` / `GetAgentChatByID` 内部一律用 `sc.UserID`，只有 `agentForUserUnsafe`（agent 可见性）走 `visibleToScope`。
+2. **`isValidRole` 只接受 `pm/developer/reviewer/custom`**，没有 `executor`。写 agent 相关测试时别踩这个坑。
+
+**踩坑（🔴 下次必须避开）**
+
+1. 🔴 **`middleware.Scope()` 不能返回零值**。handler 一旦用 `currentScope(c)`，任何漏挂 `OrgScope` 中间件的路径（尤其是直接 `c.Set("user_id", ...)` 的测试）都会拿到 `UserID == ""` 而 401。修复方式是让 `Scope()` 在拿不到租户上下文时退回 `store.Scope{UserID: UserID(c)}` —— 一处修复覆盖全部 12 个失败测试，也防御未来漏挂中间件的路径。
+2. **单参数调用会漏网**。批量改调用点时，正则若写死 `\(userID,` 就匹配不到 `ListAgents(userID)` 这种首参后紧跟 `)` 的形式，必须补 `PATTERN_SINGLE`。
+3. **Go map 遍历序随机**。冒烟对比「无头 vs 真实头」的返回集时，首条元素不同是**正常的**（不是回归）；要按**集合差集**比对，不要按首条或顺序。实测 action-items 两边均 7 条、差集为 0。
+
 **后续批次排期**
 
 | 批次 | 范围 | 状态 |
 |---|---|---|
 | 2-1 | Project（7 函数 + handler + 裁决层） | ✅ 已上线 |
 | 2-2 | Task 归属收敛 | ✅ 已上线 |
-| 2-3 | Agent 归属收敛 | ⬜ 待开工 |
+| 2-3 | Agent 归属收敛 | ✅ 已上线 |
 | 2-4 | Knowledge + WorkflowTemplate | ⬜ 待开工 |
 | 2-5 | File + Comment + Meeting | ⬜ 待开工 |
 | 2-6 | JoinRequest + ExternalApp | ⬜ 待开工 |

@@ -282,7 +282,7 @@ func (h *MeetingHandler) AddTodo(c *gin.Context) {
 
 // resolveAllNodeIDs returns node IDs of all meeting participants that have a known agent.
 func (h *MeetingHandler) resolveAllNodeIDs(meeting *model.Meeting, userID string) []string {
-	agents := h.store.ListAgents(userID)
+	agents := h.store.ListAgents(store.Scope{UserID: userID})
 	agentByID := make(map[string]string, len(agents))
 	for _, a := range agents {
 		if a.NodeID != "" {
@@ -314,7 +314,7 @@ func (h *MeetingHandler) resolveAllNodeIDs(meeting *model.Meeting, userID string
 
 // resolvePMNodeID returns the PM agent's node ID for a meeting.
 func (h *MeetingHandler) resolvePMNodeID(meeting *model.Meeting, userID string) string {
-	agents := h.store.ListAgents(userID)
+	agents := h.store.ListAgents(store.Scope{UserID: userID})
 	for _, a := range agents {
 		if a.ID == meeting.HostAgentID && a.NodeID != "" {
 			return a.NodeID
@@ -335,7 +335,7 @@ func (h *MeetingHandler) notifyPM(ctx context.Context, meeting *model.Meeting, c
 		return
 	}
 
-	agents := h.store.ListAgents(userID)
+	agents := h.store.ListAgents(store.Scope{UserID: userID})
 	agentByID := make(map[string]string, len(agents))
 	agentNodeIDs := make(map[string]string, len(agents))
 	agentStructByID := make(map[string]model.Agent, len(agents))

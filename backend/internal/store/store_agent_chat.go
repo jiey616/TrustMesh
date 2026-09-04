@@ -20,14 +20,14 @@ func copyAgentChatMessages(messages []model.AgentChatMessage) []model.AgentChatM
 	return append([]model.AgentChatMessage{}, messages...)
 }
 
-func (s *Store) GetActiveAgentChat(userID, agentID string) (*model.AgentChatDetail, *transport.AppError) {
+func (s *Store) GetActiveAgentChat(sc Scope, agentID string) (*model.AgentChatDetail, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if _, err := s.agentForUserUnsafe(userID, agentID); err != nil {
+	if _, err := s.agentForUserUnsafe(sc, agentID); err != nil {
 		return nil, err
 	}
-	chatID := s.activeAgentChats[activeAgentChatKey(userID, agentID)]
+	chatID := s.activeAgentChats[activeAgentChatKey(sc.UserID, agentID)]
 	if chatID == "" {
 		return nil, nil
 	}
@@ -39,17 +39,17 @@ func (s *Store) GetActiveAgentChat(userID, agentID string) (*model.AgentChatDeta
 	return &detail, nil
 }
 
-func (s *Store) ListAgentChatSessions(userID, agentID string) ([]model.AgentChatSessionSummary, *transport.AppError) {
+func (s *Store) ListAgentChatSessions(sc Scope, agentID string) ([]model.AgentChatSessionSummary, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if _, err := s.agentForUserUnsafe(userID, agentID); err != nil {
+	if _, err := s.agentForUserUnsafe(sc, agentID); err != nil {
 		return nil, err
 	}
 
 	sessions := make([]model.AgentChatSessionSummary, 0)
 	for _, chat := range s.agentChats {
-		if chat.UserID != userID || chat.AgentID != agentID {
+		if chat.UserID != sc.UserID || chat.AgentID != agentID {
 			continue
 		}
 		sessions = append(sessions, s.toAgentChatSessionSummaryUnsafe(chat))
@@ -65,16 +65,16 @@ func (s *Store) ListAgentChatSessions(userID, agentID string) ([]model.AgentChat
 	return sessions, nil
 }
 
-func (s *Store) GetAgentChatByID(userID, agentID, chatID string) (*model.AgentChatDetail, *transport.AppError) {
+func (s *Store) GetAgentChatByID(sc Scope, agentID, chatID string) (*model.AgentChatDetail, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if _, err := s.agentForUserUnsafe(userID, agentID); err != nil {
+	if _, err := s.agentForUserUnsafe(sc, agentID); err != nil {
 		return nil, err
 	}
 
 	chat, ok := s.agentChats[chatID]
-	if !ok || chat.UserID != userID || chat.AgentID != agentID {
+	if !ok || chat.UserID != sc.UserID || chat.AgentID != agentID {
 		return nil, transport.NotFound("agent chat not found")
 	}
 
@@ -82,11 +82,11 @@ func (s *Store) GetAgentChatByID(userID, agentID, chatID string) (*model.AgentCh
 	return &detail, nil
 }
 
-func (s *Store) ResetAgentChat(userID, agentID string) *transport.AppError {
+func (s *Store) ResetAgentChat(sc Scope, agentID string) *transport.AppError {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	agent, err := s.agentForUserUnsafe(userID, agentID)
+	agent, err := s.agentForUserUnsafe(sc, agentID)
 	if err != nil {
 		return err
 	}
@@ -94,7 +94,7 @@ func (s *Store) ResetAgentChat(userID, agentID string) *transport.AppError {
 		return appErr
 	}
 
-	key := activeAgentChatKey(userID, agentID)
+	key := activeAgentChatKey(sc.UserID, agentID)
 	if chatID := s.activeAgentChats[key]; chatID != "" {
 		if existing, ok := s.agentChats[chatID]; ok {
 			existing.Status = "closed"
@@ -110,7 +110,7 @@ func (s *Store) ResetAgentChat(userID, agentID string) *transport.AppError {
 	return nil
 }
 
-func (s *Store) AppendAgentChatUserMessage(userID, agentID, content string) (*model.AgentChatDetail, *model.AgentChatMessage, *transport.AppError) {
+func (s *Store) AppendAgentChatUserMessage(sc Scope, agentID, content string) (*model.AgentChatDetail, *model.AgentChatMessage, *transport.AppError) {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return nil, nil, transport.Validation("invalid content", map[string]any{"content": "required"})
@@ -119,7 +119,7 @@ func (s *Store) AppendAgentChatUserMessage(userID, agentID, content string) (*mo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	agent, err := s.agentForUserUnsafe(userID, agentID)
+	agent, err := s.agentForUserUnsafe(sc, agentID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -127,7 +127,7 @@ func (s *Store) AppendAgentChatUserMessage(userID, agentID, content string) (*mo
 		return nil, nil, appErr
 	}
 
-	chat := s.getOrCreateActiveAgentChatUnsafe(userID, agent)
+	chat := s.getOrCreateActiveAgentChatUnsafe(sc.UserID, agent)
 	now := time.Now().UTC()
 	msg := model.AgentChatMessage{
 		ID:         newID(),
@@ -147,7 +147,7 @@ func (s *Store) AppendAgentChatUserMessage(userID, agentID, content string) (*mo
 	return &detail, &msg, nil
 }
 
-func (s *Store) UpdateAgentChatMessageStatus(userID, chatID, messageID, status, remoteMessageID string) (*model.AgentChatDetail, *transport.AppError) {
+func (s *Store) UpdateAgentChatMessageStatus(sc Scope, chatID, messageID, status, remoteMessageID string) (*model.AgentChatDetail, *transport.AppError) {
 	status = strings.TrimSpace(status)
 	if status == "" {
 		return nil, transport.Validation("invalid status", map[string]any{"status": "required"})
@@ -157,7 +157,7 @@ func (s *Store) UpdateAgentChatMessageStatus(userID, chatID, messageID, status, 
 	defer s.mu.Unlock()
 
 	chat, ok := s.agentChats[chatID]
-	if !ok || chat.UserID != userID {
+	if !ok || chat.UserID != sc.UserID {
 		return nil, transport.NotFound("agent chat not found")
 	}
 	for i := range chat.Messages {
@@ -243,9 +243,9 @@ func (s *Store) AppendAgentChatMessageByNode(nodeID, sessionKey, content, remote
 	return &detail, nil
 }
 
-func (s *Store) agentForUserUnsafe(userID, agentID string) (*model.Agent, *transport.AppError) {
+func (s *Store) agentForUserUnsafe(sc Scope, agentID string) (*model.Agent, *transport.AppError) {
 	agent, ok := s.agents[agentID]
-	if !ok || agent.UserID != userID {
+	if !ok || !visibleToScope(sc, agent.OrgID, agent.UserID) {
 		return nil, transport.NotFound("agent not found")
 	}
 	return agent, nil

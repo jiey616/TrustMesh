@@ -2226,13 +2226,13 @@ type ActionItemRef struct {
 
 // ListActionItems returns action items across the user's tasks filtered by
 // status (e.g. awaiting_confirmation for the project "待办" tab).
-func (s *Store) ListActionItems(userID, projectID, status string, limit int) []ActionItemRef {
+func (s *Store) ListActionItems(sc Scope, projectID, status string, limit int) []ActionItemRef {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var out []ActionItemRef
 	for _, task := range s.tasks {
-		if task.UserID != userID {
+		if !visibleToScope(sc, task.OrgID, task.UserID) {
 			continue
 		}
 		if projectID != "" && task.ProjectID != projectID {
@@ -2266,7 +2266,7 @@ func (s *Store) ListActionItems(userID, projectID, status string, limit int) []A
 // target agent: items sharing the same resolved assignee become one task with
 // multiple todos (one todo per action item). Each item is marked converted
 // with the created task id (optimistic: fails if already converted).
-func (s *Store) ConvertActionItems(userID string, refs []ActionItemRef, projectID, sourceTaskID string) ([]*model.TaskDetail, *transport.AppError) {
+func (s *Store) ConvertActionItems(sc Scope, refs []ActionItemRef, projectID, sourceTaskID string) ([]*model.TaskDetail, *transport.AppError) {
 	if len(refs) == 0 {
 		return nil, nil
 	}
@@ -2293,13 +2293,13 @@ func (s *Store) ConvertActionItems(userID string, refs []ActionItemRef, projectI
 		}
 		var agent *model.Agent
 		if it.AssigneeNodeID != "" {
-			if a, err := s.agentByNodeUnsafe(it.AssigneeNodeID); err == nil && a != nil && a.UserID == userID && !a.Archived {
+			if a, err := s.agentByNodeUnsafe(it.AssigneeNodeID); err == nil && a != nil && !a.Archived && visibleToScope(sc, a.OrgID, a.UserID) {
 				agent = a
 			}
 		}
 		if agent == nil && it.AssigneeRole != "" {
 			for _, a := range s.agents {
-				if a.UserID == userID && !a.Archived && (a.Name == it.AssigneeRole || strings.Contains(a.Name, it.AssigneeRole)) {
+				if !a.Archived && visibleToScope(sc, a.OrgID, a.UserID) && (a.Name == it.AssigneeRole || strings.Contains(a.Name, it.AssigneeRole)) {
 					agent = a
 					break
 				}
@@ -2331,13 +2331,13 @@ func (s *Store) ConvertActionItems(userID string, refs []ActionItemRef, projectI
 		assignee := items[0].ref.Item
 		var agent *model.Agent
 		if assignee.AssigneeNodeID != "" {
-			if a, err := s.agentByNodeUnsafe(assignee.AssigneeNodeID); err == nil && a != nil && a.UserID == userID && !a.Archived {
+			if a, err := s.agentByNodeUnsafe(assignee.AssigneeNodeID); err == nil && a != nil && !a.Archived && visibleToScope(sc, a.OrgID, a.UserID) {
 				agent = a
 			}
 		}
 		if agent == nil && assignee.AssigneeRole != "" {
 			for _, a := range s.agents {
-				if a.UserID == userID && !a.Archived && (a.Name == assignee.AssigneeRole || strings.Contains(a.Name, assignee.AssigneeRole)) {
+				if !a.Archived && visibleToScope(sc, a.OrgID, a.UserID) && (a.Name == assignee.AssigneeRole || strings.Contains(a.Name, assignee.AssigneeRole)) {
 					agent = a
 					break
 				}
@@ -2372,8 +2372,8 @@ func (s *Store) ConvertActionItems(userID string, refs []ActionItemRef, projectI
 		}
 		task := &model.TaskDetail{
 			ID:           newID(),
-			UserID:       userID,
-			OrgID:        s.personalOrgOfUnsafe(userID),
+			UserID:       sc.UserID,
+			OrgID:        s.resolveOwnerOrgUnsafe(sc),
 			ProjectID:    projectID,
 			Title:        title,
 			Description:  fmt.Sprintf("由任务「%s」的结果待办自动转换生成（%d 项待办整合）", sourceTaskTitle(s, sourceTaskID), len(items)),
@@ -2392,7 +2392,7 @@ func (s *Store) ConvertActionItems(userID string, refs []ActionItemRef, projectI
 			it := item.ref.Item
 			it.Status = model.ActionItemConverted
 			it.ConvertedTaskID = task.ID
-			it.ConfirmedBy = "user:" + userID
+			it.ConfirmedBy = "user:" + sc.UserID
 		}
 
 		if err := s.persistTaskBundleUnsafe(task.ID); err != nil {

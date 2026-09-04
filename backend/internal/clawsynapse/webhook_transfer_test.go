@@ -23,11 +23,11 @@ func newTransferTestFixture(t *testing.T) (*store.Store, string, string, string)
 	if appErr != nil {
 		t.Fatalf("create user: %v", appErr)
 	}
-	dev, appErr := s.CreateAgent(user.ID, "node-transfer-dev", "编剧智能体", "developer", "writer", nil)
+	dev, appErr := s.CreateAgent(store.Scope{UserID: user.ID}, "node-transfer-dev", "编剧智能体", "developer", "writer", nil)
 	if appErr != nil {
 		t.Fatalf("create agent: %v", appErr)
 	}
-	pm, appErr := s.CreateAgent(user.ID, "node-transfer-pm", "PM", "pm", "pm", nil)
+	pm, appErr := s.CreateAgent(store.Scope{UserID: user.ID}, "node-transfer-pm", "PM", "pm", "pm", nil)
 	if appErr != nil {
 		t.Fatalf("create pm: %v", appErr)
 	}
@@ -320,7 +320,7 @@ func newTransferWorkflowFixture(t *testing.T, outputs []model.StepOutput) (*stor
 	t.Helper()
 	s, userID, taskID, devNode := newTransferTestFixture(t)
 	var devID string
-	for _, a := range s.ListAgents(userID) {
+	for _, a := range s.ListAgents(store.Scope{UserID: userID}) {
 		if a.NodeID == devNode {
 			devID = a.ID
 			break

@@ -26,12 +26,12 @@ type sendAgentChatMessageRequest struct {
 }
 
 func (h *AgentChatHandler) Get(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 
-	detail, appErr := h.store.GetActiveAgentChat(userID, c.Param("id"))
+	detail, appErr := h.store.GetActiveAgentChat(sc, c.Param("id"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -40,12 +40,12 @@ func (h *AgentChatHandler) Get(c *gin.Context) {
 }
 
 func (h *AgentChatHandler) ListSessions(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 
-	sessions, appErr := h.store.ListAgentChatSessions(userID, c.Param("id"))
+	sessions, appErr := h.store.ListAgentChatSessions(sc, c.Param("id"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -55,12 +55,12 @@ func (h *AgentChatHandler) ListSessions(c *gin.Context) {
 }
 
 func (h *AgentChatHandler) GetSession(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 
-	detail, appErr := h.store.GetAgentChatByID(userID, c.Param("id"), c.Param("sessionId"))
+	detail, appErr := h.store.GetAgentChatByID(sc, c.Param("id"), c.Param("sessionId"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -70,7 +70,7 @@ func (h *AgentChatHandler) GetSession(c *gin.Context) {
 }
 
 func (h *AgentChatHandler) SendMessage(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -80,13 +80,13 @@ func (h *AgentChatHandler) SendMessage(c *gin.Context) {
 		return
 	}
 
-	detail, msg, appErr := h.store.AppendAgentChatUserMessage(userID, c.Param("id"), req.Content)
+	detail, msg, appErr := h.store.AppendAgentChatUserMessage(sc, c.Param("id"), req.Content)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}
 	if h.publisher == nil {
-		updated, markErr := h.store.UpdateAgentChatMessageStatus(userID, detail.ID, msg.ID, "failed", "")
+		updated, markErr := h.store.UpdateAgentChatMessageStatus(sc, detail.ID, msg.ID, "failed", "")
 		if markErr == nil {
 			detail = updated
 		}
@@ -101,7 +101,7 @@ func (h *AgentChatHandler) SendMessage(c *gin.Context) {
 		"messageId":        msg.ID,
 	})
 	if err != nil {
-		updated, markErr := h.store.UpdateAgentChatMessageStatus(userID, detail.ID, msg.ID, "failed", "")
+		updated, markErr := h.store.UpdateAgentChatMessageStatus(sc, detail.ID, msg.ID, "failed", "")
 		if markErr == nil {
 			detail = updated
 		}
@@ -115,7 +115,7 @@ func (h *AgentChatHandler) SendMessage(c *gin.Context) {
 	}
 
 	currentDetail := detail
-	detail, appErr = h.store.UpdateAgentChatMessageStatus(userID, detail.ID, msg.ID, "sent", result.MessageID)
+	detail, appErr = h.store.UpdateAgentChatMessageStatus(sc, detail.ID, msg.ID, "sent", result.MessageID)
 	if appErr != nil {
 		detail = currentDetail
 		if h.log != nil {
@@ -127,7 +127,7 @@ func (h *AgentChatHandler) SendMessage(c *gin.Context) {
 				zap.Error(appErr),
 			)
 		}
-		fallback, getErr := h.store.GetActiveAgentChat(userID, c.Param("id"))
+		fallback, getErr := h.store.GetActiveAgentChat(sc, c.Param("id"))
 		if getErr == nil && fallback != nil {
 			detail = fallback
 		}
@@ -147,12 +147,12 @@ func (h *AgentChatHandler) SendMessage(c *gin.Context) {
 }
 
 func (h *AgentChatHandler) Reset(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 
-	if appErr := h.store.ResetAgentChat(userID, c.Param("id")); appErr != nil {
+	if appErr := h.store.ResetAgentChat(sc, c.Param("id")); appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}

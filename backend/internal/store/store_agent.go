@@ -51,7 +51,7 @@ var agentInsightAgingBuckets = []struct {
 	{Label: "3 天以上", MinMs: 3 * 24 * 60 * 60 * 1000, MaxMs: 1<<63 - 1},
 }
 
-func (s *Store) CreateAgent(userID, nodeID, name, role, description string, capabilities []string) (*model.Agent, *transport.AppError) {
+func (s *Store) CreateAgent(sc Scope, nodeID, name, role, description string, capabilities []string) (*model.Agent, *transport.AppError) {
 	nodeID = strings.TrimSpace(nodeID)
 	name = strings.TrimSpace(name)
 	role = strings.TrimSpace(role)
@@ -78,8 +78,8 @@ func (s *Store) CreateAgent(userID, nodeID, name, role, description string, capa
 	now := time.Now().UTC()
 	agent := &model.Agent{
 		ID:           newID(),
-		UserID:       userID,
-		OrgID:        s.personalOrgOfUnsafe(userID),
+		UserID:       sc.UserID,
+		OrgID:        s.resolveOwnerOrgUnsafe(sc),
 		Name:         name,
 		Description:  description,
 		Role:         role,
@@ -102,13 +102,13 @@ func (s *Store) CreateAgent(userID, nodeID, name, role, description string, capa
 	return clone, nil
 }
 
-func (s *Store) ListAgents(userID string) []model.Agent {
+func (s *Store) ListAgents(sc Scope) []model.Agent {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	items := make([]model.Agent, 0)
 	for _, a := range s.agents {
-		if a.UserID == userID && !a.Archived {
+		if visibleToScope(sc, a.OrgID, a.UserID) && !a.Archived {
 			clone := copyAgent(a)
 			clone.Usage = s.agentUsageUnsafe(a.ID)
 			items = append(items, *clone)
@@ -118,11 +118,11 @@ func (s *Store) ListAgents(userID string) []model.Agent {
 	return items
 }
 
-func (s *Store) GetAgent(userID, agentID string) (*model.Agent, *transport.AppError) {
+func (s *Store) GetAgent(sc Scope, agentID string) (*model.Agent, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	a, ok := s.agents[agentID]
-	if !ok || a.UserID != userID {
+	if !ok || !visibleToScope(sc, a.OrgID, a.UserID) {
 		return nil, transport.NotFound("agent not found")
 	}
 	clone := copyAgent(a)
@@ -130,11 +130,11 @@ func (s *Store) GetAgent(userID, agentID string) (*model.Agent, *transport.AppEr
 	return clone, nil
 }
 
-func (s *Store) UpdateAgent(userID, agentID string, in UpdateAgentInput) (*model.Agent, *transport.AppError) {
+func (s *Store) UpdateAgent(sc Scope, agentID string, in UpdateAgentInput) (*model.Agent, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a, ok := s.agents[agentID]
-	if !ok || a.UserID != userID || a.Archived {
+	if !ok || !visibleToScope(sc, a.OrgID, a.UserID) || a.Archived {
 		return nil, transport.NotFound("agent not found")
 	}
 
@@ -176,11 +176,11 @@ func (s *Store) UpdateAgent(userID, agentID string, in UpdateAgentInput) (*model
 	return clone, nil
 }
 
-func (s *Store) DeleteAgent(userID, agentID string) *transport.AppError {
+func (s *Store) DeleteAgent(sc Scope, agentID string) *transport.AppError {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	a, ok := s.agents[agentID]
-	if !ok || a.UserID != userID {
+	if !ok || !visibleToScope(sc, a.OrgID, a.UserID) {
 		return transport.NotFound("agent not found")
 	}
 	if a.Archived {
@@ -298,12 +298,12 @@ func (s *Store) rebuildTodoAssigneeUnsafe(agentID string) {
 	}
 }
 
-func (s *Store) GetAgentStats(userID, agentID string) (*model.AgentStats, *transport.AppError) {
+func (s *Store) GetAgentStats(sc Scope, agentID string) (*model.AgentStats, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	a, ok := s.agents[agentID]
-	if !ok || a.UserID != userID {
+	if !ok || !visibleToScope(sc, a.OrgID, a.UserID) {
 		return nil, transport.NotFound("agent not found")
 	}
 
@@ -313,12 +313,12 @@ func (s *Store) GetAgentStats(userID, agentID string) (*model.AgentStats, *trans
 	return s.executorStatsUnsafe(agentID), nil
 }
 
-func (s *Store) GetAgentInsights(userID, agentID string) (*model.AgentInsights, *transport.AppError) {
+func (s *Store) GetAgentInsights(sc Scope, agentID string) (*model.AgentInsights, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	a, ok := s.agents[agentID]
-	if !ok || a.UserID != userID {
+	if !ok || !visibleToScope(sc, a.OrgID, a.UserID) {
 		return nil, transport.NotFound("agent not found")
 	}
 
@@ -793,12 +793,12 @@ func (s *Store) executorStatsUnsafe(agentID string) *model.AgentStats {
 	return stats
 }
 
-func (s *Store) ListAgentTasks(userID, agentID, status string) ([]model.AgentTaskItem, *transport.AppError) {
+func (s *Store) ListAgentTasks(sc Scope, agentID, status string) ([]model.AgentTaskItem, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	a, ok := s.agents[agentID]
-	if !ok || a.UserID != userID {
+	if !ok || !visibleToScope(sc, a.OrgID, a.UserID) {
 		return nil, transport.NotFound("agent not found")
 	}
 	if status != "" && !isValidTaskStatus(status) {
@@ -809,7 +809,7 @@ func (s *Store) ListAgentTasks(userID, agentID, status string) ([]model.AgentTas
 	items := make([]model.AgentTaskItem, 0)
 
 	for _, task := range s.tasks {
-		if task.UserID != userID {
+		if !visibleToScope(sc, task.OrgID, task.UserID) {
 			continue
 		}
 

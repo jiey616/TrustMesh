@@ -39,12 +39,16 @@ func OrgScope(st *store.Store) gin.HandlerFunc {
 	}
 }
 
-// Scope 取本次请求的归属上下文；未经过 OrgScope 中间件时返回零值 Scope。
+// Scope 取本次请求的归属上下文。
+//
+// 只跑了 RequireAuth（设置 user_id）而没跑 OrgScope 时，退回 user-only Scope ——
+// 这与「未带 X-Org-Id 的存量客户端」语义完全一致，保证任何拿到 userID 的请求
+// 都能得到一个可用的 Scope，而不是零值导致 handler 直接 401。
 func Scope(c *gin.Context) store.Scope {
 	if v, ok := c.Get(scopeKey); ok {
 		if sc, ok := v.(store.Scope); ok {
 			return sc
 		}
 	}
-	return store.Scope{}
+	return store.Scope{UserID: UserID(c)}
 }

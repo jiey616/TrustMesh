@@ -70,7 +70,7 @@ func TestGetAgentInsightsPM(t *testing.T) {
 		UpdatedAt: now.Add(-12 * time.Hour),
 	}
 
-	insights, appErr := s.GetAgentInsights("user-1", agent.ID)
+	insights, appErr := s.GetAgentInsights(Scope{UserID: "user-1"}, agent.ID)
 	if appErr != nil {
 		t.Fatalf("GetAgentInsights() error = %v", appErr)
 	}
@@ -198,7 +198,7 @@ func TestGetAgentInsightsExecutor(t *testing.T) {
 		},
 	}
 
-	insights, appErr := s.GetAgentInsights("user-1", agent.ID)
+	insights, appErr := s.GetAgentInsights(Scope{UserID: "user-1"}, agent.ID)
 	if appErr != nil {
 		t.Fatalf("GetAgentInsights() error = %v", appErr)
 	}

@@ -58,13 +58,13 @@ func toActionItemDTO(ref store.ActionItemRef, itemIdx int) actionItemDTO {
 // List lists action items for the current user, optionally filtered by
 // project and status.
 func (h *ActionItemsHandler) List(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 	projectID := c.Query("project_id")
 	status := c.Query("status")
-	refs := h.store.ListActionItems(userID, projectID, status, 200)
+	refs := h.store.ListActionItems(sc, projectID, status, 200)
 
 	out := make([]actionItemDTO, 0, len(refs))
 	for i, ref := range refs {
@@ -82,10 +82,11 @@ type convertRequest struct {
 // Convert turns the selected action items into new tasks, grouped by target
 // agent (one task per assignee, one todo per action item).
 func (h *ActionItemsHandler) Convert(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
+
 	projectID := c.Query("project_id")
 
 	var body convertRequest
@@ -96,7 +97,7 @@ func (h *ActionItemsHandler) Convert(c *gin.Context) {
 
 	// Re-fetch all pending items for the user+project and pick the requested
 	// ones by their stable key (taskID:todoID:index encoded in item_ids).
-	refs := h.store.ListActionItems(userID, projectID, "", 0)
+	refs := h.store.ListActionItems(sc, projectID, "", 0)
 	wanted := make(map[string]struct{}, len(body.ItemIDs))
 	for _, id := range body.ItemIDs {
 		wanted[id] = struct{}{}
@@ -106,7 +107,7 @@ func (h *ActionItemsHandler) Convert(c *gin.Context) {
 	// Apply UI assignee overrides: item key → agent id. Resolve agent id → node id.
 	overrides := make(map[string]string) // item key -> node id
 	for key, agentID := range body.Assignees {
-		if agent, err := h.store.GetAgent(userID, agentID); err == nil && agent != nil {
+		if agent, err := h.store.GetAgent(sc, agentID); err == nil && agent != nil {
 			overrides[key] = agent.NodeID
 		}
 	}
@@ -129,7 +130,7 @@ func (h *ActionItemsHandler) Convert(c *gin.Context) {
 		return
 	}
 
-	created, appErr := h.store.ConvertActionItems(userID, selected, projectID, sourceTaskID)
+	created, appErr := h.store.ConvertActionItems(sc, selected, projectID, sourceTaskID)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return

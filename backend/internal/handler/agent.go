@@ -31,7 +31,7 @@ type createAgentRequest struct {
 }
 
 func (h *AgentHandler) Create(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -48,7 +48,7 @@ func (h *AgentHandler) Create(c *gin.Context) {
 		}
 	}
 
-	agent, appErr := h.store.CreateAgent(userID, req.NodeID, req.Name, req.Role, req.Description, req.Capabilities)
+	agent, appErr := h.store.CreateAgent(sc, req.NodeID, req.Name, req.Role, req.Description, req.Capabilities)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -57,20 +57,20 @@ func (h *AgentHandler) Create(c *gin.Context) {
 }
 
 func (h *AgentHandler) List(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	items := h.store.ListAgents(userID)
+	items := h.store.ListAgents(sc)
 	transport.WriteList(c, items, len(items))
 }
 
 func (h *AgentHandler) Get(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	agent, appErr := h.store.GetAgent(userID, c.Param("id"))
+	agent, appErr := h.store.GetAgent(sc, c.Param("id"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -87,7 +87,7 @@ type updateAgentRequest struct {
 }
 
 func (h *AgentHandler) Update(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -102,7 +102,7 @@ func (h *AgentHandler) Update(c *gin.Context) {
 		return
 	}
 
-	agent, appErr := h.store.UpdateAgent(userID, c.Param("id"), store.UpdateAgentInput{
+	agent, appErr := h.store.UpdateAgent(sc, c.Param("id"), store.UpdateAgentInput{
 		Name:         req.Name,
 		Role:         req.Role,
 		Description:  req.Description,
@@ -116,20 +116,20 @@ func (h *AgentHandler) Update(c *gin.Context) {
 }
 
 func (h *AgentHandler) Delete(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 	agentID := c.Param("id")
 
 	// Get agent info before deletion to obtain node_id
-	agent, appErr := h.store.GetAgent(userID, agentID)
+	agent, appErr := h.store.GetAgent(sc, agentID)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}
 
-	if appErr := h.store.DeleteAgent(userID, agentID); appErr != nil {
+	if appErr := h.store.DeleteAgent(sc, agentID); appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}
@@ -145,11 +145,11 @@ func (h *AgentHandler) Delete(c *gin.Context) {
 }
 
 func (h *AgentHandler) Stats(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	stats, appErr := h.store.GetAgentStats(userID, c.Param("id"))
+	stats, appErr := h.store.GetAgentStats(sc, c.Param("id"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -158,11 +158,11 @@ func (h *AgentHandler) Stats(c *gin.Context) {
 }
 
 func (h *AgentHandler) Insights(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	insights, appErr := h.store.GetAgentInsights(userID, c.Param("id"))
+	insights, appErr := h.store.GetAgentInsights(sc, c.Param("id"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -171,12 +171,12 @@ func (h *AgentHandler) Insights(c *gin.Context) {
 }
 
 func (h *AgentHandler) Tasks(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 	status := c.Query("status")
-	items, appErr := h.store.ListAgentTasks(userID, c.Param("id"), status)
+	items, appErr := h.store.ListAgentTasks(sc, c.Param("id"), status)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -188,11 +188,11 @@ func (h *AgentHandler) Tasks(c *gin.Context) {
 // 仅 hermes 产品节点提供能力查询；非 hermes 返回 available:false 由前端降级。
 // 依赖 ClawSynapse 侧 capability 模块 + 旁挂 daemon 端点；未就绪时同样降级，不影响主流程。
 func (h *AgentHandler) GetCapabilities(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	agent, appErr := h.store.GetAgent(userID, c.Param("id"))
+	agent, appErr := h.store.GetAgent(sc, c.Param("id"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -232,11 +232,11 @@ func (h *AgentHandler) GetCapabilities(c *gin.Context) {
 // 仅 hermes 产品节点；jobId 可选（空返回全部），limit 可选（默认 20，daemon 侧钳制上限 100）。
 // 超时/节点不支持时仍返回 200 + 空 executions + error 字段。
 func (h *AgentHandler) ListCronExecutions(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	agent, appErr := h.store.GetAgent(userID, c.Param("id"))
+	agent, appErr := h.store.GetAgent(sc, c.Param("id"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -282,11 +282,11 @@ func (h *AgentHandler) ListCronExecutions(c *gin.Context) {
 // SetCapabilities 写回 Agent 节点的能力（技能/模型/cron）。
 // 仅 hermes 产品节点可写回；参数透传给 daemon 的 capability.set。
 func (h *AgentHandler) SetCapabilities(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	agent, appErr := h.store.GetAgent(userID, c.Param("id"))
+	agent, appErr := h.store.GetAgent(sc, c.Param("id"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -339,11 +339,11 @@ func (h *AgentHandler) SetCapabilities(c *gin.Context) {
 
 // UploadSkillFile 上传技能文件包到目标节点，返回 fileId 供后续写回 skill 时引用。
 func (h *AgentHandler) UploadSkillFile(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	agent, appErr := h.store.GetAgent(userID, c.Param("id"))
+	agent, appErr := h.store.GetAgent(sc, c.Param("id"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return

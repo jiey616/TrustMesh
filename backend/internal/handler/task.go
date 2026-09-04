@@ -884,7 +884,7 @@ func (h *TaskHandler) buildPMTaskMessage(userID, projectID, taskID, userContent 
 		return payload
 	}
 
-	candidates := buildCandidateAgents(project.PMAgent.ID, h.store.ListAgents(userID))
+	candidates := buildCandidateAgents(project.PMAgent.ID, h.store.ListAgents(store.Scope{UserID: userID}))
 	payload.Project = &protocol.PMTaskProject{
 		Name:        project.Name,
 		Description: project.Description,

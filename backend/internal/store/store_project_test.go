@@ -305,7 +305,7 @@ func TestArchiveProjectResetsInProgressWorkToPending(t *testing.T) {
 		t.Fatalf("expected failed task to stay failed, got %s", failedState.Status)
 	}
 
-	agent, appErr := s.GetAgent(userID, developer.ID)
+	agent, appErr := s.GetAgent(Scope{UserID: userID}, developer.ID)
 	if appErr != nil {
 		t.Fatalf("get developer agent: %v", appErr)
 	}

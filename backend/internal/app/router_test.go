@@ -640,11 +640,11 @@ func TestCancelTaskEndpointCancelsTaskAndRejectsLateUpdates(t *testing.T) {
 	token := nestedString(registerData, "data", "access_token")
 	userID := nestedString(registerData, "data", "user", "id")
 
-	pm, appErr := application.Store.CreateAgent(userID, "node-pm-001", "PM Agent", "pm", "PM", []string{"plan"})
+	pm, appErr := application.Store.CreateAgent(store.Scope{UserID: userID}, "node-pm-001", "PM Agent", "pm", "PM", []string{"plan"})
 	if appErr != nil {
 		t.Fatalf("create pm: %v", appErr)
 	}
-	dev, appErr := application.Store.CreateAgent(userID, "node-dev-001", "Developer", "developer", "Dev", []string{"backend"})
+	dev, appErr := application.Store.CreateAgent(store.Scope{UserID: userID}, "node-dev-001", "Developer", "developer", "Dev", []string{"backend"})
 	if appErr != nil {
 		t.Fatalf("create dev: %v", appErr)
 	}
@@ -766,11 +766,11 @@ func TestDispatchTodoPublishesAssignmentToAssignee(t *testing.T) {
 	token := nestedString(registerData, "data", "access_token")
 	userID := nestedString(registerData, "data", "user", "id")
 
-	pm, appErr := application.Store.CreateAgent(userID, "node-pm-001", "PM Agent", "pm", "PM", []string{"plan"})
+	pm, appErr := application.Store.CreateAgent(store.Scope{UserID: userID}, "node-pm-001", "PM Agent", "pm", "PM", []string{"plan"})
 	if appErr != nil {
 		t.Fatalf("create pm: %v", appErr)
 	}
-	_, appErr = application.Store.CreateAgent(userID, "node-dev-001", "Developer", "developer", "Dev", []string{"backend"})
+	_, appErr = application.Store.CreateAgent(store.Scope{UserID: userID}, "node-dev-001", "Developer", "developer", "Dev", []string{"backend"})
 	if appErr != nil {
 		t.Fatalf("create developer: %v", appErr)
 	}
@@ -938,15 +938,15 @@ func TestAddTaskCommentPublishesMentionsToTaskParticipants(t *testing.T) {
 	token := nestedString(registerData, "data", "access_token")
 	userID := nestedString(registerData, "data", "user", "id")
 
-	pm, appErr := application.Store.CreateAgent(userID, "node-pm-001", "PM Agent", "pm", "PM", []string{"plan"})
+	pm, appErr := application.Store.CreateAgent(store.Scope{UserID: userID}, "node-pm-001", "PM Agent", "pm", "PM", []string{"plan"})
 	if appErr != nil {
 		t.Fatalf("create pm: %v", appErr)
 	}
-	dev, appErr := application.Store.CreateAgent(userID, "node-dev-001", "Developer", "developer", "Dev", []string{"backend"})
+	dev, appErr := application.Store.CreateAgent(store.Scope{UserID: userID}, "node-dev-001", "Developer", "developer", "Dev", []string{"backend"})
 	if appErr != nil {
 		t.Fatalf("create dev: %v", appErr)
 	}
-	if _, appErr = application.Store.CreateAgent(userID, "node-other-001", "Other Agent", "developer", "Other", []string{"misc"}); appErr != nil {
+	if _, appErr = application.Store.CreateAgent(store.Scope{UserID: userID}, "node-other-001", "Other Agent", "developer", "Other", []string{"misc"}); appErr != nil {
 		t.Fatalf("create other agent: %v", appErr)
 	}
 	application.Store.SyncAgentPresence([]store.AgentPresence{
@@ -1101,11 +1101,11 @@ func TestDispatchTodoDoesNotPublishForArchivedProject(t *testing.T) {
 	token := nestedString(registerData, "data", "access_token")
 	userID := nestedString(registerData, "data", "user", "id")
 
-	pm, appErr := application.Store.CreateAgent(userID, "node-pm-001", "PM Agent", "pm", "PM", []string{"plan"})
+	pm, appErr := application.Store.CreateAgent(store.Scope{UserID: userID}, "node-pm-001", "PM Agent", "pm", "PM", []string{"plan"})
 	if appErr != nil {
 		t.Fatalf("create pm: %v", appErr)
 	}
-	_, appErr = application.Store.CreateAgent(userID, "node-dev-001", "Developer", "developer", "Dev", []string{"backend"})
+	_, appErr = application.Store.CreateAgent(store.Scope{UserID: userID}, "node-dev-001", "Developer", "developer", "Dev", []string{"backend"})
 	if appErr != nil {
 		t.Fatalf("create developer: %v", appErr)
 	}
@@ -1196,11 +1196,11 @@ func TestUserRealtimeStreamPushesDomainEvents(t *testing.T) {
 	token := nestedString(registerData, "data", "access_token")
 	userID := nestedString(registerData, "data", "user", "id")
 
-	pm, appErr := application.Store.CreateAgent(userID, "node-pm-001", "PM Agent", "pm", "PM", []string{"plan"})
+	pm, appErr := application.Store.CreateAgent(store.Scope{UserID: userID}, "node-pm-001", "PM Agent", "pm", "PM", []string{"plan"})
 	if appErr != nil {
 		t.Fatalf("create pm: %v", appErr)
 	}
-	dev, appErr := application.Store.CreateAgent(userID, "node-dev-001", "Developer", "developer", "Dev", []string{"backend"})
+	dev, appErr := application.Store.CreateAgent(store.Scope{UserID: userID}, "node-dev-001", "Developer", "developer", "Dev", []string{"backend"})
 	if appErr != nil {
 		t.Fatalf("create dev: %v", appErr)
 	}
@@ -1343,7 +1343,7 @@ func TestUserRealtimeStreamPushesNotificationReadLifecycle(t *testing.T) {
 	token := nestedString(registerData, "data", "access_token")
 	userID := nestedString(registerData, "data", "user", "id")
 
-	pm, appErr := application.Store.CreateAgent(userID, "node-pm-001", "PM Agent", "pm", "PM", []string{"plan"})
+	pm, appErr := application.Store.CreateAgent(store.Scope{UserID: userID}, "node-pm-001", "PM Agent", "pm", "PM", []string{"plan"})
 	if appErr != nil {
 		t.Fatalf("create pm: %v", appErr)
 	}
@@ -1450,11 +1450,11 @@ func TestGetTaskArtifactContent(t *testing.T) {
 	token := nestedString(registerData, "data", "access_token")
 	userID := nestedString(registerData, "data", "user", "id")
 
-	pm, appErr := application.Store.CreateAgent(userID, "node-pm-001", "PM Agent", "pm", "pm", []string{"plan"})
+	pm, appErr := application.Store.CreateAgent(store.Scope{UserID: userID}, "node-pm-001", "PM Agent", "pm", "pm", []string{"plan"})
 	if appErr != nil {
 		t.Fatalf("create pm: %v", appErr)
 	}
-	dev, appErr := application.Store.CreateAgent(userID, "node-dev-001", "Developer", "developer", "dev", []string{"backend"})
+	dev, appErr := application.Store.CreateAgent(store.Scope{UserID: userID}, "node-dev-001", "Developer", "developer", "dev", []string{"backend"})
 	if appErr != nil {
 		t.Fatalf("create dev: %v", appErr)
 	}
