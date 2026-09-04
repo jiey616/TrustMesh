@@ -1071,6 +1071,20 @@ func (h *WebhookHandler) handleTodoModify(c *gin.Context, webhook protocol.Webho
 	transport.WriteData(c, http.StatusOK, task)
 }
 
+// deliverScopeFromPayload converts the PM-declared delivery scope (wire
+// format) into the stored model. Returns nil when the PM declared nothing,
+// which keeps the historical "all steps required" behaviour.
+func deliverScopeFromPayload(scope *protocol.PlanDeliverScope) *model.TaskDeliverScope {
+	if scope == nil {
+		return nil
+	}
+	upTo := strings.TrimSpace(scope.UpToStep)
+	if upTo == "" {
+		return nil
+	}
+	return &model.TaskDeliverScope{UpToStep: upTo}
+}
+
 func (h *WebhookHandler) handleTaskPlanReady(c *gin.Context, webhook protocol.WebhookPayload) {
 	var payload protocol.TaskPlanReadyPayload
 	if err := decodeWebhookMessage(webhook.Message, &payload); err != nil {
@@ -1097,10 +1111,11 @@ func (h *WebhookHandler) handleTaskPlanReady(c *gin.Context, webhook protocol.We
 	}
 
 	in := store.TaskPlanReadyInput{
-		TaskID:      payload.TaskID,
-		Title:       payload.Title,
-		Description: payload.Description,
-		Todos:       make([]store.TaskCreateTodoInput, 0, len(payload.Todos)),
+		TaskID:       payload.TaskID,
+		Title:        payload.Title,
+		Description:  payload.Description,
+		Todos:        make([]store.TaskCreateTodoInput, 0, len(payload.Todos)),
+		DeliverScope: deliverScopeFromPayload(payload.DeliverScope),
 	}
 	for _, todo := range payload.Todos {
 		in.Todos = append(in.Todos, store.TaskCreateTodoInput{
@@ -1114,7 +1129,7 @@ func (h *WebhookHandler) handleTaskPlanReady(c *gin.Context, webhook protocol.We
 
 	// Enforce the task's workflow (if any) before accepting the plan.
 	if taskWithWF := h.store.GetTaskInternal(payload.TaskID); taskWithWF != nil && taskWithWF.Workflow != nil {
-		if mismatch := validatePlanAgainstWorkflow(taskWithWF.Workflow, payload.Todos, h.roleOfAgentNode); mismatch != "" {
+		if mismatch := validatePlanAgainstWorkflowWithScope(taskWithWF.Workflow, payload.Todos, h.roleOfAgentNode, deliverScopeFromPayload(payload.DeliverScope)); mismatch != "" {
 			// 收集 PM 实际提交的 todo 绑定（含原样 assignee_node_id），
 			// 让「绑定了字面量/错误节点」这类问题一眼可见。
 			submitted := make([]map[string]string, 0, len(payload.Todos))
@@ -1132,6 +1147,11 @@ func (h *WebhookHandler) handleTaskPlanReady(c *gin.Context, webhook protocol.We
 				fmt.Sprintf("⚠️ PM 规划校验未通过：%s。提交的 todos：%s。请 PM 修正 assignee_node_id 后重新提交 task.plan_ready。", mismatch, string(submittedJSON))); cErr != nil && h.log != nil {
 				h.log.Warn("append plan-reject system comment failed", zap.String("task_id", payload.TaskID), zap.Error(cErr))
 			}
+		// 422 回执在 ClawSynapse 侧不会触发 PM 的新一轮 LLM 推理（它只回一句 ACK 就停在
+		// WAITING），任务会永久卡在 planning。这里平台主动推一条 task.message 把修正指令
+		// 送进 PM 会话，让它自行重发 plan_ready（用户消息可唤醒 PM，已实证）。
+		h.notifyPMPlanRejected(c, taskWithWF, mismatch, string(submittedJSON))
+
 			transport.WriteError(c, transport.Validation("规划不符合项目工作流，请修正后重新提交 task.plan_ready", map[string]any{
 				"code":            "WORKFLOW_MISMATCH",
 				"details":         mismatch,
@@ -1149,6 +1169,60 @@ func (h *WebhookHandler) handleTaskPlanReady(c *gin.Context, webhook protocol.We
 	}
 
 	transport.WriteData(c, http.StatusOK, task)
+}
+
+// planRejectNotifyLimit 是同一个任务、同一个 mismatch 指纹最多自动催 PM 的次数，
+// 防止 PM 反复提交同一份错误规划形成推送风暴。
+const planRejectNotifyLimit = 2
+
+// notifyPMPlanRejected 在规划校验失败后主动给 PM 推一条修正指令。
+//
+// 背景：task.plan_ready 的 422 在 ClawSynapse 侧以 task.error 形式回投，不会触发
+// PM 的新一轮 LLM 推理 —— PM 停在 WAITING，任务永久卡在 planning 且 todos 为 0。
+// 而 task.message（用户消息通道）能唤醒 PM，因此由平台代发修正指令。
+// 节流：同一 (task, mismatch 指纹) 最多自动催 planRejectNotifyLimit 次。
+func (h *WebhookHandler) notifyPMPlanRejected(c *gin.Context, task *model.TaskDetail, mismatch, submittedTodos string) {
+	if h.client == nil || task == nil {
+		return
+	}
+	if !h.store.ClaimPlanRejectNotify(task.ID, mismatch, planRejectNotifyLimit) {
+		if h.log != nil {
+			h.log.Warn("plan-reject auto-notify throttled", zap.String("task_id", task.ID))
+		}
+		return
+	}
+	pmNodeID, appErr := h.store.GetTaskPMPublishTarget(task.UserID, task.ID)
+	if appErr != nil {
+		if h.log != nil {
+			h.log.Warn("skip plan-reject notify", zap.String("task_id", task.ID), zap.String("code", appErr.Code))
+		}
+		return
+	}
+	instruction := fmt.Sprintf(
+		"你刚才提交的 task.plan_ready 被平台校验拒绝，规划未生效，任务仍停留在 planning（todo 数为 0）。\n\n"+
+		"拒绝原因：%s\n\n"+
+		"你提交的 todos：%s\n\n"+
+		"请按拒绝原因修正后，立即重新发送 task.plan_ready（不要回到澄清流程，需求已经确认过）。\n"+
+		"若缺少的步骤是用户明确表示不需要的尾部步骤，请在 task.plan_ready 中声明 deliver_scope.up_to_step 为你打算止步的那一步（该步骤名必须真实存在于工作流中）。",
+		mismatch, submittedTodos)
+	payload := protocol.PMTaskMessage{
+		SchemaVersion: "1.0",
+		TaskID:        task.ID,
+		ProjectID:     task.ProjectID,
+		Content:       instruction,
+		UserContent:   instruction,
+		IsInitial:     false,
+		Workflow:      task.Workflow,
+	}
+	if _, err := h.client.Publish(c.Request.Context(), pmNodeID, "task.message", payload, task.ID, nil); err != nil {
+		if h.log != nil {
+			h.log.Warn("plan-reject notify publish failed", zap.String("task_id", task.ID), zap.Error(err))
+		}
+		return
+	}
+	if h.log != nil {
+		h.log.Info("plan-reject auto-notify sent", zap.String("task_id", task.ID), zap.String("pm_node", pmNodeID))
+	}
 }
 
 func (h *WebhookHandler) handleTodoProgress(c *gin.Context, webhook protocol.WebhookPayload) {
@@ -1400,6 +1474,44 @@ func (h *WebhookHandler) RemindTodo(ctx context.Context, taskID, todoID string) 
 	if _, err := h.client.Publish(ctx, todo.Assignee.NodeID, "todo.remind", payload, task.ID, map[string]any{"source": "timeout_remind"}); err != nil {
 		if h.log != nil {
 			h.log.Warn("timeout reminder failed", zap.String("task_id", task.ID), zap.String("todo_id", todo.ID), zap.String("target_node", todo.Assignee.NodeID), zap.Error(err))
+		}
+	}
+}
+
+// NudgePlanningPM is the planning-stall hook: the store timeout monitor calls
+// it when a task has been stuck in planning (no finalized plan, PM owes a
+// response) for planningStallTimeout. It publishes a task.message to the PM
+// (the only channel proven to wake the PM into a new LLM turn) so it resumes
+// planning.
+func (h *WebhookHandler) NudgePlanningPM(ctx context.Context, taskID string) {
+	if h == nil || h.client == nil {
+		return
+	}
+	task := h.store.GetTaskInternal(taskID)
+	if task == nil {
+		return
+	}
+	pmNodeID, appErr := h.store.GetTaskPMPublishTarget(task.UserID, task.ID)
+	if appErr != nil {
+		if h.log != nil {
+			h.log.Warn("skip planning-stall nudge", zap.String("task_id", taskID), zap.String("code", appErr.Code))
+		}
+		return
+	}
+	instruction := "【规划停滞提醒】这是对既有任务《" + task.Title + "》的规划催办，不是新任务指派。任务已较长时间停留在规划阶段且尚未产生任何 Todo。" +
+		"请检查你上一轮的 task.plan_ready 是否被拒绝或尚未提交：若被拒绝，请按拒绝原因修正后重新发送 task.plan_ready；若尚未提交，请立即提交（需求已经确认过，不要回到澄清流程）。" +
+		"若用户明确只要交付到某个步骤为止，请在 task.plan_ready 中声明 deliver_scope.up_to_step。多次提醒无响应平台将标记该任务待人工介入。"
+	payload := protocol.PMTaskMessage{
+		SchemaVersion: "1.0",
+		TaskID:        task.ID,
+		ProjectID:     task.ProjectID,
+		Content:       instruction,
+		UserContent:   instruction,
+		IsInitial:     false,
+	}
+	if _, err := h.client.Publish(ctx, pmNodeID, "task.message", payload, task.ID, map[string]any{"source": "planning_stall"}); err != nil {
+		if h.log != nil {
+			h.log.Warn("planning-stall nudge publish failed", zap.String("task_id", taskID), zap.String("target_node", pmNodeID), zap.Error(err))
 		}
 	}
 }

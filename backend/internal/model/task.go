@@ -238,6 +238,9 @@ type TaskDetail struct {
 	// contiguous step range (by index into the workflow's Steps) this task
 	// owns. Empty when the task is not part of a project pipeline.
 	WorkflowRef   *WorkflowRef       `json:"workflow_ref,omitempty" bson:"workflow_ref,omitempty"`
+	// DeliverScope 记录 PM 声明的交付终点步骤（部分交付场景，如「只要到资产图」）。
+	// 为空表示全量交付。仅作记录与审计，不参与派发。
+	DeliverScope  *TaskDeliverScope  `json:"deliver_scope,omitempty" bson:"deliver_scope,omitempty"`
 	PMAgentID     string             `json:"-" bson:"pm_agent_id"`
 	PMAgent       PMAgentSummary     `json:"pm_agent" bson:"pm_agent"`
 	Messages      []TaskMessage      `json:"messages,omitempty" bson:"messages,omitempty"`
@@ -260,6 +263,12 @@ type TaskAttachedFile struct {
 	FileSize int64  `json:"file_size" bson:"file_size"`
 	MimeType string `json:"mime_type" bson:"mime_type"`
 	Source   string `json:"source" bson:"source"` // "user_upload" | "agent_artifact"
+}
+
+// TaskDeliverScope 记录任务的交付范围：规划只覆盖到工作流的 UpToStep 步（含）为止。
+// 由 PM 在 task.plan_ready 的 deliver_scope 中声明；为空表示全量交付。
+type TaskDeliverScope struct {
+	UpToStep string `json:"up_to_step" bson:"up_to_step"`
 }
 
 func (t *TaskDetail) NextDispatchableTodo() *Todo {

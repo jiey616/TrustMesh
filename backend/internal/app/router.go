@@ -50,6 +50,9 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	s.SetDispatchHook(webhookHandler.RedispatchTodo)
 	// Timeout reminders nudge the assignee without re-dispatching the todo.
 	s.SetRemindHook(webhookHandler.RemindTodo)
+	// Planning-stall nudges wake the PM via task.message when a task has been
+	// stuck in planning without a finalized plan.
+	s.SetPlanningStallHook(webhookHandler.NudgePlanningPM)
 	peerSyncer := clawsynapse.NewPeerSyncer(clawClient, s, cfg.ClawSynapsePeerSync, log)
 	if peerSyncer != nil {
 		peerSyncer.Start()

@@ -46,6 +46,16 @@ type TaskPlanReadyPayload struct {
 	Title       string                  `json:"title"`
 	Description string                  `json:"description"`
 	Todos       []TaskCreateTodoPayload `json:"todos"`
+	// DeliverScope 允许 PM 声明本次交付到工作流的哪一步为止（用户只要求部分交付时）。
+	// 为空表示必须覆盖工作流的全部步骤（历史行为）。
+	DeliverScope *PlanDeliverScope `json:"deliver_scope,omitempty"`
+}
+
+// PlanDeliverScope 声明任务规划的交付范围。
+// UpToStep 是工作流中的步骤名（如「资产制作」）：校验时只要求覆盖到该步（含）
+// 为止，其后的步骤允许不规划。UpToStep 必须真实存在于工作流中，否则为无效声明。
+type PlanDeliverScope struct {
+	UpToStep string `json:"up_to_step,omitempty"`
 }
 
 type TaskCreateTodoPayload struct {

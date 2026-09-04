@@ -16,6 +16,22 @@ type agentRoleResolver func(nodeID string) (role, name, agentID string, ok bool)
 // workflow. It returns "" when the plan conforms, or a Chinese mismatch
 // description (missing step / wrong order / role mismatch) for the PM to fix.
 //
+// This is the full-coverage variant: every workflow step must have a todo.
+// See validatePlanAgainstWorkflowWithScope for partial-delivery plans.
+func validatePlanAgainstWorkflow(wf *model.Workflow, todos []protocol.TaskCreateTodoPayload, roleOf agentRoleResolver) string {
+	return validatePlanAgainstWorkflowWithScope(wf, todos, roleOf, nil)
+}
+
+// validatePlanAgainstWorkflowWithScope is validatePlanAgainstWorkflow with an
+// optional delivery scope. When scope.UpToStep names a real workflow step, only
+// the steps up to and including it are required — later steps may be omitted.
+// This powers "user only wants delivery up to step X" (e.g. 只到资产图).
+//
+// Constraints (guards against PM abusing scope to bypass validation):
+//   - UpToStep must exist in the workflow, otherwise the declaration is invalid
+//   - only the TAIL may be truncated; skipping a middle step is still rejected
+//     (the greedy sequential match below never allows out-of-order skips)
+//
 // Step binding: step.AgentID (exact agent) takes precedence; otherwise the
 // step's Role is fuzzy-matched against the todo assignee's role or name.
 //
@@ -26,10 +42,24 @@ type agentRoleResolver func(nodeID string) (role, name, agentID string, ok bool)
 //     an order violation (the future role appeared too early)
 //   - a todo matching no pending step is an extra todo (allowed: splits,
 //     clarifications, checks)
-//   - after the walk, any step not consumed => missing step
-func validatePlanAgainstWorkflow(wf *model.Workflow, todos []protocol.TaskCreateTodoPayload, roleOf agentRoleResolver) string {
+//   - after the walk, any required step not consumed => missing step
+func validatePlanAgainstWorkflowWithScope(wf *model.Workflow, todos []protocol.TaskCreateTodoPayload, roleOf agentRoleResolver, scope *model.TaskDeliverScope) string {
 	if wf == nil || len(wf.Steps) == 0 {
 		return ""
+	}
+
+	// Resolve the delivery scope: by default every step is required.
+	limit := len(wf.Steps)
+	if scope != nil {
+		upTo := strings.TrimSpace(scope.UpToStep)
+		if upTo != "" {
+			idx := indexOfWorkflowStep(wf.Steps, upTo)
+			if idx < 0 {
+				return fmt.Sprintf("交付范围声明无效：工作流中不存在步骤「%s」", upTo)
+			}
+			// Only the tail may be dropped: steps [0, idx] remain required.
+			limit = idx + 1
+		}
 	}
 
 	// Resolve each todo's assignee: role \x00 name \x00 agentID ("" if unknown).
@@ -47,8 +77,8 @@ func validatePlanAgainstWorkflow(wf *model.Workflow, todos []protocol.TaskCreate
 	consumed := make([]bool, len(wf.Steps))
 
 	for _, m := range roleOfTodo {
-		if cur >= len(wf.Steps) {
-			break // remaining todos are extras
+		if cur >= limit {
+			break // remaining todos are extras (or beyond the declared scope)
 		}
 		parts := strings.SplitN(m, "\x00", 3)
 		role, name, agentID := "", "", ""
@@ -65,7 +95,7 @@ func validatePlanAgainstWorkflow(wf *model.Workflow, todos []protocol.TaskCreate
 
 		// 2) Matches a FUTURE step while predecessors are unmatched -> order bug.
 		future := -1
-		for k := cur + 1; k < len(wf.Steps); k++ {
+		for k := cur + 1; k < limit; k++ {
 			if stepMatches(wf.Steps[k], role, name, agentID) {
 				future = k
 				break
@@ -80,14 +110,30 @@ func validatePlanAgainstWorkflow(wf *model.Workflow, todos []protocol.TaskCreate
 	// Missing steps?
 	var missing []string
 	for si, step := range wf.Steps {
+		if si >= limit {
+			break // steps after the declared delivery scope are not required
+		}
 		if !consumed[si] {
 			missing = append(missing, fmt.Sprintf("「%s」（角色：%s）", step.Name, step.Role))
 		}
 	}
 	if len(missing) > 0 {
+		if limit < len(wf.Steps) {
+			return "缺少工作流步骤对应的 todo（声明交付到「" + strings.TrimSpace(scope.UpToStep) + "」，该步及之前缺）：" + strings.Join(missing, "、")
+		}
 		return "缺少工作流步骤对应的 todo：" + strings.Join(missing, "、")
 	}
 	return ""
+}
+
+// indexOfWorkflowStep returns the index of the step with the given name, or -1.
+func indexOfWorkflowStep(steps []model.WorkflowStep, name string) int {
+	for i, s := range steps {
+		if strings.TrimSpace(s.Name) == name {
+			return i
+		}
+	}
+	return -1
 }
 
 // stepMatches checks whether a todo's assignee (role/name/agentID) satisfies a

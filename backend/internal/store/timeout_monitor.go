@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"context"
 	"time"
 
@@ -17,6 +18,9 @@ const (
 	defaultMeetingIdleTimeout = 30 * time.Minute // meeting idle (no new message) timeout
 	defaultMaxRetries         = 3                // max retries before permanent failure
 	defaultMaxReworks         = 3                // max reworks before permanent failure
+
+	planningStallTimeout = 15 * time.Minute // planning 无进展（PM 欠回复）判定
+	planningMaxReminders = 2                // planning 停滞最多自动催 PM 次数
 )
 
 // StartTimeoutMonitor runs a background goroutine that periodically scans for
@@ -39,6 +43,7 @@ func (s *Store) StartTimeoutMonitor(ctx context.Context) {
 		case <-ticker.C:
 			s.checkTodoTimeouts()
 			s.checkMeetingTimeouts()
+			s.checkPlanningTimeouts()
 		}
 	}
 }
@@ -183,6 +188,84 @@ func (s *Store) checkTodoTimeouts() {
 	for _, r := range reminds {
 		if s.remindHook != nil {
 			s.remindHook(context.Background(), r.taskID, r.todoID)
+		}
+	}
+}
+
+// checkPlanningTimeouts scans tasks stuck in planning with no finalized plan
+// (todos == 0) where the PM owes a response — i.e. the LAST task message is a
+// user message (or there are no messages at all). A task whose last message
+// came from the PM is a clarification questionnaire waiting for the USER,
+// which is normal idle and must NOT be nudged. Stalled tasks get up to
+// planningMaxReminders automatic nudges (via planningStallHook, one per
+// defaultRemindInterval); after the last one a system comment flags the task
+// for human attention. We deliberately do NOT auto-fail planning tasks: a
+// failed task here would most likely just be recreated by the user.
+func (s *Store) checkPlanningTimeouts() {
+	now := time.Now().UTC()
+	cutoff := now.Add(-planningStallTimeout)
+
+	var nudges []string
+	var flagged []string
+
+	s.mu.Lock()
+	// Lazy cleanup: drop throttle state for tasks that left planning.
+	for id := range s.planningStallCount {
+		t, ok := s.tasks[id]
+		if !ok || t.Status != "planning" {
+			delete(s.planningStallCount, id)
+			delete(s.planningStallLastRemind, id)
+		}
+	}
+	for _, task := range s.tasks {
+		if task.Status != "planning" || len(task.Todos) > 0 {
+			continue
+		}
+		last := task.UpdatedAt
+		if last.IsZero() {
+			last = task.CreatedAt
+		}
+		if last.After(cutoff) {
+			continue // recent activity, not stalled
+		}
+		// Trap guard: PM's last message is a reply/question → waiting for the
+		// user to answer. That is normal idle; nudging the PM here would just
+		// make it re-ask the same questionnaire.
+		if n := len(task.Messages); n > 0 && task.Messages[n-1].Role == "pm_agent" {
+			continue
+		}
+		count := s.planningStallCount[task.ID]
+		if count >= planningMaxReminders {
+			continue // already nudged max times and flagged
+		}
+		if lr, seen := s.planningStallLastRemind[task.ID]; seen && lr.Add(defaultRemindInterval).After(now) {
+			continue // remind interval not yet elapsed
+		}
+		s.planningStallCount[task.ID] = count + 1
+		s.planningStallLastRemind[task.ID] = now
+		nudges = append(nudges, task.ID)
+		if count+1 >= planningMaxReminders {
+			flagged = append(flagged, task.ID)
+		}
+		if s.log != nil {
+			s.log.Warn("planning stalled, sending nudge",
+				zap.String("task_id", task.ID),
+				zap.Int("nudge_count", count+1),
+				zap.Int("max_reminders", planningMaxReminders),
+			)
+		}
+	}
+	s.mu.Unlock()
+
+	for _, id := range nudges {
+		if s.planningStallHook != nil {
+			s.planningStallHook(context.Background(), id)
+		}
+	}
+	for _, id := range flagged {
+		comment := fmt.Sprintf("⚠️ 规划阶段停滞：PM 长时间未提交有效规划，平台已自动催办 %d 次仍无响应，已标记待人工介入。", planningMaxReminders)
+		if _, err := s.AppendSystemTaskComment(id, comment); err != nil && s.log != nil {
+			s.log.Warn("append planning-stall comment failed", zap.String("task_id", id), zap.Error(err))
 		}
 	}
 }

@@ -18,6 +18,8 @@ type TaskPlanReadyInput struct {
 	Title       string
 	Description string
 	Todos       []TaskCreateTodoInput
+	// DeliverScope 可选：声明本次交付到工作流的哪一步为止（部分交付）。
+	DeliverScope *model.TaskDeliverScope
 }
 
 func (s *Store) CreateTaskPlanning(userID, projectID, content string) (*model.TaskDetail, *transport.AppError) {
@@ -355,6 +357,7 @@ func (s *Store) FinalizePlanByPMNode(nodeID, messageID string, in TaskPlanReadyI
 	// Update task: planning → review (awaiting user approval)
 	task.Title = in.Title
 	task.Description = in.Description
+	task.DeliverScope = in.DeliverScope
 	task.Status = "review"
 	task.Todos = todos
 	task.UpdatedAt = now
@@ -464,7 +467,25 @@ func (s *Store) RejectPlan(userID, taskID, feedback string) (*model.TaskDetail, 
 	return s.copyTaskWithArtifactsUnsafe(task), nil
 }
 
+// ClaimPlanRejectNotify 对「任务 + 规划被拒指纹」做进程内节流：同一指纹自动催 PM
+// 的次数未超过 max 时，计数 +1 并返回 true（允许推送）；否则返回 false。
+// fingerprint 用 mismatch 文本本身（同一原因重提只催有限次，换原因则重新计）。
+func (s *Store) ClaimPlanRejectNotify(taskID, fingerprint string, max int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.planRejectNotify == nil {
+		s.planRejectNotify = make(map[string]int)
+	}
+	key := taskID + "\x00" + fingerprint
+	if s.planRejectNotify[key] >= max {
+		return false
+	}
+	s.planRejectNotify[key]++
+	return true
+}
+
 // GetTaskPMPublishTarget returns the PM agent node ID for a planning task.
+
 func (s *Store) GetTaskPMPublishTarget(userID, taskID string) (string, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

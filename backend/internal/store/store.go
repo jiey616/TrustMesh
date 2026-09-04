@@ -37,6 +37,16 @@ type Store struct {
 	agentChats         map[string]*model.AgentChat
 	activeAgentChats   map[string]string
 	agentChatBySession map[string]string
+	// planRejectNotify 记录「任务+规划被拒指纹」已自动催 PM 的次数（进程内节流）。
+	planRejectNotify map[string]int
+	// planningStallHook is set by the app layer to nudge the PM when a task
+	// has been stuck in planning (no finalized plan, PM owes a response).
+	// Runs outside the store lock.
+	planningStallHook func(ctx context.Context, taskID string)
+	// planningStallCount / planningStallLastRemind are in-memory per-task
+	// throttle state for the planning-stall monitor.
+	planningStallCount      map[string]int
+	planningStallLastRemind map[string]time.Time
 	tasks              map[string]*model.TaskDetail
 	projectTasks       map[string][]string
 	taskEvents         map[string][]model.Event
@@ -135,6 +145,13 @@ func (s *Store) SetRemindHook(hook func(ctx context.Context, taskID, todoID stri
 	s.remindHook = hook
 }
 
+// SetPlanningStallHook registers a callback used to nudge the PM when a task
+// has been stuck in planning without a finalized plan. The hook runs outside
+// the store lock.
+func (s *Store) SetPlanningStallHook(hook func(ctx context.Context, taskID string)) {
+	s.planningStallHook = hook
+}
+
 func New() *Store {
 	return &Store{
 		users:              make(map[string]*model.User),
@@ -145,6 +162,9 @@ func New() *Store {
 		agentChats:         make(map[string]*model.AgentChat),
 		activeAgentChats:   make(map[string]string),
 		agentChatBySession: make(map[string]string),
+		planRejectNotify:   make(map[string]int),
+		planningStallCount:      make(map[string]int),
+		planningStallLastRemind: make(map[string]time.Time),
 		tasks:              make(map[string]*model.TaskDetail),
 		projectTasks:       make(map[string][]string),
 		taskEvents:         make(map[string][]model.Event),
