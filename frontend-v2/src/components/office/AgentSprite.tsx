@@ -116,9 +116,9 @@ export function AgentSprite({ visual, slot, color, onClick }: AgentSpriteProps) 
     () =>
       makeLabelTexture(visual.name, {
         fontSize: 38,
-        color: visual.presence === 'offline' ? 'var(--text-tertiary)' : 'var(--text-primary)',
+        color: visual.presence === 'offline' ? 'rgba(255,255,255,0.55)' : '#f4f4f8',
         background: 'rgba(10,10,18,0.74)',
-        borderColor: 'var(--line-strong)',
+        borderColor: 'rgba(255,255,255,0.12)',
         bold: true,
       }),
     [visual.name, visual.presence],
@@ -141,9 +141,9 @@ export function AgentSprite({ visual, slot, color, onClick }: AgentSpriteProps) 
           : STATUS_LABEL[visual.state],
         {
           fontSize: 30,
-          color: 'var(--text-inverse)',
-          background: dimmed ? 'var(--surface-raised)' : stateColor,
-          borderColor: dimmed ? 'var(--line-strong)' : stateColor,
+          color: dimmed ? 'rgba(255,255,255,0.7)' : 'rgba(10,10,18,0.92)',
+          background: dimmed ? '#2a2f4a' : stateColor,
+          borderColor: dimmed ? 'rgba(255,255,255,0.12)' : stateColor,
           paddingX: 18,
           paddingY: 8,
           bold: true,
@@ -161,10 +161,10 @@ export function AgentSprite({ visual, slot, color, onClick }: AgentSpriteProps) 
     () =>
       bubbleText
         ? makeBubbleTexture(bubbleText, {
-            color: visual.bubbleKind === 'question' ? 'var(--text-inverse)' : 'var(--text-primary)',
+            color: visual.bubbleKind === 'question' ? 'rgba(10,10,18,0.92)' : '#f4f4f8',
             background:
               visual.bubbleKind === 'question' ? '#f59e0b' : 'rgba(20,20,34,0.92)',
-            borderColor: visual.bubbleKind === 'question' ? 'var(--warning)' : stateColor,
+            borderColor: visual.bubbleKind === 'question' ? '#f59e0b' : stateColor,
           })
         : null,
     [bubbleText, visual.bubbleKind, stateColor],
@@ -183,9 +183,9 @@ export function AgentSprite({ visual, slot, color, onClick }: AgentSpriteProps) 
       visual.sticker
         ? makeLabelTexture(visual.sticker === 'failed' ? '！' : '✓', {
             fontSize: 64,
-            color: visual.sticker === 'failed' ? 'var(--error)' : 'var(--success)',
+            color: visual.sticker === 'failed' ? '#fca5a5' : '#bbf7d0',
             background: visual.sticker === 'failed' ? '#7f1d1d' : '#065f46',
-            borderColor: visual.sticker === 'failed' ? 'var(--error)' : 'var(--success)',
+            borderColor: visual.sticker === 'failed' ? '#fca5a5' : '#bbf7d0',
           })
         : null,
     [visual.sticker],
