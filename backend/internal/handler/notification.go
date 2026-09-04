@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"trustmesh/backend/internal/middleware"
 	"trustmesh/backend/internal/store"
 	"trustmesh/backend/internal/transport"
 )
@@ -17,13 +18,10 @@ func NewNotificationHandler(s *store.Store) *NotificationHandler {
 }
 
 func (h *NotificationHandler) List(c *gin.Context) {
-	userID, ok := currentUserID(c)
-	if !ok {
-		return
-	}
+	sc := middleware.Scope(c)
 	filter := c.DefaultQuery("filter", "recent")
 	limit := queryInt(c, "limit", 50)
-	items, appErr := h.store.ListNotifications(userID, filter, limit)
+	items, appErr := h.store.ListNotifications(sc, filter, limit)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -32,20 +30,14 @@ func (h *NotificationHandler) List(c *gin.Context) {
 }
 
 func (h *NotificationHandler) UnreadCount(c *gin.Context) {
-	userID, ok := currentUserID(c)
-	if !ok {
-		return
-	}
-	count := h.store.UnreadNotificationCount(userID)
+	sc := middleware.Scope(c)
+	count := h.store.UnreadNotificationCount(sc)
 	transport.WriteData(c, http.StatusOK, map[string]int{"count": count})
 }
 
 func (h *NotificationHandler) MarkRead(c *gin.Context) {
-	userID, ok := currentUserID(c)
-	if !ok {
-		return
-	}
-	appErr := h.store.MarkNotificationRead(userID, c.Param("id"))
+	sc := middleware.Scope(c)
+	appErr := h.store.MarkNotificationRead(sc, c.Param("id"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -54,10 +46,7 @@ func (h *NotificationHandler) MarkRead(c *gin.Context) {
 }
 
 func (h *NotificationHandler) MarkAllRead(c *gin.Context) {
-	userID, ok := currentUserID(c)
-	if !ok {
-		return
-	}
-	count := h.store.MarkAllNotificationsRead(userID)
+	sc := middleware.Scope(c)
+	count := h.store.MarkAllNotificationsRead(sc)
 	transport.WriteData(c, http.StatusOK, map[string]int{"marked": count})
 }

@@ -559,7 +559,7 @@ func SystemScope() Scope { return Scope{System: true} }
 | 2-5a | File（project_file + artifact 绑定） | ✅ 已上线 |
 | 2-5b | Comment + Meeting | ✅ 已上线 |
 | 2-6 | JoinRequest + ExternalApp | ✅ 已上线 |
-| 2-7 | Event + Notification 分区 map（§4.3） | ⬜ 待开工 |
+| 2-7 | Event + Notification 分区 map（§4.3） | ✅ 已上线 |
 
 
 
@@ -602,6 +602,38 @@ func SystemScope() Scope { return Scope{System: true} }
 - JoinRequest 列表 × 3 种租户头：无头 200 / 真实头 200 / 伪头 401，集合差集 0。
 - ExternalApp 列表 + 详情 × 3 种租户头：同上，集合差集 0；创建→详情→删除闭环。
 - 零 5xx 零 error。
+
+### 阶段 2-7 Event + Notification（commit 见 git log，已上线）—— 阶段 2 收官
+
+#### 改动面
+- Event 域已在 2-2 收敛（`ListTaskEvents` / `ListUserEvents` / `ListAgentEvents`），
+  本批无需改动。
+- `notification.go` 4 个函数收 Scope：`ListNotifications` / `UnreadNotificationCount` /
+  `MarkNotificationRead` / `MarkAllNotificationsRead`。
+- handler `notification.go` 4 处鉴权行 + 4 处调用点。
+
+#### 归属语义：通知是 user 维度 feed
+- 通知天然发就发给某个人（`userNotifications` 分区 map 按 userID 索引），
+  **不按租户共享、不因租户上下文改变归属** —— 与 2-3 会话、2-2 ListUserEvents 同款语义。
+- 分区 map 保留（无租户头零开销；有租户头也不需要全量扫描 —— 通知不存在
+  「同租户成员可见」场景）。收 Scope 参数只为调用侧统一，`MarkNotificationRead`
+  原有的 `n.UserID != userID` 校验就是归属校验。
+- 写路径（`addEventUnsafe` / `maybeCreateNotificationUnsafe`）是 agent 内部路径，
+  `OrgID` 挂目标用户个人租户 —— 与 JoinRequest 同款，阶段 3 节点 org 绑定后收口。
+
+#### 测试（1 个新增）
+`TestNotificationUserScopedFeed`：本人无头/带头都可见、他人不可见、
+跨用户标记已读被拒、本人标记成功、全部已读幂等。
+
+#### 部署冒烟
+通知列表 + 未读数 × 3 种租户头：无头 200 / 真实头 200 / 伪头 401；
+无头与真实头集合差集 0（50=50 条），未读数一致（20=20）；零 5xx 零 error。
+
+#### 🎉 阶段 2 全部完成
+2-1 Project / 2-2 Task / 2-3 Agent / 2-4 Knowledge+Template / 2-5a File /
+2-5b Comment+Meeting / 2-6 JoinRequest+ExternalApp / 2-7 Event+Notification
+共 8 批全部上线，累计 25 个新测试。剩余：阶段 3（节点 org 绑定，跨仓库）、
+阶段 4（前端双轨）、阶段 5（越权测试）。
 
 ## 阶段 3 — 节点 org 绑定与 NATS 隔离（🔴 **跨仓库 + 跨环境**）
 

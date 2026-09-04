@@ -1449,3 +1449,59 @@ func TestExternalAppScopedVisibility(t *testing.T) {
 		t.Fatalf("u1 without org ctx should see own app, got %d", len(got))
 	}
 }
+func TestNotificationUserScopedFeed(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	orgB, _ := s.CreateOrganization("u9", "Globex", "globex", model.OrgKindEnterprise)
+
+	// 内部路径触发一条通知（agent 把任务标记为 done）
+	s.mu.Lock()
+	s.addEventUnsafe("u1", "p1", "t1", "", "agent", "a1", "Agent",
+		"task_status_changed", nil, map[string]any{"to": "done"}, time.Now().UTC())
+	s.mu.Unlock()
+
+	// 无租户头：本人可见
+	items, err := s.ListNotifications(Scope{UserID: "u1"}, "", 10)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("u1 without org ctx should see own notification, got %d err=%v", len(items), err)
+	}
+	// 有租户头：通知是 user 维度 feed，不因租户上下文改变归属
+	items, _ = s.ListNotifications(Scope{UserID: "u1", OrgID: orgA.ID}, "", 10)
+	if len(items) != 1 {
+		t.Fatalf("u1 under org ctx should still see own notification, got %d", len(items))
+	}
+	if s.UnreadNotificationCount(Scope{UserID: "u1", OrgID: orgA.ID}) != 1 {
+		t.Fatal("unread count should be 1 for owner")
+	}
+
+	// 他人不可见（无论带什么头）
+	otherItems, _ := s.ListNotifications(Scope{UserID: "u9", OrgID: orgB.ID}, "", 10)
+	if len(otherItems) != 0 {
+		t.Fatalf("orgB member must not see u1 notifications, got %d", len(otherItems))
+	}
+	if s.UnreadNotificationCount(Scope{UserID: "u9", OrgID: orgB.ID}) != 0 {
+		t.Fatal("unread count must be 0 for orgB member")
+	}
+	// 跨用户标记已读被拒（用本人列表里的真实 id）
+	if err := s.MarkNotificationRead(Scope{UserID: "u9", OrgID: orgB.ID}, items2ID(items, 0)); err == nil {
+		t.Fatal("cross-user mark read must fail")
+	}
+	// 本人标记已读成功
+	if err := s.MarkNotificationRead(Scope{UserID: "u1", OrgID: orgA.ID}, items2ID(items, 0)); err != nil {
+		t.Fatalf("owner mark read: %v", err)
+	}
+	if s.UnreadNotificationCount(Scope{UserID: "u1", OrgID: orgA.ID}) != 0 {
+		t.Fatal("unread count should drop to 0 after mark read")
+	}
+	// 全部已读幂等
+	if n := s.MarkAllNotificationsRead(Scope{UserID: "u1", OrgID: orgA.ID}); n != 0 {
+		t.Fatalf("mark all should be idempotent, marked %d", n)
+	}
+}
+
+func items2ID(items []model.Notification, i int) string {
+	if i < len(items) {
+		return items[i].ID
+	}
+	return ""
+}
