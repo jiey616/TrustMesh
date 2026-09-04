@@ -653,7 +653,7 @@ func TestCancelTaskEndpointCancelsTaskAndRejectsLateUpdates(t *testing.T) {
 		{NodeID: dev.NodeID, LastSeenAt: time.Now().UTC()},
 	}, time.Now().UTC())
 
-	project, appErr := application.Store.CreateProject(userID, "Cancel Project", "demo", pm.ID)
+	project, appErr := application.Store.CreateProject(store.Scope{UserID: userID}, "Cancel Project", "demo", pm.ID)
 	if appErr != nil {
 		t.Fatalf("create project: %v", appErr)
 	}
@@ -779,7 +779,7 @@ func TestDispatchTodoPublishesAssignmentToAssignee(t *testing.T) {
 		{NodeID: "node-dev-001", LastSeenAt: time.Now().UTC()},
 	}, time.Now().UTC())
 
-	project, appErr := application.Store.CreateProject(userID, "Dispatch Project", "demo", pm.ID)
+	project, appErr := application.Store.CreateProject(store.Scope{UserID: userID}, "Dispatch Project", "demo", pm.ID)
 	if appErr != nil {
 		t.Fatalf("create project: %v", appErr)
 	}
@@ -954,7 +954,7 @@ func TestAddTaskCommentPublishesMentionsToTaskParticipants(t *testing.T) {
 		{NodeID: dev.NodeID, LastSeenAt: time.Now().UTC()},
 	}, time.Now().UTC())
 
-	project, appErr := application.Store.CreateProject(userID, "Mention Project", "demo", pm.ID)
+	project, appErr := application.Store.CreateProject(store.Scope{UserID: userID}, "Mention Project", "demo", pm.ID)
 	if appErr != nil {
 		t.Fatalf("create project: %v", appErr)
 	}
@@ -1114,7 +1114,7 @@ func TestDispatchTodoDoesNotPublishForArchivedProject(t *testing.T) {
 		{NodeID: "node-dev-001", LastSeenAt: time.Now().UTC()},
 	}, time.Now().UTC())
 
-	project, appErr := application.Store.CreateProject(userID, "Archived Dispatch Project", "demo", pm.ID)
+	project, appErr := application.Store.CreateProject(store.Scope{UserID: userID}, "Archived Dispatch Project", "demo", pm.ID)
 	if appErr != nil {
 		t.Fatalf("create project: %v", appErr)
 	}
@@ -1138,7 +1138,7 @@ func TestDispatchTodoDoesNotPublishForArchivedProject(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("finalize plan: %v", appErr)
 	}
-	if _, appErr := application.Store.ArchiveProject(userID, project.ID); appErr != nil {
+	if _, appErr := application.Store.ArchiveProject(store.Scope{UserID: userID}, project.ID); appErr != nil {
 		t.Fatalf("archive project: %v", appErr)
 	}
 
@@ -1209,7 +1209,7 @@ func TestUserRealtimeStreamPushesDomainEvents(t *testing.T) {
 		{NodeID: dev.NodeID, LastSeenAt: time.Now().UTC()},
 	}, time.Now().UTC())
 
-	project, appErr := application.Store.CreateProject(userID, "Realtime Project", "demo", pm.ID)
+	project, appErr := application.Store.CreateProject(store.Scope{UserID: userID}, "Realtime Project", "demo", pm.ID)
 	if appErr != nil {
 		t.Fatalf("create project: %v", appErr)
 	}
@@ -1351,7 +1351,7 @@ func TestUserRealtimeStreamPushesNotificationReadLifecycle(t *testing.T) {
 		{NodeID: pm.NodeID, LastSeenAt: time.Now().UTC()},
 	}, time.Now().UTC())
 
-	project, appErr := application.Store.CreateProject(userID, "Notification Project", "demo", pm.ID)
+	project, appErr := application.Store.CreateProject(store.Scope{UserID: userID}, "Notification Project", "demo", pm.ID)
 	if appErr != nil {
 		t.Fatalf("create project: %v", appErr)
 	}
@@ -1463,7 +1463,7 @@ func TestGetTaskArtifactContent(t *testing.T) {
 		{NodeID: dev.NodeID, LastSeenAt: time.Now().UTC()},
 	}, time.Now().UTC())
 
-	project, appErr := application.Store.CreateProject(userID, "Artifacts", "demo", pm.ID)
+	project, appErr := application.Store.CreateProject(store.Scope{UserID: userID}, "Artifacts", "demo", pm.ID)
 	if appErr != nil {
 		t.Fatalf("create project: %v", appErr)
 	}

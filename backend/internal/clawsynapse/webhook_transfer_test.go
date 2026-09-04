@@ -35,7 +35,7 @@ func newTransferTestFixture(t *testing.T) (*store.Store, string, string, string)
 		{NodeID: dev.NodeID, LastSeenAt: time.Now().UTC()},
 		{NodeID: pm.NodeID, LastSeenAt: time.Now().UTC()},
 	}, time.Now().UTC())
-	proj, appErr := s.CreateProject(user.ID, "军旅影视制作", "demo", pm.ID)
+	proj, appErr := s.CreateProject(store.Scope{UserID: user.ID}, "军旅影视制作", "demo", pm.ID)
 	if appErr != nil {
 		t.Fatalf("create project: %v", appErr)
 	}

@@ -31,7 +31,7 @@ func TestResolvePrevStepName(t *testing.T) {
 		{NodeID: pm.NodeID, LastSeenAt: time.Now().UTC()},
 		{NodeID: dev.NodeID, LastSeenAt: time.Now().UTC()},
 	}, time.Now().UTC())
-	proj, appErr := s.CreateProject(user.ID, "TrustMesh MVP", "demo", pm.ID)
+	proj, appErr := s.CreateProject(store.Scope{UserID: user.ID}, "TrustMesh MVP", "demo", pm.ID)
 	if appErr != nil {
 		t.Fatalf("create project: %v", appErr)
 	}
@@ -48,7 +48,7 @@ func TestResolvePrevStepName(t *testing.T) {
 		},
 	}
 	idx := 0
-	if _, appErr := s.UpdateProject(user.ID, proj.ID, store.UpdateProjectInput{
+	if _, appErr := s.UpdateProject(store.Scope{UserID: user.ID}, proj.ID, store.UpdateProjectInput{
 		Workflows:           []model.Workflow{wf},
 		PrimaryWorkflowIndex: &idx,
 	}); appErr != nil {

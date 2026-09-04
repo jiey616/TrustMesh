@@ -80,7 +80,7 @@ func (s *Store) aggregateProjectTaskSummaryUnsafe(project *model.Project) model.
 	return summary
 }
 
-func (s *Store) CreateProject(userID, name, description, pmAgentID string) (*model.Project, *transport.AppError) {
+func (s *Store) CreateProject(sc Scope, name, description, pmAgentID string) (*model.Project, *transport.AppError) {
 	name = strings.TrimSpace(name)
 	description = strings.TrimSpace(description)
 	if name == "" || description == "" || strings.TrimSpace(pmAgentID) == "" {
@@ -94,7 +94,7 @@ func (s *Store) CreateProject(userID, name, description, pmAgentID string) (*mod
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	pm, err := s.pmAgentForUserUnsafe(userID, pmAgentID)
+	pm, err := s.pmAgentForScopeUnsafe(sc, pmAgentID)
 	if err != nil {
 		return nil, err
 	}
@@ -102,8 +102,8 @@ func (s *Store) CreateProject(userID, name, description, pmAgentID string) (*mod
 	now := time.Now().UTC()
 	project := &model.Project{
 		ID:          newID(),
-		UserID:      userID,
-		OrgID:       s.personalOrgOfUnsafe(userID),
+		UserID:      sc.UserID,
+		OrgID:       s.resolveOwnerOrgUnsafe(sc),
 		Name:        name,
 		Description: description,
 		Status:      "active",
@@ -119,13 +119,13 @@ func (s *Store) CreateProject(userID, name, description, pmAgentID string) (*mod
 	return s.buildProjectViewUnsafe(project), nil
 }
 
-func (s *Store) ListProjects(userID string) []model.Project {
+func (s *Store) ListProjects(sc Scope) []model.Project {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	items := make([]model.Project, 0)
 	for _, p := range s.projects {
-		if p.UserID == userID {
+		if s.projectVisible(sc, p) {
 			items = append(items, *s.buildProjectViewUnsafe(p))
 		}
 	}
@@ -133,21 +133,21 @@ func (s *Store) ListProjects(userID string) []model.Project {
 	return items
 }
 
-func (s *Store) GetProject(userID, projectID string) (*model.Project, *transport.AppError) {
+func (s *Store) GetProject(sc Scope, projectID string) (*model.Project, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	p, ok := s.projects[projectID]
-	if !ok || p.UserID != userID {
+	if !ok || !s.projectVisible(sc, p) {
 		return nil, transport.NotFound("project not found")
 	}
 	return s.buildProjectViewUnsafe(p), nil
 }
 
-func (s *Store) UpdateProject(userID, projectID string, in UpdateProjectInput) (*model.Project, *transport.AppError) {
+func (s *Store) UpdateProject(sc Scope, projectID string, in UpdateProjectInput) (*model.Project, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.projects[projectID]
-	if !ok || p.UserID != userID {
+	if !ok || !s.projectVisible(sc, p) {
 		return nil, transport.NotFound("project not found")
 	}
 	if in.Name != nil {
@@ -221,7 +221,7 @@ func (s *Store) UpdateProject(userID, projectID string, in UpdateProjectInput) (
 		if agentID == "" {
 			return nil, transport.Validation("invalid pm_agent_id", map[string]any{"pm_agent_id": "cannot be empty"})
 		}
-		pm, err := s.pmAgentForUserUnsafe(userID, agentID)
+		pm, err := s.pmAgentForScopeUnsafe(sc, agentID)
 		if err != nil {
 			return nil, err
 		}
@@ -244,11 +244,11 @@ func (s *Store) UpdateProject(userID, projectID string, in UpdateProjectInput) (
 	return s.buildProjectViewUnsafe(p), nil
 }
 
-func (s *Store) ArchiveProject(userID, projectID string) (*model.Project, *transport.AppError) {
+func (s *Store) ArchiveProject(sc Scope, projectID string) (*model.Project, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.projects[projectID]
-	if !ok || p.UserID != userID {
+	if !ok || !s.projectVisible(sc, p) {
 		return nil, transport.NotFound("project not found")
 	}
 
@@ -320,11 +320,11 @@ func (s *Store) resetArchivedProjectTasksUnsafe(project *model.Project, now time
 	return affectedAgents, nil
 }
 
-func (s *Store) GetProjectPMNode(userID, projectID string) (string, *transport.AppError) {
+func (s *Store) GetProjectPMNode(sc Scope, projectID string) (string, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	project, err := s.projectForUserUnsafe(userID, projectID)
+	project, err := s.projectForScopeUnsafe(sc, projectID)
 	if err != nil {
 		return "", err
 	}
@@ -346,9 +346,9 @@ func (s *Store) CheckTaskProjectActive(taskID string) *transport.AppError {
 	return s.ensureTaskProjectActiveUnsafe(task)
 }
 
-func (s *Store) projectForUserUnsafe(userID, projectID string) (*model.Project, *transport.AppError) {
+func (s *Store) projectForScopeUnsafe(sc Scope, projectID string) (*model.Project, *transport.AppError) {
 	p, ok := s.projects[projectID]
-	if !ok || p.UserID != userID {
+	if !ok || !s.projectVisible(sc, p) {
 		return nil, transport.NotFound("project not found")
 	}
 	return p, nil
@@ -365,9 +365,9 @@ func (s *Store) ensureTaskProjectActiveUnsafe(task *model.TaskDetail) *transport
 	return nil
 }
 
-func (s *Store) pmAgentForUserUnsafe(userID, agentID string) (*model.Agent, *transport.AppError) {
+func (s *Store) pmAgentForScopeUnsafe(sc Scope, agentID string) (*model.Agent, *transport.AppError) {
 	a, ok := s.agents[agentID]
-	if !ok || a.UserID != userID || a.Role != "pm" || a.Archived {
+	if !ok || !visibleToScope(sc, a.OrgID, a.UserID) || a.Role != "pm" || a.Archived {
 		return nil, transport.Conflict("PROJECT_PM_AGENT_INVALID", "pm_agent_id must reference a PM agent of current user")
 	}
 	return a, nil

@@ -1409,7 +1409,7 @@ func (h *WebhookHandler) notifyPMActionItems(task *model.TaskDetail, todoID stri
 	pmNode := task.PMAgent.NodeID
 	if pmNode == "" {
 		// Fallback to the project's PM agent.
-		if project, pErr := h.store.GetProject(task.UserID, task.ProjectID); pErr == nil && project != nil && project.PMAgent.NodeID != "" {
+		if project, pErr := h.store.GetProject(store.Scope{UserID: task.UserID}, task.ProjectID); pErr == nil && project != nil && project.PMAgent.NodeID != "" {
 			pmNode = project.PMAgent.NodeID
 		}
 	}
@@ -2157,7 +2157,7 @@ func (h *WebhookHandler) resolvePrevStepName(task *model.TaskDetail) string {
 	if task == nil || task.WorkflowRef == nil {
 		return ""
 	}
-	proj, appErr := h.store.GetProject(task.UserID, task.ProjectID)
+	proj, appErr := h.store.GetProject(store.Scope{UserID: task.UserID}, task.ProjectID)
 	if appErr != nil || proj == nil {
 		return ""
 	}

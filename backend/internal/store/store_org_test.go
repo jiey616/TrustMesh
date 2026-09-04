@@ -197,3 +197,101 @@ func TestEnsurePersonalOrgIsIdempotent(t *testing.T) {
 		t.Fatalf("members = %d, want 1", len(got))
 	}
 }
+
+// ---------- 阶段 2-1：Project 归属收敛 ----------
+
+// TestProjectScopedVisibility 覆盖「带租户头才跨 user 可见、不带则完全等同改造前」。
+func TestProjectScopedVisibility(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	orgB, _ := s.CreateOrganization("u9", "Globex", "globex", model.OrgKindEnterprise)
+	if _, err := s.AddOrgMember(orgA.ID, "u2", model.OrgRoleMember); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+
+	p1 := &model.Project{ID: "p1", OrgID: orgA.ID, UserID: "u1", Name: "n", Description: "d", Status: "active"}
+	s.projects[p1.ID] = p1
+	legacy := &model.Project{ID: "p0", UserID: "u1", Name: "legacy", Description: "d", Status: "active"}
+	s.projects[legacy.ID] = legacy
+
+	// 无租户上下文：退回 user 维度，u2 什么都看不到（与改造前一致）
+	if got := s.ListProjects(Scope{UserID: "u2"}); len(got) != 0 {
+		t.Fatalf("u2 without org ctx should see nothing, got %d", len(got))
+	}
+	if got := s.ListProjects(Scope{UserID: "u1"}); len(got) != 2 {
+		t.Fatalf("u1 without org ctx should see own 2 projects, got %d", len(got))
+	}
+	// 带租户上下文：同租户成员可见
+	if got := s.ListProjects(Scope{UserID: "u2", OrgID: orgA.ID}); len(got) != 1 || got[0].ID != "p1" {
+		t.Fatalf("u2 in orgA should see p1 only, got %+v", got)
+	}
+	// 跨租户：看不到
+	if got := s.ListProjects(Scope{UserID: "u9", OrgID: orgB.ID}); len(got) != 0 {
+		t.Fatalf("other org must see nothing, got %+v", got)
+	}
+
+	// GetProject 同理
+	if _, err := s.GetProject(Scope{UserID: "u2", OrgID: orgA.ID}, "p1"); err != nil {
+		t.Fatalf("u2 in orgA should read p1: %v", err)
+	}
+	if _, err := s.GetProject(Scope{UserID: "u2"}, "p1"); err == nil {
+		t.Fatal("u2 without org ctx must not read p1")
+	}
+	if _, err := s.GetProject(Scope{UserID: "u9", OrgID: orgB.ID}, "p1"); err == nil {
+		t.Fatal("other org must not read p1")
+	}
+}
+
+// TestResolveOwnerOrg 新建资源的归属：活跃租户优先，否则个人租户。
+func TestResolveOwnerOrg(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	if got := s.resolveOwnerOrgUnsafe(Scope{UserID: "u1", OrgID: orgA.ID}); got != orgA.ID {
+		t.Fatalf("active org should win, got %q", got)
+	}
+
+	if _, err := s.EnsurePersonalOrg("u1", "Jiey"); err != nil {
+		t.Fatalf("ensure personal org: %v", err)
+	}
+	var personal *model.Organization
+	for _, o := range s.ListUserOrganizations("u1") {
+		if o.Kind == model.OrgKindPersonal {
+			personal = o
+		}
+	}
+	if personal == nil {
+		t.Fatal("personal org missing")
+	}
+	if got := s.resolveOwnerOrgUnsafe(Scope{UserID: "u1"}); got != personal.ID {
+		t.Fatalf("without org ctx should fall back to personal org, got %q want %q", got, personal.ID)
+	}
+	// 没有个人租户也不阻断写入，只是留空，事后可补偿
+	if got := s.resolveOwnerOrgUnsafe(Scope{UserID: "nobody"}); got != "" {
+		t.Fatalf("unknown user should resolve to empty, got %q", got)
+	}
+}
+
+func TestVisibleToScopeFallback(t *testing.T) {
+	// 无租户上下文：按 user 维度，与改造前一致
+	if !visibleToScope(Scope{UserID: "u1"}, "", "u1") {
+		t.Fatal("no-org ctx should fall back to user ownership")
+	}
+	if visibleToScope(Scope{UserID: "u1"}, "", "u2") {
+		t.Fatal("no-org ctx must not grant other user's resource")
+	}
+	// 有租户上下文：只看 org，user 维度失效
+	if !visibleToScope(Scope{UserID: "u1", OrgID: "orgA"}, "orgA", "u2") {
+		t.Fatal("same org should see the resource regardless of author")
+	}
+	if visibleToScope(Scope{UserID: "u1", OrgID: "orgA"}, "orgB", "u1") {
+		t.Fatal("other org must not see the resource even if authored by self")
+	}
+	// 资源还没回填 org_id 时：带租户上下文退回 user 维度兜底，
+	// 绝不因数据缺失让作者失联（阶段 1 回填是尽力而为，不能假定 100% 命中）
+	if !visibleToScope(Scope{UserID: "u1", OrgID: "orgA"}, "", "u1") {
+		t.Fatal("un-backfilled resource authored by self must stay visible")
+	}
+	if visibleToScope(Scope{UserID: "u1", OrgID: "orgA"}, "", "u2") {
+		t.Fatal("un-backfilled resource of other user must not leak under org ctx")
+	}
+}

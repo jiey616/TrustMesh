@@ -27,7 +27,7 @@ func seedProjectWithPM(t *testing.T) (*Store, string, string) {
 	if appErr != nil {
 		t.Fatalf("create pm: %v", appErr)
 	}
-	project, appErr := s.CreateProject(user.ID, "p", "desc", pm.ID)
+	project, appErr := s.CreateProject(Scope{UserID: user.ID}, "p", "desc", pm.ID)
 	if appErr != nil {
 		t.Fatalf("create project: %v", appErr)
 	}
@@ -178,7 +178,7 @@ func TestApplyWorkflowSync(t *testing.T) {
 		Name:             wf.Name,
 		Steps:            localSteps,
 	}
-	project2, appErr := s.UpdateProject(userID, projectID, UpdateProjectInput{Workflows: []model.Workflow{plainWF}})
+	project2, appErr := s.UpdateProject(Scope{UserID: userID}, projectID, UpdateProjectInput{Workflows: []model.Workflow{plainWF}})
 	if appErr != nil {
 		t.Fatalf("update project: %v", appErr)
 	}
@@ -279,7 +279,7 @@ func TestUpdateProjectAssignsWorkflowIDs(t *testing.T) {
 	s, userID, projectID := seedProjectWithPM(t)
 
 	// legacy workflow without ID gets an ID on save
-	updated, appErr := s.UpdateProject(userID, projectID, UpdateProjectInput{
+	updated, appErr := s.UpdateProject(Scope{UserID: userID}, projectID, UpdateProjectInput{
 		Workflows:            []model.Workflow{{Name: "wf", Steps: steps("a")}},
 		PrimaryWorkflowIndex: ptrInt(0),
 	})

@@ -1,6 +1,6 @@
 # TrustMesh 多租户 + 企业管理 实施设计
 
-> 状态：**阶段 0 + 阶段 1 已完成**（阶段 0 commit `5fa4a71`；阶段 1 见 §阶段 1 实况）；阶段 2 待排期
+> 状态：**阶段 0 + 阶段 1 已完成，阶段 2 分批推进中**（阶段 0 commit `5fa4a71`；阶段 1 见 §阶段 1 实况；阶段 2 见 §阶段 2 实况，**2-1 Project 已上线**）
 > 日期：2026-09-04
 > 开工前备份：`deploy/backups/mongodump-trustmesh-20260904-214800.archive.gz`，git tag `pre-multitenant-stage0`
 > 阶段 1 备份：`deploy/backups/mongodump-trustmesh-20260904-223127-stage1.archive.gz`，git tag `pre-multitenant-stage1`
@@ -324,6 +324,55 @@ beforeRequest: [
 | 验收 | 两个测试 org 互相不可见对方项目/任务/Agent/知识库；同 org 内成员按角色与项目成员制正常协作；回归全通过 |
 | 回滚 | 阶段 2 整体一个 commit 区间，git revert 可回退；数据不变（仅读法变） |
 | 风险 | 🔴 **高**：改动面大，必须分批提交（每类资源一个 commit），每批跑一次回归；依赖编译期兜底 + §7 测试 |
+
+#### 阶段 2 实况
+
+**🔴 首要裁决原则（2-1 血泪教训，后续各批必须遵守）**
+
+> **无租户上下文（`X-Org-Id` 为空）时，一律退回 user 维度裁决，与改造前完全一致。**
+> 只有「**请求带租户上下文**」**且**「**资源已回填 `org_id`**」两个条件同时成立，才走 org 裁决。
+
+```go
+func visibleToScope(sc Scope, ownerOrgID, ownerUserID string) bool {
+    if sc.HasOrg() && ownerOrgID != "" {
+        return ownedByOrg(sc, ownerOrgID)
+    }
+    return ownedByUser(sc, ownerUserID)
+}
+```
+
+违反这条的代价：阶段 1 回填后资源都带上了 `org_id`，若裁决写成「有 org 就比 org」，**所有不带 `X-Org-Id` 的存量客户端会瞬间看不到自己的全部数据**。2-1 首次实现即踩此坑，6 个既有测试（`TestArchiveProjectBlocksTaskExecutionMutations` / `TestApplyWorkflowSync` / `TestUpdateProjectAssignsWorkflowIDs` / `TestSyncAgentPresenceMarksOfflineAndBusy` / `TestProjectWorkflowRefAndProgress` / `TestCreateTaskInvalidStepRange`）集体报 `NOT_FOUND: project not found`。
+
+这条同时决定了「未回填资源」的兜底语义：**宁可退回 user 维度放行，也不因数据缺失让作者失联** —— 回填是尽力而为，不能假定 100% 命中。
+
+**2-1 Project 归属收敛（已完成并上线）**
+
+| 项 | 内容 |
+|---|---|
+| 裁决层 | `scope.go` 新增 `visibleToScope()` 通用入口 + `resolveOwnerOrgUnsafe()`（新建资源挂活跃租户，无租户上下文则挂个人租户）；`projectVisible()` 改为三级：无租户头→user 维度 / 有租户头但资源未回填→user 维度兜底 / 否则 org 归属 + 项目成员白名单 |
+| 签名收敛 | `store_project.go` 7 个函数 `userID string` → `sc Scope`：`CreateProject` / `ListProjects` / `GetProject` / `UpdateProject` / `ArchiveProject` / `GetProjectPMNode`；`projectForUserUnsafe`→`projectForScopeUnsafe`（4 处）、`pmAgentForUserUnsafe`→`pmAgentForScopeUnsafe` |
+| Handler | 新增 `handler/helpers.go: currentScope()`（取 `middleware.Scope(c)`，缺 UserID 直接 401）；`project.go` 5 个 handler 改 `currentScope` |
+| 内部路径 | `store_task.go` / `store_planning.go` / `handler/task.go` / `assistant/tools.go`(2) / `clawsynapse/webhook.go`(2) 显式传 `Scope{UserID: ...}`，保持原 user 语义 |
+| 测试 | 新增 3 个：`TestProjectScopedVisibility`（无头=改造前行为 / 同租户可见 / 跨租户不可见）、`TestResolveOwnerOrg`、`TestVisibleToScopeFallback`；存量 24 处调用点批量改 `Scope{UserID: userID}` |
+| 验证 | `go build` + `go vet` + `go test ./...` 全绿；部署后冒烟：无头 200 列 11 项目 / 伪造 `X-Org-Id` 401 / 真实头 200 列同 11 项目 / 新建项目 `org_id` 正确落个人租户 / 探针已清理 |
+
+**踩坑（🔴 下次必须避开）**
+
+1. **补丁脚本的 func 范围模式会被 Edit 静默失败坑到** —— 对脚本做多行修改后必须 grep 验证落盘，否则「报成功不落盘」会让你对着正确的逻辑调试半天。改脚本一律用 Python 写文件。
+2. **测试文件批量替换要注意路径分隔符**：Windows 下 `startswith("backend/internal/store/")` 判定会因反斜杠失效，导致 store 包内测试被误写成 `store.Scope{`（包内无需限定符）。
+3. **容器刚启动时的首次 API 读数不可信** —— 内存状态机从 Mongo 灌数据需要时间，`up -d` 后 2 秒查询只返回 1 个项目（实际 11 个）。冒烟测试必须等容器 `healthy` **之后再等状态灌完**，否则会误判成回归。
+
+**后续批次排期**
+
+| 批次 | 范围 | 状态 |
+|---|---|---|
+| 2-1 | Project（7 函数 + handler + 裁决层） | ✅ 已上线 |
+| 2-2 | Task 归属收敛 | ⬜ 待开工 |
+| 2-3 | Agent 归属收敛 | ⬜ 待开工 |
+| 2-4 | Knowledge + WorkflowTemplate | ⬜ 待开工 |
+| 2-5 | File + Comment + Meeting | ⬜ 待开工 |
+| 2-6 | JoinRequest + ExternalApp | ⬜ 待开工 |
+| 2-7 | Event + Notification 分区 map（§4.3） | ⬜ 待开工 |
 
 ### 阶段 3 — 节点 org 绑定与 NATS 隔离（🔴 **跨仓库 + 跨环境**）
 

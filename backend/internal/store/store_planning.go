@@ -39,7 +39,7 @@ func (s *Store) CreateTaskPlanningWithFiles(userID, projectID, content string, f
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	project, err := s.projectForUserUnsafe(userID, projectID)
+	project, err := s.projectForScopeUnsafe(Scope{UserID: userID}, projectID)
 	if err != nil {
 		return nil, err
 	}

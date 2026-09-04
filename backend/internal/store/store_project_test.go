@@ -10,7 +10,7 @@ import (
 func TestProjectTaskSummaryReflectsTaskState(t *testing.T) {
 	s, userID, pm, developer, project := seedWorkflowState(t)
 
-	projectState, appErr := s.GetProject(userID, project.ID)
+	projectState, appErr := s.GetProject(Scope{UserID: userID}, project.ID)
 	if appErr != nil {
 		t.Fatalf("get empty project: %v", appErr)
 	}
@@ -38,7 +38,7 @@ func TestProjectTaskSummaryReflectsTaskState(t *testing.T) {
 		t.Fatalf("create task: %v", appErr)
 	}
 
-	projectState, appErr = s.GetProject(userID, project.ID)
+	projectState, appErr = s.GetProject(Scope{UserID: userID}, project.ID)
 	if appErr != nil {
 		t.Fatalf("get queued project: %v", appErr)
 	}
@@ -57,7 +57,7 @@ func TestProjectTaskSummaryReflectsTaskState(t *testing.T) {
 		t.Fatalf("dispatch todo: %v", appErr)
 	}
 
-	projectState, appErr = s.GetProject(userID, project.ID)
+	projectState, appErr = s.GetProject(Scope{UserID: userID}, project.ID)
 	if appErr != nil {
 		t.Fatalf("get running project: %v", appErr)
 	}
@@ -76,7 +76,7 @@ func TestProjectTaskSummaryReflectsTaskState(t *testing.T) {
 		t.Fatalf("complete todo: %v", appErr)
 	}
 
-	projectState, appErr = s.GetProject(userID, project.ID)
+	projectState, appErr = s.GetProject(Scope{UserID: userID}, project.ID)
 	if appErr != nil {
 		t.Fatalf("get idle project: %v", appErr)
 	}
@@ -117,7 +117,7 @@ func TestProjectTaskSummaryPrioritizesAttentionAndArchive(t *testing.T) {
 		t.Fatalf("fail todo: %v", appErr)
 	}
 
-	projectState, appErr := s.GetProject(userID, project.ID)
+	projectState, appErr := s.GetProject(Scope{UserID: userID}, project.ID)
 	if appErr != nil {
 		t.Fatalf("get attention project: %v", appErr)
 	}
@@ -128,7 +128,7 @@ func TestProjectTaskSummaryPrioritizesAttentionAndArchive(t *testing.T) {
 		t.Fatalf("unexpected attention summary: %#v", projectState.TaskSummary)
 	}
 
-	projectState, appErr = s.ArchiveProject(userID, project.ID)
+	projectState, appErr = s.ArchiveProject(Scope{UserID: userID}, project.ID)
 	if appErr != nil {
 		t.Fatalf("archive project: %v", appErr)
 	}
@@ -161,7 +161,7 @@ func TestProjectTaskSummaryTracksCanceledWithoutAttention(t *testing.T) {
 		t.Fatalf("cancel task: %v", appErr)
 	}
 
-	projectState, appErr := s.GetProject(userID, project.ID)
+	projectState, appErr := s.GetProject(Scope{UserID: userID}, project.ID)
 	if appErr != nil {
 		t.Fatalf("get project: %v", appErr)
 	}
@@ -180,7 +180,7 @@ func TestArchiveProjectBlocksAppendingPlanningMessages(t *testing.T) {
 		t.Fatalf("create planning task: %v", appErr)
 	}
 
-	if _, appErr := s.ArchiveProject(userID, project.ID); appErr != nil {
+	if _, appErr := s.ArchiveProject(Scope{UserID: userID}, project.ID); appErr != nil {
 		t.Fatalf("archive project: %v", appErr)
 	}
 
@@ -267,7 +267,7 @@ func TestArchiveProjectResetsInProgressWorkToPending(t *testing.T) {
 		t.Fatalf("fail todo: %v", appErr)
 	}
 
-	projectState, appErr := s.ArchiveProject(userID, project.ID)
+	projectState, appErr := s.ArchiveProject(Scope{UserID: userID}, project.ID)
 	if appErr != nil {
 		t.Fatalf("archive project: %v", appErr)
 	}
@@ -334,7 +334,7 @@ func TestArchiveProjectBlocksTaskExecutionMutations(t *testing.T) {
 		t.Fatalf("create task: %v", appErr)
 	}
 
-	if _, appErr := s.ArchiveProject(userID, project.ID); appErr != nil {
+	if _, appErr := s.ArchiveProject(Scope{UserID: userID}, project.ID); appErr != nil {
 		t.Fatalf("archive project: %v", appErr)
 	}
 

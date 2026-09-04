@@ -33,7 +33,7 @@ func TestSyncAgentPresenceMarksOfflineAndBusy(t *testing.T) {
 		t.Fatalf("unexpected updated count: %d", updated)
 	}
 
-	projectState, appErr := s.GetProject(s.agents[pm.ID].UserID, project.ID)
+	projectState, appErr := s.GetProject(Scope{UserID: s.agents[pm.ID].UserID}, project.ID)
 	if appErr != nil {
 		t.Fatalf("get project: %v", appErr)
 	}
@@ -874,7 +874,7 @@ func seedWorkflowState(t *testing.T) (*Store, string, stringAgent, stringAgent, 
 		{NodeID: pm.NodeID, LastSeenAt: time.Now().UTC()},
 		{NodeID: developer.NodeID, LastSeenAt: time.Now().UTC()},
 	}, time.Now().UTC())
-	project, appErr := s.CreateProject(user.ID, "TrustMesh MVP", "demo", pm.ID)
+	project, appErr := s.CreateProject(Scope{UserID: user.ID}, "TrustMesh MVP", "demo", pm.ID)
 	if appErr != nil {
 		t.Fatalf("create project: %v", appErr)
 	}
@@ -903,7 +903,7 @@ func TestProjectWorkflowRefAndProgress(t *testing.T) {
 		},
 	}}
 	idx := 0
-	if _, appErr := s.UpdateProject(userID, project.ID, UpdateProjectInput{
+	if _, appErr := s.UpdateProject(Scope{UserID: userID}, project.ID, UpdateProjectInput{
 		Workflows:            wfs,
 		PrimaryWorkflowIndex: &idx,
 	}); appErr != nil {
@@ -992,7 +992,7 @@ func TestCreateTaskInvalidStepRange(t *testing.T) {
 
 	wfs := []model.Workflow{{Name: "总流程", Steps: []model.WorkflowStep{{Name: "一步", Role: "writer"}}}}
 	idx := 0
-	if _, appErr := s.UpdateProject(userID, project.ID, UpdateProjectInput{Workflows: wfs, PrimaryWorkflowIndex: &idx}); appErr != nil {
+	if _, appErr := s.UpdateProject(Scope{UserID: userID}, project.ID, UpdateProjectInput{Workflows: wfs, PrimaryWorkflowIndex: &idx}); appErr != nil {
 		t.Fatalf("set primary workflow: %v", appErr)
 	}
 	// 越界 step_to

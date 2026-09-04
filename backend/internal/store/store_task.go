@@ -13,7 +13,7 @@ func (s *Store) ListTasks(userID, projectID, status string) ([]model.TaskListIte
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if _, err := s.projectForUserUnsafe(userID, projectID); err != nil {
+	if _, err := s.projectForScopeUnsafe(Scope{UserID: userID}, projectID); err != nil {
 		return nil, err
 	}
 	if status != "" && !isValidTaskStatus(status) {

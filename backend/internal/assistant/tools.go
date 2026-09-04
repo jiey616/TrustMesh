@@ -309,7 +309,7 @@ func (e *ToolExecutor) searchTasks(userID string, args map[string]any) (any, err
 	}
 
 	// Otherwise search across all projects
-	projects := e.store.ListProjects(userID)
+	projects := e.store.ListProjects(store.Scope{UserID: userID})
 	var allTasks []model.TaskListItem
 	for _, p := range projects {
 		tasks, appErr := e.store.ListTasks(userID, p.ID, status)
@@ -342,7 +342,7 @@ func (e *ToolExecutor) getDashboardStats(userID string) (any, error) {
 }
 
 func (e *ToolExecutor) listProjects(userID string) (any, error) {
-	projects := e.store.ListProjects(userID)
+	projects := e.store.ListProjects(store.Scope{UserID: userID})
 	items := make([]map[string]any, 0, len(projects))
 	for _, p := range projects {
 		items = append(items, map[string]any{

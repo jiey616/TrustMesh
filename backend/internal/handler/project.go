@@ -26,7 +26,7 @@ type createProjectRequest struct {
 }
 
 func (h *ProjectHandler) Create(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -36,13 +36,13 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 		transport.WriteError(c, transport.BadRequest("BAD_REQUEST", "invalid json body"))
 		return
 	}
-	project, appErr := h.store.CreateProject(userID, req.Name, req.Description, req.PMAgentID)
+	project, appErr := h.store.CreateProject(sc, req.Name, req.Description, req.PMAgentID)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}
 	if req.TemplateID != "" {
-		project, appErr = h.store.InheritWorkflowTemplate(userID, project.ID, req.TemplateID)
+		project, appErr = h.store.InheritWorkflowTemplate(sc.UserID, project.ID, req.TemplateID)
 		if appErr != nil {
 			transport.WriteError(c, appErr)
 			return
@@ -52,20 +52,20 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 }
 
 func (h *ProjectHandler) List(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	items := h.store.ListProjects(userID)
+	items := h.store.ListProjects(sc)
 	transport.WriteList(c, items, len(items))
 }
 
 func (h *ProjectHandler) Get(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	project, appErr := h.store.GetProject(userID, c.Param("projectId"))
+	project, appErr := h.store.GetProject(sc, c.Param("projectId"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -98,7 +98,7 @@ type updateProjectRequest struct {
 }
 
 func (h *ProjectHandler) Update(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -108,7 +108,7 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 		transport.WriteError(c, transport.BadRequest("BAD_REQUEST", "invalid json body"))
 		return
 	}
-	project, appErr := h.store.UpdateProject(userID, c.Param("projectId"), store.UpdateProjectInput{
+	project, appErr := h.store.UpdateProject(sc, c.Param("projectId"), store.UpdateProjectInput{
 		Name:                 req.Name,
 		Description:          req.Description,
 		PMAgentID:            req.PMAgentID,
@@ -123,11 +123,11 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 }
 
 func (h *ProjectHandler) Archive(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	project, appErr := h.store.ArchiveProject(userID, c.Param("projectId"))
+	project, appErr := h.store.ArchiveProject(sc, c.Param("projectId"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return

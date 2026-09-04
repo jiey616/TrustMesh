@@ -855,7 +855,7 @@ func (h *TaskHandler) buildPMTaskMessage(userID, projectID, taskID, userContent 
 		return payload
 	}
 
-	project, appErr := h.store.GetProject(userID, projectID)
+	project, appErr := h.store.GetProject(store.Scope{UserID: userID}, projectID)
 	if appErr != nil {
 		if h.log != nil {
 			h.log.Warn("build initial pm task message missing project context", zap.String("project_id", projectID))
