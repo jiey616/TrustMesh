@@ -2477,6 +2477,88 @@ func fuzzyMatch(a, b string) bool {
 	return strings.Contains(a, b) || strings.Contains(b, a)
 }
 
+// alignTodosToStep returns the todos of a task that belong to the workflow
+// step at stepIdx. Matching is agent_id based (stepMatchesTodo), so when one
+// agent owns several steps of the same task every todo lights up all of them
+// (measured 2026-09-04: the done 分镜拆解 todo also marked the not-yet-started
+// 分镜分组 node done, because both steps share one agent). Disambiguation:
+// todos whose title fuzzy-matches a step name are claimed by that step only;
+// ambiguous todos without a title match join the step named by a same-agent
+// sibling todo when possible; otherwise keep the old all-matches behavior so
+// legacy data never matches less than before.
+func alignTodosToStep(steps []model.WorkflowStep, todos []model.Todo, stepIdx int, roleOf func(model.Todo) string) []*model.Todo {
+	cand := make([][]int, len(todos))
+	for ti := range todos {
+		for i := range steps {
+			if stepMatchesTodo(steps[i], todos[ti], roleOf(todos[ti])) {
+				cand[ti] = append(cand[ti], i)
+			}
+		}
+	}
+	claim := make([][]int, len(todos))
+	for ti := range todos {
+		cands := cand[ti]
+		if len(cands) > 1 {
+			var titled []int
+			for _, i := range cands {
+				if fuzzyMatch(todos[ti].Title, steps[i].Name) {
+					titled = append(titled, i)
+				}
+			}
+			if len(titled) > 0 {
+				cands = titled
+			} else {
+				// Sibling fallback: a same-agent todo that names one of these
+				// steps pins the whole sibling group to that step (a step may be
+				// split into several todos, e.g. a preflight check).
+				var pinned []int
+				for tj := range todos {
+					if tj == ti || todos[tj].Assignee.AgentID != todos[ti].Assignee.AgentID {
+						continue
+					}
+					for _, i := range cand[tj] {
+						if fuzzyMatch(todos[tj].Title, steps[i].Name) && intIn(cands, i) {
+							pinned = append(pinned, i)
+						}
+					}
+				}
+				if len(pinned) > 0 {
+					cands = dedupInts(pinned)
+				}
+			}
+		}
+		claim[ti] = cands
+	}
+	var out []*model.Todo
+	for ti := range todos {
+		if intIn(claim[ti], stepIdx) {
+			td := todos[ti]
+			out = append(out, &td)
+		}
+	}
+	return out
+}
+
+func intIn(xs []int, v int) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+func dedupInts(xs []int) []int {
+	seen := make(map[int]bool, len(xs))
+	out := xs[:0]
+	for _, x := range xs {
+		if !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	return out
+}
 // FindTaskForWorkflowStep returns the task in the same project whose owned
 // slice of the primary workflow covers the named step, together with the task
 // (artifacts filled) and the todo matched to that step. Used for cross-task
@@ -2635,16 +2717,8 @@ func (s *Store) taskForPrimaryStepUnsafe(projectID, workflowName string, stepInd
 		if ownedIdx < 0 || ownedIdx >= len(task.Workflow.Steps) {
 			continue
 		}
-		targetStep := task.Workflow.Steps[ownedIdx]
 		copied := s.copyTaskWithArtifactsUnsafe(task)
-		var matched []*model.Todo
-		for ti := range copied.Todos {
-			td := copied.Todos[ti]
-			if stepMatchesTodo(targetStep, td, s.assigneeRoleUnsafe(td)) {
-				c := td
-				matched = append(matched, &c)
-			}
-		}
+		matched := alignTodosToStep(copied.Workflow.Steps, copied.Todos, ownedIdx, s.assigneeRoleUnsafe)
 		switch {
 		case task.Status == "canceled":
 			if len(matched) > 0 && (bestCanceledWith == nil || task.UpdatedAt.After(bestCanceledWith.task.UpdatedAt)) {
