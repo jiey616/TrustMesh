@@ -2617,7 +2617,7 @@ func (h *WebhookHandler) warnTransferRejected(taskID, fromNode, transferID, file
 	if !h.warnOnce(key) {
 		return
 	}
-	content := fmt.Sprintf("⚠️ 文件上传未入库：%s（%s）。文件已传输到平台但未写入文件列表，请让执行方用 `clawsynapse transfer send --metadata taskId=… todoId=…` 重新上传。",
+	content := fmt.Sprintf("⚠️ 文件上传未入库：%s（%s）。文件已传输到平台但未写入文件列表，请立即用 `clawsynapse transfer send --metadata taskId=… todoId=…` 重新上传。",
 		strings.TrimSpace(fileName), reason)
 	if transferID != "" {
 		content += fmt.Sprintf(" transferId=%s", transferID)
@@ -2636,6 +2636,7 @@ func (h *WebhookHandler) warnTransferRejected(taskID, fromNode, transferID, file
 		h.log.Warn("append transfer rejection system comment failed",
 			zap.String("task_id", taskID), zap.String("transfer_id", transferID), zap.Error(cErr))
 	}
+	h.notifySystemWarningToAgent(context.Background(), taskID, "", fromNode, content)
 }
 
 // warnUnboundDeliverable reports an upload that looks like a final deliverable
@@ -2663,7 +2664,7 @@ func (h *WebhookHandler) warnUnboundDeliverable(taskID, todoID, fromNode, transf
 	content := fmt.Sprintf(
 		"⚠️ 疑似最终交付物未绑定：本次上传的 `%s` 未携带 outputName，已按**过程文件**入库，不会出现在工作流图上、也不会作为下游步骤的输入。"+
 			"该步骤声明的输出位为：%s。"+
-			"请让执行方用 `clawsynapse transfer send --metadata taskId=… --metadata todoId=… --metadata outputName=<输出位名>` 重新上传，"+
+			"请立即用 `clawsynapse transfer send --metadata taskId=… --metadata todoId=… --metadata outputName=<输出位名>` 重新上传同名文件，"+
 			"或在任务详情页手工「绑定为交付物」。",
 		strings.TrimSpace(fileName), slots)
 	if transferID != "" {
@@ -2673,6 +2674,73 @@ func (h *WebhookHandler) warnUnboundDeliverable(taskID, todoID, fromNode, transf
 		h.log.Warn("append unbound deliverable system comment failed",
 			zap.String("task_id", taskID), zap.String("todo_id", todoID),
 			zap.String("transfer_id", transferID), zap.Error(cErr))
+	}
+	h.notifySystemWarningToAgent(context.Background(), taskID, todoID, fromNode, content)
+}
+
+// findTodoByID locates a todo by id in a task detail; nil when absent or id empty.
+func findTodoByID(task *model.TaskDetail, todoID string) *model.Todo {
+	if task == nil || todoID == "" {
+		return nil
+	}
+	for i := range task.Todos {
+		if task.Todos[i].ID == todoID {
+			return &task.Todos[i]
+		}
+	}
+	return nil
+}
+
+// notifySystemWarningToAgent pushes a system task-timeline warning to the
+// responsible executor agent as a task.mention, so the agent wakes up and
+// self-corrects instead of the warning sitting unread in the timeline
+// (measured 2026-09-04: the storyboard agent never saw the unbound-deliverable
+// warning until a human @-mentioned it 27 minutes later).
+//
+// Target resolution order: the todo's assignee → the assignee of the
+// uploading node's active todo → the uploading node itself. Fire-and-forget:
+// delivery failures are logged, never surfaced to the webhook caller.
+// Callers keep their own throttling (unboundWarned / rejectedWarned), so each
+// warning wakes at most one LLM round on the agent side.
+func (h *WebhookHandler) notifySystemWarningToAgent(ctx context.Context, taskID, todoID, fromNode, content string) {
+	if taskID == "" || h.client == nil {
+		return
+	}
+	task := h.store.GetTaskInternal(taskID)
+	if task == nil {
+		return
+	}
+	target := strings.TrimSpace(fromNode)
+	if todo := findTodoByID(task, todoID); todo != nil && todo.Assignee.NodeID != "" {
+		target = todo.Assignee.NodeID
+	} else if todoID == "" {
+		if id, rerr := h.store.ResolveActiveTodoForNode(taskID, fromNode); rerr == nil && id != "" {
+			if todo := findTodoByID(task, id); todo != nil && todo.Assignee.NodeID != "" {
+				target = todo.Assignee.NodeID
+			}
+		}
+	}
+	if target == "" {
+		return
+	}
+	payload := protocol.TaskMentionPayload{
+		TaskID:      task.ID,
+		ProjectID:   task.ProjectID,
+		TodoID:      todoID,
+		TaskTitle:   task.Title,
+		TaskStatus:  task.Status,
+		AuthorName:  "系统",
+		UserContent: content,
+		Content:     "系统检测到文件交付问题（警告全文见 user_content）。请立即按警告中的指引重新上传；`clawsynapse transfer send` 必须携带 --metadata taskId=… --metadata todoId=…，声明输出位的步骤还要加 --metadata outputName=<输出位名>。",
+	}
+	metadata := map[string]any{"source": "system_warning", "task_id": taskID}
+	if todoID != "" {
+		metadata["todo_id"] = todoID
+	}
+	if _, err := h.client.Publish(ctx, target, "task.mention", payload, task.ID, metadata); err != nil && h.log != nil {
+		h.log.Warn("push system warning to agent failed",
+			zap.String("task_id", taskID), zap.String("todo_id", todoID),
+			zap.String("target_node", target), zap.Error(err))
 	}
 }
 
