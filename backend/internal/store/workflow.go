@@ -394,7 +394,7 @@ type UserTaskCreateInput struct {
 	StepTo        int
 }
 
-func (s *Store) CreateTaskByUser(userID string, in UserTaskCreateInput) (*model.TaskDetail, *transport.AppError) {
+func (s *Store) CreateTaskByUser(sc Scope, in UserTaskCreateInput) (*model.TaskDetail, *transport.AppError) {
 	in.Title = strings.TrimSpace(in.Title)
 	in.Description = strings.TrimSpace(in.Description)
 	in.Priority = strings.TrimSpace(in.Priority)
@@ -419,7 +419,7 @@ func (s *Store) CreateTaskByUser(userID string, in UserTaskCreateInput) (*model.
 	defer s.mu.Unlock()
 
 	project, ok := s.projects[in.ProjectID]
-	if !ok || project.UserID != userID {
+	if !ok || !visibleToScope(sc, project.OrgID, project.UserID) {
 		return nil, transport.NotFound("project not found")
 	}
 	if project.Status == "archived" {
@@ -427,7 +427,7 @@ func (s *Store) CreateTaskByUser(userID string, in UserTaskCreateInput) (*model.
 	}
 
 	assignee, ok := s.agents[in.AssigneeAgentID]
-	if !ok || assignee.UserID != userID {
+	if !ok || !visibleToScope(sc, assignee.OrgID, assignee.UserID) {
 		return nil, transport.NotFound("assignee agent not found")
 	}
 	if assignee.Archived {
@@ -493,8 +493,8 @@ func (s *Store) CreateTaskByUser(userID string, in UserTaskCreateInput) (*model.
 
 	task := &model.TaskDetail{
 		ID:            newID(),
-		UserID:        userID,
-		OrgID:         s.personalOrgOfUnsafe(userID),
+		UserID:        sc.UserID,
+		OrgID:         s.resolveOwnerOrgUnsafe(sc),
 		ProjectID:     project.ID,
 		Title:         in.Title,
 		Description:   in.Description,
@@ -525,7 +525,7 @@ func (s *Store) CreateTaskByUser(userID string, in UserTaskCreateInput) (*model.
 	s.projectTasks[task.ProjectID] = append(s.projectTasks[task.ProjectID], task.ID)
 
 	taskTitle := task.Title
-	s.addEventUnsafe(userID, project.ID, task.ID, "", "user", userID, "", "task_created", &taskTitle, map[string]any{"task_title": task.Title}, now)
+	s.addEventUnsafe(sc.UserID, project.ID, task.ID, "", "user", sc.UserID, "", "task_created", &taskTitle, map[string]any{"task_title": task.Title}, now)
 
 	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
 		return nil, mongoWriteError(err)

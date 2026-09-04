@@ -657,7 +657,7 @@ func TestCancelTaskEndpointCancelsTaskAndRejectsLateUpdates(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("create project: %v", appErr)
 	}
-	planTask, appErr := application.Store.CreateTaskPlanning(userID, project.ID, "Need login")
+	planTask, appErr := application.Store.CreateTaskPlanning(store.Scope{UserID: userID}, project.ID, "Need login")
 	if appErr != nil {
 		t.Fatalf("create planning task: %v", appErr)
 	}
@@ -783,7 +783,7 @@ func TestDispatchTodoPublishesAssignmentToAssignee(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("create project: %v", appErr)
 	}
-	planTask, appErr := application.Store.CreateTaskPlanning(userID, project.ID, "Need login")
+	planTask, appErr := application.Store.CreateTaskPlanning(store.Scope{UserID: userID}, project.ID, "Need login")
 	if appErr != nil {
 		t.Fatalf("create planning task: %v", appErr)
 	}
@@ -958,7 +958,7 @@ func TestAddTaskCommentPublishesMentionsToTaskParticipants(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("create project: %v", appErr)
 	}
-	planTask, appErr := application.Store.CreateTaskPlanning(userID, project.ID, "Need auth work")
+	planTask, appErr := application.Store.CreateTaskPlanning(store.Scope{UserID: userID}, project.ID, "Need auth work")
 	if appErr != nil {
 		t.Fatalf("create planning task: %v", appErr)
 	}
@@ -1118,7 +1118,7 @@ func TestDispatchTodoDoesNotPublishForArchivedProject(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("create project: %v", appErr)
 	}
-	planTask, appErr := application.Store.CreateTaskPlanning(userID, project.ID, "Need login")
+	planTask, appErr := application.Store.CreateTaskPlanning(store.Scope{UserID: userID}, project.ID, "Need login")
 	if appErr != nil {
 		t.Fatalf("create planning task: %v", appErr)
 	}
@@ -1213,7 +1213,7 @@ func TestUserRealtimeStreamPushesDomainEvents(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("create project: %v", appErr)
 	}
-	planTask, appErr := application.Store.CreateTaskPlanning(userID, project.ID, "Need login flow")
+	planTask, appErr := application.Store.CreateTaskPlanning(store.Scope{UserID: userID}, project.ID, "Need login flow")
 	if appErr != nil {
 		t.Fatalf("create planning task: %v", appErr)
 	}
@@ -1355,7 +1355,7 @@ func TestUserRealtimeStreamPushesNotificationReadLifecycle(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("create project: %v", appErr)
 	}
-	planTask, appErr := application.Store.CreateTaskPlanning(userID, project.ID, "Need notification coverage")
+	planTask, appErr := application.Store.CreateTaskPlanning(store.Scope{UserID: userID}, project.ID, "Need notification coverage")
 	if appErr != nil {
 		t.Fatalf("create planning task: %v", appErr)
 	}
@@ -1467,7 +1467,7 @@ func TestGetTaskArtifactContent(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("create project: %v", appErr)
 	}
-	planTask, appErr := application.Store.CreateTaskPlanning(userID, project.ID, "Need content")
+	planTask, appErr := application.Store.CreateTaskPlanning(store.Scope{UserID: userID}, project.ID, "Need content")
 	if appErr != nil {
 		t.Fatalf("create planning task: %v", appErr)
 	}

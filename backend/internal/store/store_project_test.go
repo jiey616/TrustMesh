@@ -175,7 +175,7 @@ func TestProjectTaskSummaryTracksCanceledWithoutAttention(t *testing.T) {
 
 func TestArchiveProjectBlocksAppendingPlanningMessages(t *testing.T) {
 	s, userID, _, _, project := seedWorkflowState(t)
-	planningTask, appErr := s.CreateTaskPlanning(userID, project.ID, "Need login")
+	planningTask, appErr := s.CreateTaskPlanning(Scope{UserID: userID}, project.ID, "Need login")
 	if appErr != nil {
 		t.Fatalf("create planning task: %v", appErr)
 	}
@@ -184,7 +184,7 @@ func TestArchiveProjectBlocksAppendingPlanningMessages(t *testing.T) {
 		t.Fatalf("archive project: %v", appErr)
 	}
 
-	_, appErr = s.AppendTaskMessage(userID, planningTask.ID, "还想补充一个需求", nil)
+	_, appErr = s.AppendTaskMessage(Scope{UserID: userID}, planningTask.ID, "还想补充一个需求", nil)
 	if appErr == nil {
 		t.Fatal("expected append message to fail for archived project")
 	}
@@ -275,7 +275,7 @@ func TestArchiveProjectResetsInProgressWorkToPending(t *testing.T) {
 		t.Fatalf("expected archived project status, got %s", projectState.Status)
 	}
 
-	inProgressState, appErr := s.GetTask(userID, inProgressTask.ID)
+	inProgressState, appErr := s.GetTask(Scope{UserID: userID}, inProgressTask.ID)
 	if appErr != nil {
 		t.Fatalf("get in-progress task: %v", appErr)
 	}
@@ -289,7 +289,7 @@ func TestArchiveProjectResetsInProgressWorkToPending(t *testing.T) {
 		t.Fatal("expected todo started_at to be cleared after archive")
 	}
 
-	doneState, appErr := s.GetTask(userID, doneTask.ID)
+	doneState, appErr := s.GetTask(Scope{UserID: userID}, doneTask.ID)
 	if appErr != nil {
 		t.Fatalf("get done task: %v", appErr)
 	}
@@ -297,7 +297,7 @@ func TestArchiveProjectResetsInProgressWorkToPending(t *testing.T) {
 		t.Fatalf("expected done task to stay done, got %s", doneState.Status)
 	}
 
-	failedState, appErr := s.GetTask(userID, failedTask.ID)
+	failedState, appErr := s.GetTask(Scope{UserID: userID}, failedTask.ID)
 	if appErr != nil {
 		t.Fatalf("get failed task: %v", appErr)
 	}

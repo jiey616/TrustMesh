@@ -362,12 +362,38 @@ func visibleToScope(sc Scope, ownerOrgID, ownerUserID string) bool {
 2. **测试文件批量替换要注意路径分隔符**：Windows 下 `startswith("backend/internal/store/")` 判定会因反斜杠失效，导致 store 包内测试被误写成 `store.Scope{`（包内无需限定符）。
 3. **容器刚启动时的首次 API 读数不可信** —— 内存状态机从 Mongo 灌数据需要时间，`up -d` 后 2 秒查询只返回 1 个项目（实际 11 个）。冒烟测试必须等容器 `healthy` **之后再等状态灌完**，否则会误判成回归。
 
+### 2-2 Task 归属收敛（已完成并上线）
+
+| 项 | 内容 |
+|---|---|
+| 读路径 | `store_task.go` 6 个函数收 Scope：`ListTasks` / `GetTask` / `ListTaskEvents` / `ListUserEvents` / `ListAgentEvents` / `ListRecentTasks`；`store_planning.go` 6 个：`CreateTaskPlanning` / `CreateTaskPlanningWithFiles` / `AppendTaskMessage` / `ApprovePlan` / `RejectPlan` / `GetTaskPMPublishTarget`；`workflow.go` 的 `CreateTaskByUser`（写路径） |
+| 写路径落点 | 新建任务的 `OrgID` 从 `personalOrgOfUnsafe(userID)` 改为 `resolveOwnerOrgUnsafe(sc)` —— **带租户头建的任务挂活跃租户，否则挂个人租户** |
+| 节点路径 | `GetTaskByNodeID` 用 agent 自身身份构造 `Scope{UserID, OrgID}`；`FinalizePlanByPMNode` 的 todo 派发校验用**项目归属**构造 `projectScope`（PM 代表项目归属方派活） |
+| 内部辅助 | `assistant/tools.go`(3) / `clawsynapse/webhook.go`(2) / handler 内 3 个辅助函数（`createPlanningTask` 除外，见下）显式传 user-only Scope，语义与改造前完全一致 |
+| 测试 | 新增 4 个：`TestTaskScopedVisibility` / `TestGetTaskByNodeIDSameOrg` / `TestFinalizePlanByPMNodeAssigneeScope` / `TestCreateTaskOwnerOrg` |
+
+**关键设计决策**
+
+1. **写路径必须吃租户上下文**。`createPlanningTask` / `CreateTaskByUser` 决定新任务的 `org_id`。若沿用 user-only Scope，**在企业租户下建的任务会落到个人租户，之后带租户头反而看不到** —— 这是改造引入的功能缺陷，不是安全问题。因此这两个入口改成吃 `Scope`（`createPlanningTask` 形参 `userID string` → `sc store.Scope`）。
+2. **handler 层保留 `userID := sc.UserID`**。大量 handler 里 `userID` 还用于事件写入、日志、payload 构造；全局替换成 `sc` 风险不可控。做法是鉴权行改 `currentScope(c)`，需要作者维度的地方补一行 `userID := sc.UserID`，其余代码一行不动。
+3. **`ListUserEvents` 仍是 user 维度**。活动流是「谁触发了什么」，不按租户共享；收 Scope 参数只为调用侧统一。
+4. **未回填资源在租户上下文下不对他人放行**。`visibleToScope` 在 `ownerOrgID == ""` 时退回 user 比较，所以他人看不到；只有作者本人仍可见。刻意的安全兜底：**数据缺失时宁可漏，不可泄**。
+
+**踩坑（🔴 下次必须避开）**
+
+1. **单行替换要按「子串」匹配，不能按「整行相等」**。函数签名只给到形参列表结束，整行还带返回类型和 `{`，整行相等永远匹配不上。
+2. **替换块的行数不能硬编码**。`AUTH_OLD` 是 4 行我却写了 `body[k:k+3]`，导致鉴权块永远找不到。一律用 `len(parts)`。
+3. **先替换再判断会让降级分支失效**：脚本先把首参 `userID` → `sc`，再判断有没有鉴权块，结果没有鉴权块的函数里 `sc` 未定义、且降级分支再也匹配不到 `h.store.X(userID`。修法是按函数名精确回改。
+4. **`agentByNodeUnsafe` 走 `s.agentByNode` 索引**，测试 fixture 只写 `s.agents` 会报 `agent not found by node_id`。
+5. **尾随换行会 split 出空串**，整行块匹配因此永远失败 —— 匹配前先 `rstrip("\n")`。
+6. **容器重启后 JWT 失效**，冒烟脚本必须**每次重新登录**再取 token，不能复用旧 token。
+
 **后续批次排期**
 
 | 批次 | 范围 | 状态 |
 |---|---|---|
 | 2-1 | Project（7 函数 + handler + 裁决层） | ✅ 已上线 |
-| 2-2 | Task 归属收敛 | ⬜ 待开工 |
+| 2-2 | Task 归属收敛 | ✅ 已上线 |
 | 2-3 | Agent 归属收敛 | ⬜ 待开工 |
 | 2-4 | Knowledge + WorkflowTemplate | ⬜ 待开工 |
 | 2-5 | File + Comment + Meeting | ⬜ 待开工 |

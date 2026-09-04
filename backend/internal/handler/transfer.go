@@ -23,7 +23,7 @@ func NewTransferHandler(s *store.Store) *TransferHandler {
 }
 
 func (h *TransferHandler) GetTaskArtifactContent(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -32,7 +32,7 @@ func (h *TransferHandler) GetTaskArtifactContent(c *gin.Context) {
 	artifactID := c.Param("artifactId")
 
 	// Verify user owns the task.
-	if _, appErr := h.store.GetTask(userID, taskID); appErr != nil {
+	if _, appErr := h.store.GetTask(sc, taskID); appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}

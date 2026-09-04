@@ -1262,7 +1262,7 @@ func (h *WebhookHandler) notifyPMPlanRejected(c *gin.Context, task *model.TaskDe
 		}
 		return
 	}
-	pmNodeID, appErr := h.store.GetTaskPMPublishTarget(task.UserID, task.ID)
+	pmNodeID, appErr := h.store.GetTaskPMPublishTarget(store.Scope{UserID: task.UserID}, task.ID)
 	if appErr != nil {
 		if h.log != nil {
 			h.log.Warn("skip plan-reject notify", zap.String("task_id", task.ID), zap.String("code", appErr.Code))
@@ -1565,7 +1565,7 @@ func (h *WebhookHandler) NudgePlanningPM(ctx context.Context, taskID string) {
 	if task == nil {
 		return
 	}
-	pmNodeID, appErr := h.store.GetTaskPMPublishTarget(task.UserID, task.ID)
+	pmNodeID, appErr := h.store.GetTaskPMPublishTarget(store.Scope{UserID: task.UserID}, task.ID)
 	if appErr != nil {
 		if h.log != nil {
 			h.log.Warn("skip planning-stall nudge", zap.String("task_id", taskID), zap.String("code", appErr.Code))

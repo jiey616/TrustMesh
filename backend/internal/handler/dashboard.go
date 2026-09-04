@@ -27,32 +27,32 @@ func (h *DashboardHandler) Stats(c *gin.Context) {
 }
 
 func (h *DashboardHandler) RecentEvents(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 	limit := queryInt(c, "limit", 20)
-	events := h.store.ListUserEvents(userID, limit)
+	events := h.store.ListUserEvents(sc, limit)
 	transport.WriteList(c, events, len(events))
 }
 
 func (h *DashboardHandler) RecentTasks(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 	limit := queryInt(c, "limit", 10)
-	tasks := h.store.ListRecentTasks(userID, limit)
+	tasks := h.store.ListRecentTasks(sc, limit)
 	transport.WriteList(c, tasks, len(tasks))
 }
 
 func (h *DashboardHandler) AgentEvents(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 	limit := queryInt(c, "limit", 50)
-	events, appErr := h.store.ListAgentEvents(userID, c.Param("id"), limit)
+	events, appErr := h.store.ListAgentEvents(sc, c.Param("id"), limit)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return

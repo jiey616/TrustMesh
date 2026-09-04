@@ -9,11 +9,11 @@ import (
 	"trustmesh/backend/internal/transport"
 )
 
-func (s *Store) ListTasks(userID, projectID, status string) ([]model.TaskListItem, *transport.AppError) {
+func (s *Store) ListTasks(sc Scope, projectID, status string) ([]model.TaskListItem, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if _, err := s.projectForScopeUnsafe(Scope{UserID: userID}, projectID); err != nil {
+	if _, err := s.projectForScopeUnsafe(sc, projectID); err != nil {
 		return nil, err
 	}
 	if status != "" && !isValidTaskStatus(status) {
@@ -24,7 +24,7 @@ func (s *Store) ListTasks(userID, projectID, status string) ([]model.TaskListIte
 	items := make([]model.TaskListItem, 0, len(ids))
 	for _, id := range ids {
 		task, ok := s.tasks[id]
-		if !ok || task.UserID != userID {
+		if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 			continue
 		}
 		if status != "" && task.Status != status {
@@ -36,11 +36,11 @@ func (s *Store) ListTasks(userID, projectID, status string) ([]model.TaskListIte
 	return items, nil
 }
 
-func (s *Store) GetTask(userID, taskID string) (*model.TaskDetail, *transport.AppError) {
+func (s *Store) GetTask(sc Scope, taskID string) (*model.TaskDetail, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	task, ok := s.tasks[taskID]
-	if !ok || task.UserID != userID {
+	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 		return nil, transport.NotFound("task not found")
 	}
 	return s.copyTaskWithArtifactsUnsafe(task), nil
@@ -69,8 +69,11 @@ func (s *Store) GetTaskByNodeID(nodeID, taskID string) (*model.TaskDetail, *tran
 	if err != nil {
 		return nil, err
 	}
+	// 节点路径没有 HTTP 租户上下文，用 agent 自身身份构造 Scope：
+	// 同租户（或 agent/task 尚未回填 org 时的同 user）才放行。
+	agentScope := Scope{UserID: agent.UserID, OrgID: agent.OrgID}
 	task, ok := s.tasks[taskID]
-	if !ok || task.UserID != agent.UserID {
+	if !ok || !visibleToScope(agentScope, task.OrgID, task.UserID) {
 		return nil, transport.NotFound("task not found")
 	}
 	if task.PMAgent.NodeID == nodeID {
@@ -84,11 +87,11 @@ func (s *Store) GetTaskByNodeID(nodeID, taskID string) (*model.TaskDetail, *tran
 	return nil, transport.Forbidden("agent is not a participant of this task")
 }
 
-func (s *Store) ListTaskEvents(userID, taskID string) ([]model.Event, *transport.AppError) {
+func (s *Store) ListTaskEvents(sc Scope, taskID string) ([]model.Event, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	task, ok := s.tasks[taskID]
-	if !ok || task.UserID != userID {
+	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 		return nil, transport.NotFound("task not found")
 	}
 	events := s.taskEvents[taskID]
@@ -98,10 +101,12 @@ func (s *Store) ListTaskEvents(userID, taskID string) ([]model.Event, *transport
 	return cloned, nil
 }
 
-func (s *Store) ListUserEvents(userID string, limit int) []model.Event {
+// ListUserEvents 返回个人活动流。活动流是 user 维度数据（谁触发了什么），
+// 不按租户共享；这里收 Scope 参数只是为了调用侧统一。
+func (s *Store) ListUserEvents(sc Scope, limit int) []model.Event {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	events := s.userEvents[userID]
+	events := s.userEvents[sc.UserID]
 	if limit <= 0 {
 		limit = len(events)
 	}
@@ -115,11 +120,11 @@ func (s *Store) ListUserEvents(userID string, limit int) []model.Event {
 	return result
 }
 
-func (s *Store) ListAgentEvents(userID, agentID string, limit int) ([]model.Event, *transport.AppError) {
+func (s *Store) ListAgentEvents(sc Scope, agentID string, limit int) ([]model.Event, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	agent, ok := s.agents[agentID]
-	if !ok || agent.UserID != userID {
+	if !ok || !visibleToScope(sc, agent.OrgID, agent.UserID) {
 		return nil, transport.NotFound("agent not found")
 	}
 	events := s.agentEvents[agentID]
@@ -133,13 +138,13 @@ func (s *Store) ListAgentEvents(userID, agentID string, limit int) ([]model.Even
 	return result, nil
 }
 
-func (s *Store) ListRecentTasks(userID string, limit int) []model.TaskListItem {
+func (s *Store) ListRecentTasks(sc Scope, limit int) []model.TaskListItem {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	items := make([]model.TaskListItem, 0)
 	for _, t := range s.tasks {
-		if t.UserID == userID {
+		if visibleToScope(sc, t.OrgID, t.UserID) {
 			items = append(items, toTaskListItem(*t))
 		}
 	}

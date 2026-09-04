@@ -41,7 +41,7 @@ func TestSyncAgentPresenceMarksOfflineAndBusy(t *testing.T) {
 		t.Fatalf("expected project pm to be offline, got %s", projectState.PMAgent.Status)
 	}
 
-	taskState, appErr := s.GetTask(s.agents[pm.ID].UserID, s.projectTasks[project.ID][0])
+	taskState, appErr := s.GetTask(Scope{UserID: s.agents[pm.ID].UserID}, s.projectTasks[project.ID][0])
 	if appErr != nil {
 		t.Fatalf("get task: %v", appErr)
 	}
@@ -233,7 +233,7 @@ func TestTodoCompleteIdempotencyByMessageID(t *testing.T) {
 	if task2.Status != "done" || task1.ID != task2.ID {
 		t.Fatalf("unexpected duplicate todo.complete result: task1=%s task2=%s status=%s", task1.ID, task2.ID, task2.Status)
 	}
-	events, appErr := s.ListTaskEvents(task1.UserID, task.ID)
+	events, appErr := s.ListTaskEvents(Scope{UserID: task1.UserID}, task.ID)
 	if appErr != nil {
 		t.Fatalf("list task events: %v", appErr)
 	}
@@ -358,7 +358,7 @@ func TestSaveArtifactAndFillOnTaskQuery(t *testing.T) {
 	}
 
 	// Query task should include the artifact.
-	fetched, appErr := s.GetTask(task.UserID, task.ID)
+	fetched, appErr := s.GetTask(Scope{UserID: task.UserID}, task.ID)
 	if appErr != nil {
 		t.Fatalf("get task: %v", appErr)
 	}
@@ -381,7 +381,7 @@ func TestSaveArtifactAndFillOnTaskQuery(t *testing.T) {
 	if appErr := s.SaveArtifact(artifact); appErr != nil {
 		t.Fatalf("save duplicate artifact: %v", appErr)
 	}
-	fetched2, _ := s.GetTask(task.UserID, task.ID)
+	fetched2, _ := s.GetTask(Scope{UserID: task.UserID}, task.ID)
 	if len(fetched2.Artifacts) != 1 {
 		t.Fatalf("expected 1 artifact after dedup, got %d", len(fetched2.Artifacts))
 	}
@@ -427,7 +427,7 @@ func TestSaveArtifactBindsTodoOutput(t *testing.T) {
 		t.Fatalf("save artifact: %v", appErr)
 	}
 
-	fetched, appErr := s.GetTask(task.UserID, task.ID)
+	fetched, appErr := s.GetTask(Scope{UserID: task.UserID}, task.ID)
 	if appErr != nil {
 		t.Fatalf("get task: %v", appErr)
 	}
@@ -459,7 +459,7 @@ func TestSaveArtifactBindsTodoOutput(t *testing.T) {
 	if appErr := s.SaveArtifact(artifact); appErr != nil {
 		t.Fatalf("re-save artifact: %v", appErr)
 	}
-	fetched2, _ := s.GetTask(task.UserID, task.ID)
+	fetched2, _ := s.GetTask(Scope{UserID: task.UserID}, task.ID)
 	for i := range fetched2.Todos {
 		if fetched2.Todos[i].ID == "todo-1" {
 			todo = &fetched2.Todos[i]
@@ -720,7 +720,7 @@ func TestCancelTaskStopsFurtherTodoUpdates(t *testing.T) {
 func TestCreateTaskByUser(t *testing.T) {
 	s, userID, _, developer, project := seedWorkflowState(t)
 
-	task, appErr := s.CreateTaskByUser(userID, UserTaskCreateInput{
+	task, appErr := s.CreateTaskByUser(Scope{UserID: userID}, UserTaskCreateInput{
 		ProjectID:       project.ID,
 		Title:           "Implement login",
 		Description:     "Support email password login",
@@ -754,7 +754,7 @@ func TestCreateTaskByUser(t *testing.T) {
 	}
 
 	// Verify task appears in project tasks
-	fetched, appErr := s.GetTask(userID, task.ID)
+	fetched, appErr := s.GetTask(Scope{UserID: userID}, task.ID)
 	if appErr != nil {
 		t.Fatalf("get task: %v", appErr)
 	}
@@ -767,7 +767,7 @@ func TestCreateTaskByUserValidation(t *testing.T) {
 	s, userID, _, developer, project := seedWorkflowState(t)
 
 	// Missing title
-	_, appErr := s.CreateTaskByUser(userID, UserTaskCreateInput{
+	_, appErr := s.CreateTaskByUser(Scope{UserID: userID}, UserTaskCreateInput{
 		ProjectID:       project.ID,
 		Title:           "",
 		Description:     "desc",
@@ -778,7 +778,7 @@ func TestCreateTaskByUserValidation(t *testing.T) {
 	}
 
 	// Invalid priority
-	_, appErr = s.CreateTaskByUser(userID, UserTaskCreateInput{
+	_, appErr = s.CreateTaskByUser(Scope{UserID: userID}, UserTaskCreateInput{
 		ProjectID:       project.ID,
 		Title:           "Test",
 		Description:     "desc",
@@ -790,7 +790,7 @@ func TestCreateTaskByUserValidation(t *testing.T) {
 	}
 
 	// Default priority
-	task, appErr := s.CreateTaskByUser(userID, UserTaskCreateInput{
+	task, appErr := s.CreateTaskByUser(Scope{UserID: userID}, UserTaskCreateInput{
 		ProjectID:       project.ID,
 		Title:           "Test",
 		Description:     "desc",
@@ -807,7 +807,7 @@ func TestCreateTaskByUserValidation(t *testing.T) {
 	s.mu.Lock()
 	s.projects[project.ID].Status = "archived"
 	s.mu.Unlock()
-	_, appErr = s.CreateTaskByUser(userID, UserTaskCreateInput{
+	_, appErr = s.CreateTaskByUser(Scope{UserID: userID}, UserTaskCreateInput{
 		ProjectID:       project.ID,
 		Title:           "Test",
 		Description:     "desc",
@@ -821,7 +821,7 @@ func TestCreateTaskByUserValidation(t *testing.T) {
 func TestCreateTaskByUserTodoWorkflow(t *testing.T) {
 	s, userID, _, developer, project := seedWorkflowState(t)
 
-	task, appErr := s.CreateTaskByUser(userID, UserTaskCreateInput{
+	task, appErr := s.CreateTaskByUser(Scope{UserID: userID}, UserTaskCreateInput{
 		ProjectID:       project.ID,
 		Title:           "Build API",
 		Description:     "REST endpoints",
@@ -911,7 +911,7 @@ func TestProjectWorkflowRefAndProgress(t *testing.T) {
 	}
 
 	// 任务 A 负责步骤 0-1（快照应裁剪为 2 步）
-	taskA, appErr := s.CreateTaskByUser(userID, UserTaskCreateInput{
+	taskA, appErr := s.CreateTaskByUser(Scope{UserID: userID}, UserTaskCreateInput{
 		ProjectID:       project.ID,
 		Title:           "前段",
 		Description:     "前段任务",
@@ -932,7 +932,7 @@ func TestProjectWorkflowRefAndProgress(t *testing.T) {
 	}
 
 	// 任务 B 负责步骤 2（快照应裁剪为 1 步）
-	taskB, appErr := s.CreateTaskByUser(userID, UserTaskCreateInput{
+	taskB, appErr := s.CreateTaskByUser(Scope{UserID: userID}, UserTaskCreateInput{
 		ProjectID:       project.ID,
 		Title:           "后段",
 		Description:     "后段任务",
@@ -996,7 +996,7 @@ func TestCreateTaskInvalidStepRange(t *testing.T) {
 		t.Fatalf("set primary workflow: %v", appErr)
 	}
 	// 越界 step_to
-	if _, appErr := s.CreateTaskByUser(userID, UserTaskCreateInput{
+	if _, appErr := s.CreateTaskByUser(Scope{UserID: userID}, UserTaskCreateInput{
 		ProjectID:       project.ID,
 		Title:           "坏任务",
 		Description:     "bad",
@@ -1009,7 +1009,7 @@ func TestCreateTaskInvalidStepRange(t *testing.T) {
 		t.Fatalf("out-of-range step_to should fail")
 	}
 	// 不存在的工作流 index
-	if _, appErr := s.CreateTaskByUser(userID, UserTaskCreateInput{
+	if _, appErr := s.CreateTaskByUser(Scope{UserID: userID}, UserTaskCreateInput{
 		ProjectID:       project.ID,
 		Title:           "坏任务2",
 		Description:     "bad",

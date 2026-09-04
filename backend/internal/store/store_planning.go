@@ -22,15 +22,15 @@ type TaskPlanReadyInput struct {
 	DeliverScope *model.TaskDeliverScope
 }
 
-func (s *Store) CreateTaskPlanning(userID, projectID, content string) (*model.TaskDetail, *transport.AppError) {
-	return s.CreateTaskPlanningWithFiles(userID, projectID, content, nil, nil, nil, 0, 0)
+func (s *Store) CreateTaskPlanning(sc Scope, projectID, content string) (*model.TaskDetail, *transport.AppError) {
+	return s.CreateTaskPlanningWithFiles(sc, projectID, content, nil, nil, nil, 0, 0)
 }
 
 // CreateTaskPlanningWithFiles creates a planning-mode task with optional file attachments.
 // When workflowIndex points at a project workflow, the snapshot is trimmed to the
 // requested step range (stepFrom..stepTo) and a WorkflowRef is recorded, mirroring
 // CreateTaskByUser. Otherwise the explicitly chosen (or default) workflow is used as-is.
-func (s *Store) CreateTaskPlanningWithFiles(userID, projectID, content string, fileIDs []string, workflow *model.Workflow, workflowIndex *int, stepFrom, stepTo int) (*model.TaskDetail, *transport.AppError) {
+func (s *Store) CreateTaskPlanningWithFiles(sc Scope, projectID, content string, fileIDs []string, workflow *model.Workflow, workflowIndex *int, stepFrom, stepTo int) (*model.TaskDetail, *transport.AppError) {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return nil, transport.Validation("invalid content", map[string]any{"content": "required"})
@@ -39,7 +39,7 @@ func (s *Store) CreateTaskPlanningWithFiles(userID, projectID, content string, f
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	project, err := s.projectForScopeUnsafe(Scope{UserID: userID}, projectID)
+	project, err := s.projectForScopeUnsafe(sc, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -93,8 +93,8 @@ func (s *Store) CreateTaskPlanningWithFiles(userID, projectID, content string, f
 
 	task := &model.TaskDetail{
 		ID:        newID(),
-		UserID:    userID,
-		OrgID:     s.personalOrgOfUnsafe(userID),
+		UserID:    sc.UserID,
+		OrgID:     s.resolveOwnerOrgUnsafe(sc),
 		ProjectID: project.ID,
 		Title:     content,
 		Status:    "planning",
@@ -122,7 +122,7 @@ func (s *Store) CreateTaskPlanningWithFiles(userID, projectID, content string, f
 	s.projectTasks[task.ProjectID] = append(s.projectTasks[task.ProjectID], task.ID)
 
 	taskTitle := task.Title
-	s.addEventUnsafe(userID, project.ID, task.ID, "", "user", userID, "", "task_created", &taskTitle, map[string]any{
+	s.addEventUnsafe(sc.UserID, project.ID, task.ID, "", "user", sc.UserID, "", "task_created", &taskTitle, map[string]any{
 		"task_title": task.Title,
 		"mode":       "planning",
 	}, now)
@@ -135,7 +135,7 @@ func (s *Store) CreateTaskPlanningWithFiles(userID, projectID, content string, f
 	return s.copyTaskWithArtifactsUnsafe(task), nil
 }
 
-func (s *Store) AppendTaskMessage(userID, taskID, content string, uiResponse *model.UIResponse) (*model.TaskDetail, *transport.AppError) {
+func (s *Store) AppendTaskMessage(sc Scope, taskID, content string, uiResponse *model.UIResponse) (*model.TaskDetail, *transport.AppError) {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return nil, transport.Validation("invalid content", map[string]any{"content": "required"})
@@ -145,7 +145,7 @@ func (s *Store) AppendTaskMessage(userID, taskID, content string, uiResponse *mo
 	defer s.mu.Unlock()
 
 	task, ok := s.tasks[taskID]
-	if !ok || task.UserID != userID {
+	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 		return nil, transport.NotFound("task not found")
 	}
 	if task.Status != "planning" {
@@ -299,6 +299,9 @@ func (s *Store) FinalizePlanByPMNode(nodeID, messageID string, in TaskPlanReadyI
 	now := time.Now().UTC()
 	s.markAgentSeenUnsafe(pmAgent.ID, now)
 
+	// 本项目归属方身份：下面的 todo 派发校验以此裁决同租户。
+	projectScope := Scope{UserID: project.UserID, OrgID: project.OrgID}
+
 	// Build todos
 	seenTodoIDs := make(map[string]struct{}, len(normalizedTodos))
 	todos := make([]model.Todo, 0, len(normalizedTodos))
@@ -315,8 +318,10 @@ func (s *Store) FinalizePlanByPMNode(nodeID, messageID string, in TaskPlanReadyI
 		if assigneeErr != nil {
 			return nil, transport.Validation("invalid assignee_node_id", map[string]any{"todo_index": i, "assignee_node_id": assigneeNode})
 		}
-		if assigneeAgent.UserID != project.UserID {
-			return nil, transport.Forbidden("assignee agent does not belong to same user")
+		// PM 节点路径没有 HTTP 租户上下文，用项目归属构造 Scope：PM 代表
+		// 项目归属方派活，因此派发对象必须与项目同租户（未回填时退回同 user）。
+		if !visibleToScope(projectScope, assigneeAgent.OrgID, assigneeAgent.UserID) {
+			return nil, transport.Forbidden("assignee agent does not belong to same organization")
 		}
 
 		todoID := strings.TrimSpace(todoIn.ID)
@@ -386,12 +391,12 @@ func (s *Store) FinalizePlanByPMNode(nodeID, messageID string, in TaskPlanReadyI
 }
 
 // ApprovePlan transitions a task from review → pending so todos can be dispatched.
-func (s *Store) ApprovePlan(userID, taskID string) (*model.TaskDetail, *transport.AppError) {
+func (s *Store) ApprovePlan(sc Scope, taskID string) (*model.TaskDetail, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	task, ok := s.tasks[taskID]
-	if !ok || task.UserID != userID {
+	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 		return nil, transport.NotFound("task not found")
 	}
 	if task.Status != "review" {
@@ -407,7 +412,7 @@ func (s *Store) ApprovePlan(userID, taskID string) (*model.TaskDetail, *transpor
 	task.Version++
 
 	taskTitle := task.Title
-	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, "", "user", userID, "", "task_approved", &taskTitle, map[string]any{
+	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, "", "user", sc.UserID, "", "task_approved", &taskTitle, map[string]any{
 		"task_title": task.Title,
 	}, now)
 
@@ -420,7 +425,7 @@ func (s *Store) ApprovePlan(userID, taskID string) (*model.TaskDetail, *transpor
 }
 
 // RejectPlan transitions a task from review → planning and appends user feedback.
-func (s *Store) RejectPlan(userID, taskID, feedback string) (*model.TaskDetail, *transport.AppError) {
+func (s *Store) RejectPlan(sc Scope, taskID, feedback string) (*model.TaskDetail, *transport.AppError) {
 	feedback = strings.TrimSpace(feedback)
 	if feedback == "" {
 		return nil, transport.Validation("invalid payload", map[string]any{"feedback": "required"})
@@ -430,7 +435,7 @@ func (s *Store) RejectPlan(userID, taskID, feedback string) (*model.TaskDetail, 
 	defer s.mu.Unlock()
 
 	task, ok := s.tasks[taskID]
-	if !ok || task.UserID != userID {
+	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 		return nil, transport.NotFound("task not found")
 	}
 	if task.Status != "review" {
@@ -455,7 +460,7 @@ func (s *Store) RejectPlan(userID, taskID, feedback string) (*model.TaskDetail, 
 	task.Version++
 
 	taskTitle := task.Title
-	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, "", "user", userID, "", "task_plan_rejected", &taskTitle, map[string]any{
+	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, "", "user", sc.UserID, "", "task_plan_rejected", &taskTitle, map[string]any{
 		"task_title": task.Title,
 		"feedback":   feedback,
 	}, now)
@@ -487,12 +492,12 @@ func (s *Store) ClaimPlanRejectNotify(taskID, fingerprint string, max int) bool 
 
 // GetTaskPMPublishTarget returns the PM agent node ID for a planning task.
 
-func (s *Store) GetTaskPMPublishTarget(userID, taskID string) (string, *transport.AppError) {
+func (s *Store) GetTaskPMPublishTarget(sc Scope, taskID string) (string, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	task, ok := s.tasks[taskID]
-	if !ok || task.UserID != userID {
+	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 		return "", transport.NotFound("task not found")
 	}
 	if task.PMAgent.NodeID == "" {

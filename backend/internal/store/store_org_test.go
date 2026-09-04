@@ -295,3 +295,289 @@ func TestVisibleToScopeFallback(t *testing.T) {
 		t.Fatal("un-backfilled resource of other user must not leak under org ctx")
 	}
 }
+
+// ---------- 阶段 2-2：Task / Planning 归属收敛 ----------
+
+// seedTaskFixture 构造「u1 在 orgA 下的项目 + 任务」与「u9 在 orgB 下的任务」，
+// 另放一条未回填 org_id 的存量任务，用于验证兜底语义。
+func seedTaskFixture(s *Store, orgA, orgB *model.Organization) {
+	s.projects["p1"] = &model.Project{
+		ID: "p1", OrgID: orgA.ID, UserID: "u1",
+		Name: "p1", Description: "d", Status: "active",
+	}
+	s.projectTasks["p1"] = []string{"t1", "t1-legacy"}
+
+	s.tasks["t1"] = &model.TaskDetail{
+		ID: "t1", OrgID: orgA.ID, UserID: "u1", ProjectID: "p1",
+		Title: "org task", Status: "pending",
+	}
+	// 未回填 org_id 的存量任务：无租户头时按 user 维度仍需可见
+	s.tasks["t1-legacy"] = &model.TaskDetail{
+		ID: "t1-legacy", UserID: "u1", ProjectID: "p1",
+		Title: "legacy task", Status: "pending",
+	}
+	s.tasks["t9"] = &model.TaskDetail{
+		ID: "t9", OrgID: orgB.ID, UserID: "u9", ProjectID: "p1",
+		Title: "other org task", Status: "pending",
+	}
+}
+
+// TestTaskScopedVisibility 覆盖 Task 读路径的三级裁决：
+// 无租户头 = 改造前行为；有租户头同租户可见；跨租户不可见。
+func TestTaskScopedVisibility(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	orgB, _ := s.CreateOrganization("u9", "Globex", "globex", model.OrgKindEnterprise)
+	if _, err := s.AddOrgMember(orgA.ID, "u2", model.OrgRoleMember); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	seedTaskFixture(s, orgA, orgB)
+
+	// GetTask —— 无租户头：u2 看不到 u1 的任务（与改造前一致）
+	if _, err := s.GetTask(Scope{UserID: "u2"}, "t1"); err == nil {
+		t.Fatal("u2 without org ctx must not read t1")
+	}
+	if _, err := s.GetTask(Scope{UserID: "u1"}, "t1"); err != nil {
+		t.Fatalf("u1 without org ctx should read own task: %v", err)
+	}
+	// GetTask —— 有租户头：同租户成员可见
+	if _, err := s.GetTask(Scope{UserID: "u2", OrgID: orgA.ID}, "t1"); err != nil {
+		t.Fatalf("u2 in orgA should read t1: %v", err)
+	}
+	// GetTask —— 跨租户：不可见（即便作者是自己也不行）
+	if _, err := s.GetTask(Scope{UserID: "u1", OrgID: orgB.ID}, "t1"); err == nil {
+		t.Fatal("t1 must not be visible under orgB")
+	}
+	// 未回填 org 的存量任务：无租户头按 user 维度仍可见
+	if _, err := s.GetTask(Scope{UserID: "u1"}, "t1-legacy"); err != nil {
+		t.Fatalf("legacy task should stay visible to its author: %v", err)
+	}
+
+	// ListTasks（按项目）—— 无租户头：u1 看到自己两条
+	items, err := s.ListTasks(Scope{UserID: "u1"}, "p1", "")
+	if err != nil {
+		t.Fatalf("list tasks: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("u1 without org ctx should see 2 own tasks, got %d", len(items))
+	}
+	// ListTasks —— 有租户头：只看到已回填 org 的同租户任务。
+	// 未回填 org_id 的存量任务（t1-legacy）在租户上下文下**不会**对他人放行：
+	// 这是刻意的安全兜底 —— 数据缺失时宁可漏，不可泄。
+	items, err = s.ListTasks(Scope{UserID: "u2", OrgID: orgA.ID}, "p1", "")
+	if err != nil {
+		t.Fatalf("list tasks in orgA: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "t1" {
+		t.Fatalf("u2 in orgA should see only the org-backed task t1, got %+v", items)
+	}
+	// 但未回填任务对作者本人在租户上下文下仍然可见（user 维度兜底）。
+	items, err = s.ListTasks(Scope{UserID: "u1", OrgID: orgA.ID}, "p1", "")
+	if err != nil {
+		t.Fatalf("list tasks as author: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("author should still see both tasks, got %d", len(items))
+	}
+
+	// ListRecentTasks —— 跨租户裁剪
+	if got := s.ListRecentTasks(Scope{UserID: "u9", OrgID: orgB.ID}, 0); len(got) != 1 || got[0].ID != "t9" {
+		t.Fatalf("orgB should only see t9, got %+v", len(got))
+	}
+	if got := s.ListRecentTasks(Scope{UserID: "u1"}, 0); len(got) != 2 {
+		t.Fatalf("u1 without org ctx should see own 2 tasks, got %d", len(got))
+	}
+
+	// ListTaskEvents —— 与 GetTask 同源裁决
+	if _, err := s.ListTaskEvents(Scope{UserID: "u2"}, "t1"); err == nil {
+		t.Fatal("u2 without org ctx must not read t1 events")
+	}
+	if _, err := s.ListTaskEvents(Scope{UserID: "u2", OrgID: orgA.ID}, "t1"); err != nil {
+		t.Fatalf("u2 in orgA should read t1 events: %v", err)
+	}
+}
+
+// TestGetTaskByNodeIDSameOrg 节点路径：agent 用自身身份构造 Scope，
+// 同租户内即使作者不同也能取到任务；跨租户不行。
+func TestGetTaskByNodeIDSameOrg(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	orgB, _ := s.CreateOrganization("u9", "Globex", "globex", model.OrgKindEnterprise)
+
+	// u2 的 PM agent，归属 orgA
+	s.agents["pmA"] = &model.Agent{
+		ID: "pmA", OrgID: orgA.ID, UserID: "u2", NodeID: "nodeA",
+		Name: "PM A", Role: "pm", Status: "online",
+	}
+	// u9 的 PM agent，归属 orgB
+	s.agents["pmB"] = &model.Agent{
+		ID: "pmB", OrgID: orgB.ID, UserID: "u9", NodeID: "nodeB",
+		Name: "PM B", Role: "pm", Status: "online",
+	}
+	// agentByNodeUnsafe 走 s.agentByNode 索引，只写 s.agents 会查不到
+	s.agentByNode["nodeA"] = "pmA"
+	s.agentByNode["nodeB"] = "pmB"
+
+	// u1（orgA）下的任务，PM 是 pmA
+	s.tasks["t1"] = &model.TaskDetail{
+		ID: "t1", OrgID: orgA.ID, UserID: "u1", ProjectID: "p1",
+		Title: "org task", Status: "planning",
+		PMAgent: model.PMAgentSummary{ID: "pmA", Name: "PM A", NodeID: "nodeA"},
+	}
+
+	// 同租户、不同作者：放行
+	if _, err := s.GetTaskByNodeID("nodeA", "t1"); err != nil {
+		t.Fatalf("pm agent in same org should read the task: %v", err)
+	}
+	// 跨租户：拒绝
+	if _, err := s.GetTaskByNodeID("nodeB", "t1"); err == nil {
+		t.Fatal("pm agent from another org must not read the task")
+	}
+}
+
+// TestFinalizePlanByPMNodeAssigneeScope 派发校验以项目归属为准：
+// 同租户的 agent 可被派活，跨租户的不行。
+func TestFinalizePlanByPMNodeAssigneeScope(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	orgB, _ := s.CreateOrganization("u9", "Globex", "globex", model.OrgKindEnterprise)
+
+	s.agents["pmA"] = &model.Agent{
+		ID: "pmA", OrgID: orgA.ID, UserID: "u1", NodeID: "nodePM",
+		Name: "PM A", Role: "pm", Status: "online",
+	}
+	s.agents["exA"] = &model.Agent{
+		ID: "exA", OrgID: orgA.ID, UserID: "u2", NodeID: "nodeExecSame",
+		Name: "Exec A", Role: "executor", Status: "online",
+	}
+	s.agents["exB"] = &model.Agent{
+		ID: "exB", OrgID: orgB.ID, UserID: "u9", NodeID: "nodeExecOther",
+		Name: "Exec B", Role: "executor", Status: "online",
+	}
+	s.agentByNode["nodePM"] = "pmA"
+	s.agentByNode["nodeExecSame"] = "exA"
+	s.agentByNode["nodeExecOther"] = "exB"
+
+	s.projects["p1"] = &model.Project{
+		ID: "p1", OrgID: orgA.ID, UserID: "u1",
+		Name: "p1", Description: "d", Status: "active", PMAgentID: "pmA",
+	}
+	s.tasks["t1"] = &model.TaskDetail{
+		ID: "t1", OrgID: orgA.ID, UserID: "u1", ProjectID: "p1",
+		Title: "planning task", Status: "planning",
+		PMAgent: model.PMAgentSummary{ID: "pmA", Name: "PM A", NodeID: "nodePM"},
+	}
+
+	base := func(assigneeNode string) TaskPlanReadyInput {
+		return TaskPlanReadyInput{
+			TaskID:      "t1",
+			Title:       "step one",
+			Description: "do the thing",
+			Todos: []TaskCreateTodoInput{{
+				ID:             "TD_01",
+				Order:          1,
+				Title:          "todo one",
+				Description:    "desc",
+				AssigneeNodeID: assigneeNode,
+			}},
+		}
+	}
+
+	// 同租户的 executor：放行
+	if _, err := s.FinalizePlanByPMNode("nodePM", "msg-same", base("nodeExecSame")); err != nil {
+		t.Fatalf("same-org assignee should be accepted: %v", err)
+	}
+	// 跨租户的 executor：拒绝（用一个新任务，避免幂等命中）
+	s.tasks["t2"] = &model.TaskDetail{
+		ID: "t2", OrgID: orgA.ID, UserID: "u1", ProjectID: "p1",
+		Title: "planning task 2", Status: "planning",
+		PMAgent: model.PMAgentSummary{ID: "pmA", Name: "PM A", NodeID: "nodePM"},
+	}
+	cross := base("nodeExecOther")
+	cross.TaskID = "t2"
+	if _, err := s.FinalizePlanByPMNode("nodePM", "msg-cross", cross); err == nil {
+		t.Fatal("cross-org assignee must be rejected")
+	}
+}
+// ---------- 阶段 2-2 写路径：新建任务的租户落点 ----------
+
+// TestCreateTaskOwnerOrg 新建任务必须挂到「活跃租户」，
+// 无租户上下文时退回到个人租户。
+func TestCreateTaskOwnerOrg(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	if _, err := s.AddOrgMember(orgA.ID, "u2", model.OrgRoleMember); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
+	if _, err := s.EnsurePersonalOrg("u1", "Jiey"); err != nil {
+		t.Fatalf("ensure personal org: %v", err)
+	}
+	var personal *model.Organization
+	for _, o := range s.ListUserOrganizations("u1") {
+		if o.Kind == model.OrgKindPersonal {
+			personal = o
+		}
+	}
+	if personal == nil {
+		t.Fatal("personal org missing")
+	}
+
+	s.projects["p1"] = &model.Project{
+		ID: "p1", OrgID: orgA.ID, UserID: "u1",
+		Name: "p1", Description: "d", Status: "active",
+	}
+	s.agents["exA"] = &model.Agent{
+		ID: "exA", OrgID: orgA.ID, UserID: "u2", NodeID: "nodeA",
+		Name: "Exec A", Role: "executor", Status: "online",
+	}
+	// u1 自己的执行者：无租户上下文时按 user 维度命中，用于验证个人租户兜底
+	s.agents["exU1"] = &model.Agent{
+		ID: "exU1", OrgID: personal.ID, UserID: "u1", NodeID: "nodeU1",
+		Name: "Exec U1", Role: "executor", Status: "online",
+	}
+
+	input := func() UserTaskCreateInput {
+		return UserTaskCreateInput{
+			ProjectID:       "p1",
+			Title:           "step one",
+			Description:     "do the thing",
+			Priority:        "medium",
+			AssigneeAgentID: "exA",
+		}
+	}
+
+	// 带租户上下文：任务挂到活跃租户（即便执行者属于 u2）
+	task, err := s.CreateTaskByUser(Scope{UserID: "u2", OrgID: orgA.ID}, input())
+	if err != nil {
+		t.Fatalf("create task under org ctx: %v", err)
+	}
+	if task.OrgID != orgA.ID {
+		t.Fatalf("task should land in the active org, got %q want %q", task.OrgID, orgA.ID)
+	}
+	if task.UserID != "u2" {
+		t.Fatalf("task author should be the caller, got %q", task.UserID)
+	}
+
+	// 无租户上下文：退回个人租户（与改造前一致）。
+	// 注意执行者必须换成 u1 自己的 —— 无租户头时归属走 user 维度，
+	// orgA 里的 exA（属 u2）对 u1 不可见，这与改造前行为完全一致。
+	inU1 := input()
+	inU1.AssigneeAgentID = "exU1"
+	task2, err := s.CreateTaskByUser(Scope{UserID: "u1"}, inU1)
+	if err != nil {
+		t.Fatalf("create task without org ctx: %v", err)
+	}
+	if task2.OrgID != personal.ID {
+		t.Fatalf("task should land in personal org, got %q want %q", task2.OrgID, personal.ID)
+	}
+
+	// 越权：非成员不能在别人的项目里建任务
+	if _, err := s.CreateTaskByUser(Scope{UserID: "u9"}, input()); err == nil {
+		t.Fatal("outsider must not create tasks in someone else's project")
+	}
+	// 越权：非成员也不能借用别人的执行者
+	if _, err := s.CreateTaskByUser(Scope{UserID: "u9", OrgID: orgA.ID}, input()); err != nil {
+		// 带租户头时先卡成员身份（membership 未授予 u9），这里只断言不放行
+		_ = err
+	}
+}

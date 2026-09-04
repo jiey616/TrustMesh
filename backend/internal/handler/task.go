@@ -46,10 +46,13 @@ func NewTaskHandler(s *store.Store, publisher *clawsynapse.Client, wh *clawsynap
 }
 
 func (h *TaskHandler) Create(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
+
+	// 归属判断统一走 sc；其余仅按作者维度使用的地方保留 userID。
+	userID := sc.UserID
 
 	var body struct {
 		Title           string          `json:"title"`
@@ -67,7 +70,7 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		return
 	}
 
-	task, appErr := h.store.CreateTaskByUser(userID, store.UserTaskCreateInput{
+	task, appErr := h.store.CreateTaskByUser(sc, store.UserTaskCreateInput{
 		ProjectID:       c.Param("projectId"),
 		Title:           body.Title,
 		Description:     body.Description,
@@ -92,10 +95,13 @@ func (h *TaskHandler) Create(c *gin.Context) {
 // If agent_id is provided (set by the frontend @mention), the task is created in
 // building mode and dispatched immediately. Otherwise it enters planning mode.
 func (h *TaskHandler) CreateFromText(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
+
+	// 归属判断统一走 sc；其余仅按作者维度使用的地方保留 userID。
+	userID := sc.UserID
 
 	var body struct {
 		Content       string          `json:"content"`
@@ -114,7 +120,7 @@ func (h *TaskHandler) CreateFromText(c *gin.Context) {
 	projectID := c.Param("projectId")
 
 	if strings.TrimSpace(body.AgentID) != "" {
-		task, appErr := h.store.CreateTaskByUser(userID, store.UserTaskCreateInput{
+		task, appErr := h.store.CreateTaskByUser(sc, store.UserTaskCreateInput{
 			ProjectID:       projectID,
 			Title:           deriveTitle(body.Content),
 			Description:     body.Content,
@@ -135,7 +141,7 @@ func (h *TaskHandler) CreateFromText(c *gin.Context) {
 		return
 	}
 
-	h.createPlanningTask(c, userID, projectID, body.Content, body.FileIDs, body.Workflow, body.WorkflowIndex, body.StepFrom, body.StepTo)
+	h.createPlanningTask(c, sc, projectID, body.Content, body.FileIDs, body.Workflow, body.WorkflowIndex, body.StepFrom, body.StepTo)
 }
 
 // deriveTitle extracts a short title from free-form content.
@@ -171,13 +177,13 @@ func truncateTitle(s string, max int) string {
 }
 
 // createPlanningTask creates a planning-mode task and notifies the PM agent.
-func (h *TaskHandler) createPlanningTask(c *gin.Context, userID, projectID, content string, fileIDs []string, workflow *model.Workflow, workflowIndex *int, stepFrom, stepTo int) {
-	task, appErr := h.store.CreateTaskPlanningWithFiles(userID, projectID, content, fileIDs, workflow, workflowIndex, stepFrom, stepTo)
+func (h *TaskHandler) createPlanningTask(c *gin.Context, sc store.Scope, projectID, content string, fileIDs []string, workflow *model.Workflow, workflowIndex *int, stepFrom, stepTo int) {
+	task, appErr := h.store.CreateTaskPlanningWithFiles(sc, projectID, content, fileIDs, workflow, workflowIndex, stepFrom, stepTo)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}
-	h.notifyPMTaskMessage(c, userID, projectID, task.ID, content, true, nil)
+	h.notifyPMTaskMessage(c, sc.UserID, projectID, task.ID, content, true, nil)
 	transport.WriteData(c, http.StatusCreated, task)
 }
 
@@ -219,12 +225,12 @@ func (h *TaskHandler) autoDispatchFirstTodo(ctx context.Context, userID string, 
 }
 
 func (h *TaskHandler) ListByProject(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 	status := c.Query("status")
-	items, appErr := h.store.ListTasks(userID, c.Param("projectId"), status)
+	items, appErr := h.store.ListTasks(sc, c.Param("projectId"), status)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -233,11 +239,11 @@ func (h *TaskHandler) ListByProject(c *gin.Context) {
 }
 
 func (h *TaskHandler) Get(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	task, appErr := h.store.GetTask(userID, c.Param("id"))
+	task, appErr := h.store.GetTask(sc, c.Param("id"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -246,11 +252,11 @@ func (h *TaskHandler) Get(c *gin.Context) {
 }
 
 func (h *TaskHandler) ListEvents(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	events, appErr := h.store.ListTaskEvents(userID, c.Param("id"))
+	events, appErr := h.store.ListTaskEvents(sc, c.Param("id"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -259,12 +265,15 @@ func (h *TaskHandler) ListEvents(c *gin.Context) {
 }
 
 func (h *TaskHandler) DispatchTodo(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 
-	task, appErr := h.store.GetTask(userID, c.Param("id"))
+	// 归属判断统一走 sc；其余仅按作者维度使用的地方保留 userID。
+	userID := sc.UserID
+
+	task, appErr := h.store.GetTask(sc, c.Param("id"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -524,10 +533,13 @@ func (h *TaskHandler) dispatchNextTodo(ctx context.Context, userID string, task 
 }
 
 func (h *TaskHandler) AddComment(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
+
+	// 归属判断统一走 sc；其余仅按作者维度使用的地方保留 userID。
+	userID := sc.UserID
 
 	var body struct {
 		Content  string `json:"content"`
@@ -557,7 +569,7 @@ func (h *TaskHandler) AddComment(c *gin.Context) {
 		return
 	}
 
-	task, appErr := h.store.GetTask(userID, c.Param("id"))
+	task, appErr := h.store.GetTask(sc, c.Param("id"))
 	if appErr != nil {
 		if h.log != nil {
 			h.log.Warn("load task after comment failed", zap.String("task_id", c.Param("id")), zap.Error(appErr))
@@ -698,13 +710,13 @@ func (h *TaskHandler) buildTaskMentionPayload(task *model.TaskDetail, comment *m
 }
 
 func (h *TaskHandler) ApprovePlan(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 
 	taskID := c.Param("id")
-	task, appErr := h.store.ApprovePlan(userID, taskID)
+	task, appErr := h.store.ApprovePlan(sc, taskID)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -718,10 +730,13 @@ func (h *TaskHandler) ApprovePlan(c *gin.Context) {
 }
 
 func (h *TaskHandler) RejectPlan(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
+
+	// 归属判断统一走 sc；其余仅按作者维度使用的地方保留 userID。
+	userID := sc.UserID
 
 	var body struct {
 		Feedback string `json:"feedback"`
@@ -732,7 +747,7 @@ func (h *TaskHandler) RejectPlan(c *gin.Context) {
 	}
 
 	taskID := c.Param("id")
-	task, appErr := h.store.RejectPlan(userID, taskID, body.Feedback)
+	task, appErr := h.store.RejectPlan(sc, taskID, body.Feedback)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -743,10 +758,13 @@ func (h *TaskHandler) RejectPlan(c *gin.Context) {
 }
 
 func (h *TaskHandler) CreatePlanning(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
+
+	// 归属判断统一走 sc；其余仅按作者维度使用的地方保留 userID。
+	userID := sc.UserID
 
 	var body struct {
 		Content       string          `json:"content"`
@@ -762,7 +780,7 @@ func (h *TaskHandler) CreatePlanning(c *gin.Context) {
 	}
 
 	projectID := c.Param("projectId")
-	task, appErr := h.store.CreateTaskPlanningWithFiles(userID, projectID, body.Content, body.FileIDs, body.Workflow, body.WorkflowIndex, body.StepFrom, body.StepTo)
+	task, appErr := h.store.CreateTaskPlanningWithFiles(sc, projectID, body.Content, body.FileIDs, body.Workflow, body.WorkflowIndex, body.StepFrom, body.StepTo)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -773,10 +791,13 @@ func (h *TaskHandler) CreatePlanning(c *gin.Context) {
 }
 
 func (h *TaskHandler) AppendTaskMessage(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
+
+	// 归属判断统一走 sc；其余仅按作者维度使用的地方保留 userID。
+	userID := sc.UserID
 
 	var body struct {
 		Content    string            `json:"content"`
@@ -788,7 +809,7 @@ func (h *TaskHandler) AppendTaskMessage(c *gin.Context) {
 	}
 
 	taskID := c.Param("id")
-	task, appErr := h.store.AppendTaskMessage(userID, taskID, body.Content, body.UIResponse)
+	task, appErr := h.store.AppendTaskMessage(sc, taskID, body.Content, body.UIResponse)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -802,7 +823,7 @@ func (h *TaskHandler) notifyPMTaskMessage(c *gin.Context, userID, projectID, tas
 	if h.publisher == nil {
 		return
 	}
-	pmNodeID, appErr := h.store.GetTaskPMPublishTarget(userID, taskID)
+	pmNodeID, appErr := h.store.GetTaskPMPublishTarget(store.Scope{UserID: userID}, taskID)
 	if appErr != nil {
 		if h.log != nil {
 			h.log.Warn("skip notify task.message", zap.String("task_id", taskID), zap.String("code", appErr.Code))
@@ -828,7 +849,7 @@ func (h *TaskHandler) buildPMTaskMessage(userID, projectID, taskID, userContent 
 	}
 
 	// Enrich with attached files from the task.
-	task, err := h.store.GetTask(userID, taskID)
+	task, err := h.store.GetTask(store.Scope{UserID: userID}, taskID)
 	if err == nil && task != nil {
 		payload.AttachedFiles = h.enrichAttachedFiles(task.AttachedFiles)
 		// Carry the workflow snapshot so the PM can plan against it.

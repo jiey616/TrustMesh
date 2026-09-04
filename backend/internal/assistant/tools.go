@@ -300,7 +300,7 @@ func (e *ToolExecutor) searchTasks(userID string, args map[string]any) (any, err
 
 	// If project_id is specified, search within that project
 	if projectID != "" {
-		tasks, appErr := e.store.ListTasks(userID, projectID, status)
+		tasks, appErr := e.store.ListTasks(store.Scope{UserID: userID}, projectID, status)
 		if appErr != nil {
 			return nil, fmt.Errorf("%s", appErr.Message)
 		}
@@ -312,7 +312,7 @@ func (e *ToolExecutor) searchTasks(userID string, args map[string]any) (any, err
 	projects := e.store.ListProjects(store.Scope{UserID: userID})
 	var allTasks []model.TaskListItem
 	for _, p := range projects {
-		tasks, appErr := e.store.ListTasks(userID, p.ID, status)
+		tasks, appErr := e.store.ListTasks(store.Scope{UserID: userID}, p.ID, status)
 		if appErr != nil {
 			continue
 		}
@@ -329,7 +329,7 @@ func (e *ToolExecutor) getTaskDetail(userID string, args map[string]any) (any, e
 	if taskID == "" {
 		return nil, fmt.Errorf("task_id is required")
 	}
-	task, appErr := e.store.GetTask(userID, taskID)
+	task, appErr := e.store.GetTask(store.Scope{UserID: userID}, taskID)
 	if appErr != nil {
 		return nil, fmt.Errorf("%s", appErr.Message)
 	}
