@@ -2648,6 +2648,14 @@ func (h *WebhookHandler) handleTransferReceived(c *gin.Context, webhook protocol
 	}
 	outputName, _ := webhook.Metadata["outputName"].(string)
 
+	mimeType := msg.MimeType
+	if strings.TrimSpace(mimeType) == "" {
+		// The ClawSynapse CLI sends mimeType:"" for every transfer; backfill
+		// from the file name so downstream mime-based classification
+		// (inferOutputBinding) sees the real type instead of "unknown".
+		mimeType = store.InferMimeFromName(msg.FileName)
+	}
+
 	artifact := model.TaskArtifact{
 		TransferID: msg.TransferID,
 		TaskID:     taskID,
@@ -2655,7 +2663,7 @@ func (h *WebhookHandler) handleTransferReceived(c *gin.Context, webhook protocol
 		FileName:   msg.FileName,
 		FileSize:   msg.FileSize,
 		LocalPath:  msg.LocalPath,
-		MimeType:   msg.MimeType,
+		MimeType:   mimeType,
 		FromNodeID: webhook.From,
 		CreatedAt:  time.Now().UTC(),
 		OutputName: outputName,

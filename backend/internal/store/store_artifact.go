@@ -1,6 +1,7 @@
 package store
 
 import (
+	"path"
 	"strings"
 	"time"
 
@@ -38,6 +39,38 @@ var mimeToExt = []struct {
 	{"gzip", "gz"},
 }
 
+// extToMime maps file extensions to canonical MIME types, used to backfill
+// an upload whose transfer message omitted mimeType (the ClawSynapse CLI
+// currently sends mimeType:"" for every file). Keeping the same canonical
+// families as mimeToExt lets the inferred value compare equal to workflow
+// slot declarations such as "docx" or "markdown".
+var extToMime = map[string]string{
+	".docx":     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".xlsx":     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	".pptx":     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	".md":       "text/markdown",
+	".markdown": "text/markdown",
+	".csv":      "text/csv",
+	".txt":      "text/plain",
+	".pdf":      "application/pdf",
+	".json":     "application/json",
+	".zip":      "application/zip",
+	".jpg":      "image/jpeg",
+	".jpeg":     "image/jpeg",
+	".png":      "image/png",
+	".mp4":      "video/mp4",
+}
+
+// InferMimeFromName returns a MIME type inferred from the file name
+// extension, or "" when the extension is unknown.
+func InferMimeFromName(fileName string) string {
+	ext := strings.ToLower(path.Ext(strings.TrimSpace(fileName)))
+	if m, ok := extToMime[ext]; ok {
+		return m
+	}
+	return ""
+}
+
 // normalizeMimeKey reduces a MIME type or a bare extension to a canonical
 // short key so that loose declarations and full MIME types compare equal.
 // Returns "" for empty input.
@@ -71,15 +104,25 @@ func normalizeMimeKey(mime string) string {
 
 // mimeMatchesDeclared reports whether an uploaded file's MIME type satisfies a
 // declared output slot. An empty declaration is a wildcard and matches
-// everything; unrecognised values on either side fall through as a match so a
-// missing mapping never blocks a legitimate binding.
+// everything. An unknown declaration value falls through as a match so a
+// missing mapping never blocks a legitimate binding, but an upload with an
+// unknown MIME never matches: unknown must degrade to "unbound", not silently
+// claim a slot.
 func mimeMatchesDeclared(declared, actual string) bool {
 	if strings.TrimSpace(declared) == "" {
 		return true
 	}
 	d, a := normalizeMimeKey(declared), normalizeMimeKey(actual)
-	if d == "" || a == "" {
+	if d == "" {
 		return true
+	}
+	// An unknown actual type must NOT auto-match: an upload whose MIME we
+	// cannot determine is a draft/unknown file, and silently filing it into
+	// the step's single slot is exactly the misclassification this package
+	// must avoid (2026-09-04: .md screenplay drafts filed as the docx
+	// deliverable because the agent sends mimeType:"" and empty matched all).
+	if a == "" {
+		return false
 	}
 	return d == a
 }
@@ -112,7 +155,9 @@ type ArtifactFilingResult struct {
 //     belongs to is genuinely ambiguous there (the 军旅 workflow declares two
 //     xlsx slots on one step), and misfiling a draft as the final deliverable
 //     is harder to notice than leaving it unbound;
-//   - a single slot whose mime does not match is left unbound with a warning.
+//   - a single slot whose mime does not match is left unbound with a warning;
+//     an upload with unknown mime (empty after normalisation) also fails to
+//     match — call sites should backfill mime via InferMimeFromName first.
 func inferOutputBinding(artifact model.TaskArtifact, declared []model.StepOutput) (outputName, boundBy string, unboundWarn bool) {
 	if artifact.OutputName != "" {
 		return artifact.OutputName, "declared", false
