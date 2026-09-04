@@ -9,7 +9,6 @@ import {
   RobotOutlined,
   TeamOutlined,
   BookOutlined,
-  InboxOutlined,
   ShopOutlined,
   LogoutOutlined,
   UserOutlined,
@@ -52,7 +51,6 @@ const staticMenuItems: MenuProps['items'] = [
   { key: '/agents', icon: <RobotOutlined />, label: '数字员工' },
   { key: '/meetings', icon: <TeamOutlined />, label: '会议' },
   { key: '/knowledge', icon: <BookOutlined />, label: '知识库' },
-  { key: '/inbox', icon: <InboxOutlined />, label: '收件箱' },
   { key: '/market', icon: <ShopOutlined />, label: '市场' },
   { key: '/external-apps', icon: <AppstoreOutlined />, label: '外部应用' },
 ]
