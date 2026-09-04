@@ -1,7 +1,8 @@
 # TrustMesh 多租户 + 企业管理 实施设计
 
-> 状态：**可开工**（方案已通过 grill 决策树确认；2026-09-04 复评通过，从阶段 0 起步）
+> 状态：**阶段 0 已完成**（2026-09-04，commit `5fa4a71`，已部署验证）；阶段 1 待排期
 > 日期：2026-09-04
+> 开工前备份：`deploy/backups/mongodump-trustmesh-20260904-214800.archive.gz`，git tag `pre-multitenant-stage0`
 > 决策来源：grill-me 会话，六个顶层分支全部闭合
 > 代码基线：`backend/internal/store` 为全内存状态机，Mongo 为持久化镜像
 
@@ -268,6 +269,7 @@ beforeRequest: [
 | 验收 | 服务正常启动；现有全部功能回归通过；新集合可读写；`tsc`/`go build` 零新增错误 |
 | 回滚 | 删除新增文件与字段即可，无数据变更 |
 | 风险 | 低（纯增量） |
+| **2026-09-04 实况** | ✅ 完成并部署。6 项改动全部落地：新实体（Organization/OrgMembership/ProjectMember/OrgQuota）、`store/scope.go`、`store/store_org.go`（CRUD + Mongo 持久化）、9 个 model 加 `OrgID`（omitempty，不污染现有 API）、`middleware/org_scope.go`、3 个新集合 + 索引。<br>验收实测：backend healthy；/projects /agents /notifications 200；无租户头行为与改造前一致；伪租户头 `X-Org-Id: org_fake123` → 401；新集合 `organizations` `org_memberships` `project_members` 索引就位、0 文档（阶段 0 不回填）；go build/vet/test 全绿（7 包 ok + 5 个新测试）。<br>⚠️ 踩坑：CRLF 文件用脚本插入时，插入内容/锚点必须显式带行尾换行，否则新行会粘到相邻行末尾造成语法错误（本次因此回滚重打 2 轮）。 |
 
 ### 阶段 1 — 数据回填与双写
 
