@@ -18,6 +18,7 @@ import {
   DownOutlined,
   AppstoreOutlined,
   HomeOutlined,
+  CrownOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
 import { useAuthStore } from '@/stores/authStore'
@@ -28,6 +29,7 @@ import { useExternalApps } from '@/hooks/useExternalApps'
 import { FloatingOrbs } from '@/components/FloatingOrbs'
 import { GradientText } from '@/components/GradientText'
 import { ThemeSwitch } from '@/components/ThemeSwitch'
+import { OrgSwitcher } from '@/components/OrgSwitcher'
 import { useTheme } from '@/theme/ThemeProvider'
 import { motion } from 'framer-motion'
 import { hasPlacement, type ProjectWorkStatus } from '@/types'
@@ -53,6 +55,7 @@ const staticMenuItems: MenuProps['items'] = [
   { key: '/knowledge', icon: <BookOutlined />, label: '知识库' },
   { key: '/market', icon: <ShopOutlined />, label: '市场' },
   { key: '/external-apps', icon: <AppstoreOutlined />, label: '外部应用' },
+  { key: '/organizations', icon: <CrownOutlined />, label: '企业管理' },
 ]
 
 export function MainLayout() {
@@ -297,6 +300,9 @@ export function MainLayout() {
               background: 'var(--surface-inset)',
             }}
           >
+            {/* 租户切换器（阶段 4-B）：个人空间 / 企业租户 */}
+            <OrgSwitcher collapsed={collapsed} />
+
             <Tooltip title={collapsed ? '消息通知' : ''} placement="right">
               <div onClick={() => navigate('/inbox')} style={rowStyle}>
                 <Badge count={unreadCount ?? 0} size="small" offset={collapsed ? [2, -2] : [4, 0]}>

@@ -24,9 +24,13 @@ export const apiClient = ky.create({
   hooks: {
     beforeRequest: [
       (request) => {
-        const { accessToken } = useAuthStore.getState()
+        const { accessToken, activeOrgId } = useAuthStore.getState()
         if (accessToken) {
           request.headers.set('Authorization', `Bearer ${accessToken}`)
+        }
+        // 多租户上下文：activeOrgId 为 null = 个人空间，不带头发请求（与旧客户端行为一致）
+        if (activeOrgId) {
+          request.headers.set('X-Org-Id', activeOrgId)
         }
       },
     ],

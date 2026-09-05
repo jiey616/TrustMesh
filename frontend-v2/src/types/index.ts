@@ -1107,3 +1107,45 @@ export type {
   AgentVisualState,
   AgentSticker,
 } from './office'
+
+// ─── 多租户组织（阶段 4-B） ───
+
+export interface OrgQuota {
+  max_members: number
+  max_nodes: number
+  max_projects: number
+  max_storage_bytes: number
+}
+
+export type OrgKind = 'personal' | 'enterprise'
+export type OrgRole = 'owner' | 'admin' | 'member'
+
+export interface OrgView {
+  id: string
+  name: string
+  slug: string
+  kind: OrgKind
+  owner_id: string
+  my_role: OrgRole
+  quota: OrgQuota
+  created_at: string
+}
+
+export interface OrgMemberView {
+  id: string
+  user_id: string
+  role: OrgRole
+  joined_at: string
+  email?: string
+  name?: string
+}
+
+export interface CreateOrgRequest {
+  name: string
+  slug?: string
+}
+
+export interface AddOrgMemberRequest {
+  email: string
+  role?: 'admin' | 'member'
+}
