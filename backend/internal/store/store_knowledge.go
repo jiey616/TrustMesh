@@ -50,7 +50,7 @@ func (s *Store) GetKnowledgeDocument(sc Scope, docID string) (*model.KnowledgeDo
 		return nil, transport.NotFound("knowledge document not found")
 	}
 	if !visibleToScope(sc, doc.OrgID, doc.UserID) {
-		return nil, transport.Forbidden("access denied")
+		return nil, transport.NotFound("knowledge document not found")
 	}
 	return doc, nil
 }
@@ -113,7 +113,7 @@ func (s *Store) UpdateKnowledgeDocument(sc Scope, docID string, title, descripti
 		return nil, transport.NotFound("knowledge document not found")
 	}
 	if !visibleToScope(sc, doc.OrgID, doc.UserID) {
-		return nil, transport.Forbidden("access denied")
+		return nil, transport.NotFound("knowledge document not found")
 	}
 
 	if title != nil {
@@ -143,7 +143,7 @@ func (s *Store) DeleteKnowledgeDocument(sc Scope, docID string) (*model.Knowledg
 		return nil, transport.NotFound("knowledge document not found")
 	}
 	if !visibleToScope(sc, doc.OrgID, doc.UserID) {
-		return nil, transport.Forbidden("access denied")
+		return nil, transport.NotFound("knowledge document not found")
 	}
 
 	delete(s.knowledgeDocs, docID)
