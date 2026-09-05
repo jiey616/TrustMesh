@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { Row, Col, Card, Tag, Typography, Input, Empty, Skeleton, Button } from 'antd'
 import { ShopOutlined, SearchOutlined, ReloadOutlined } from '@ant-design/icons'
@@ -9,6 +9,9 @@ import { PageHeader } from '@/components/shared/PageHeader'
 import type { MarketRoleListItem } from '@/types'
 
 const { Text } = Typography
+
+// 岗位总量较大，分批渲染，避免一次性挂载上百张卡片
+const PAGE_SIZE = 48
 
 const DEPT_GRADIENTS = [
   'linear-gradient(135deg,var(--signal),var(--signal))',
@@ -25,7 +28,7 @@ function RoleCard({ role, index }: { role: MarketRoleListItem; index: number }) 
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, delay: index * 0.03 }}
+      transition={{ duration: 0.25, delay: Math.min(index * 0.02, 0.4) }}
     >
       <Card
         hoverable
@@ -82,6 +85,12 @@ export function MarketPage() {
   const debouncedQuery = useDebounce(inputValue, 300)
 
   const activeDept = searchParams.get('dept') ?? ''
+
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
+  // 切换部门或搜索词后回到第一页
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE)
+  }, [activeDept, debouncedQuery])
 
   const { data: depts, isLoading: deptsLoading, isError } = useMarketDepts()
   const { data: roles, isLoading: rolesLoading, refetch } = useMarketRoles({
@@ -233,11 +242,18 @@ export function MarketPage() {
             </Row>
           ) : roles && roles.length > 0 ? (
             <Row gutter={[16, 16]}>
-              {roles.map((role, index) => (
+              {roles.slice(0, visibleCount).map((role, index) => (
                 <Col xs={24} sm={12} lg={8} key={role.id}>
                   <RoleCard role={role} index={index} />
                 </Col>
               ))}
+              {roles.length > visibleCount && (
+                <Col span={24} style={{ textAlign: 'center', marginTop: 8 }}>
+                  <Button onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}>
+                    加载更多（剩余 {roles.length - visibleCount} 个）
+                  </Button>
+                </Col>
+              )}
             </Row>
           ) : (
             <Empty

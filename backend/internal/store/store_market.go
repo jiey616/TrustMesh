@@ -25,6 +25,8 @@ var deptPrefixMap = map[string]string{
 	"project-management": "project-management",
 	"project-manager":    "project-management",
 	"technical-artist":   "creative-tech",
+	"game-development":   "creative-tech",
+	"spatial-computing":  "spatial-computing",
 	// 单段前缀
 	"academic":    "academic",
 	"engineering": "engineering",
@@ -50,6 +52,10 @@ var deptPrefixMap = map[string]string{
 	"hr":          "hr",
 	"legal":       "legal",
 	"sales":       "sales-marketing",
+	"company":     "company",
+	"security":    "security",
+	"strategy":    "strategy",
+	"gis":         "gis",
 }
 
 // 部门 ID → 中文名称
@@ -69,11 +75,17 @@ var deptNameMap = map[string]string{
 	"sales-marketing":    "销售与营销部",
 	"supply-chain":       "供应链部",
 	"academic":           "学术部",
+	"company":            "公司经营部",
+	"security":           "安全部",
+	"strategy":           "战略部",
+	"gis":                "地理信息部",
+	"spatial-computing":  "空间计算部",
 	"other":              "其他",
 }
 
 // 部门显示顺序
 var deptOrder = []string{
+	"company",
 	"engineering",
 	"marketing",
 	"design",
@@ -89,6 +101,10 @@ var deptOrder = []string{
 	"sales-marketing",
 	"supply-chain",
 	"academic",
+	"security",
+	"strategy",
+	"gis",
+	"spatial-computing",
 	"other",
 }
 

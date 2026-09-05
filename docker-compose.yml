@@ -57,6 +57,8 @@ services:
       - trustmesh-transfer-data:/var/lib/trustmesh-transfers:ro
       - trustmesh-knowledge-data:/var/lib/trustmesh-knowledge
       - trustmesh-files-data:/var/lib/trustmesh-files
+      # 岗位市场静态数据（角色包 md + 索引），只读挂载
+      - ./data:/app/data:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1"]
       interval: 10s
