@@ -337,7 +337,7 @@ func (e *ToolExecutor) getTaskDetail(userID string, args map[string]any) (any, e
 }
 
 func (e *ToolExecutor) getDashboardStats(userID string) (any, error) {
-	stats := e.store.GetDashboardStats(userID)
+	stats := e.store.GetDashboardStats(store.Scope{UserID: userID})
 	return stats, nil
 }
 

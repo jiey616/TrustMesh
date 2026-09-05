@@ -18,11 +18,11 @@ func NewDashboardHandler(s *store.Store) *DashboardHandler {
 }
 
 func (h *DashboardHandler) Stats(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	stats := h.store.GetDashboardStats(userID)
+	stats := h.store.GetDashboardStats(sc)
 	transport.WriteData(c, http.StatusOK, stats)
 }
 

@@ -1,4 +1,4 @@
-import { Link, useLocation, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   FolderKanban,
   Plus,
@@ -15,12 +15,26 @@ import {
   Boxes,
   Settings,
   Building2,
+  User,
+  Check,
+  ChevronsUpDown,
+  ArrowLeftRight,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+} from '@/components/ui/dropdown-menu'
 import { Avatar } from '@/components/ui/avatar'
 import { AgentStatusIcon, ProjectWorkStatusDot } from '@/components/shared/StatusBadge'
 import { TrustMeshLogo } from '@/components/shared/TrustMeshLogo'
@@ -31,7 +45,8 @@ import { useExternalApps, useLaunchExternalApp } from '@/hooks/useExternalApps'
 import { useUnreadCount } from '@/hooks/useNotifications'
 import { useJoinRequests } from '@/hooks/useJoinRequests'
 import { useAuthStore } from '@/stores/authStore'
-import { OrgSwitcher } from '@/components/OrgSwitcher'
+import { useOrganizations } from '@/hooks/useOrgs'
+import { useQueryClient } from '@tanstack/react-query'
 import { usePlatformStore } from '@/stores/platformStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { useState, useEffect } from 'react'
@@ -86,8 +101,35 @@ export function Sidebar({ onCreateProject }: SidebarProps) {
   const launchApp = useLaunchExternalApp()
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
+  const activeOrgId = useAuthStore((s) => s.activeOrgId)
+  const setActiveOrg = useAuthStore((s) => s.setActiveOrg)
+  const navigate = useNavigate()
+  const qc = useQueryClient()
+  const { data: orgs } = useOrganizations()
   const { setTheme, resolvedTheme } = useThemeStore()
   const isDark = resolvedTheme() === 'dark'
+
+  // ── 工作区切换（阶段 4-B，并入用户菜单）──
+  const personalOrg = orgs?.find((o) => o.kind === 'personal')
+  const enterpriseOrgs = orgs?.filter((o) => o.kind === 'enterprise') ?? []
+  const roleLabel = (r: string) => (r === 'owner' ? 'Owner' : r === 'admin' ? 'Admin' : '成员')
+
+  // 防御：持久化的 activeOrgId 已不在我的租户列表（被移出/数据回退）→ 回落个人空间
+  useEffect(() => {
+    if (activeOrgId && orgs && !orgs.some((o) => o.id === activeOrgId)) {
+      setActiveOrg(null)
+      qc.removeQueries()
+    }
+  }, [activeOrgId, orgs, qc, setActiveOrg])
+
+  const handleOrgSwitch = (key: string) => {
+    const next = key === '__personal__' ? null : key
+    if (next === activeOrgId) return
+    if (next && !orgs?.some((o) => o.id === key)) return
+    setActiveOrg(next)
+    // 全局刷新：整页重载，所有数据按新租户上下文重新加载
+    window.location.reload()
+  }
   const [collapsed, setCollapsed] = useState(() => window.matchMedia('(max-width: 1280px)').matches)
 
   useEffect(() => {
@@ -378,21 +420,55 @@ export function Sidebar({ onCreateProject }: SidebarProps) {
 
       {/* Footer */}
       <div className="p-2">
-        <div className={cn('mb-2', collapsed && 'px-0')}>
-          <OrgSwitcher collapsed={collapsed} />
-        </div>
         <div className={cn('flex items-center gap-2', collapsed ? 'flex-col' : 'px-2')}>
           {user && (
-            <div className={cn('flex items-center gap-2 min-w-0', collapsed ? '' : 'flex-1')}>
-              <Avatar fallback={user.name} seed={user.id} kind="user" size="sm" />
-              {!collapsed && <span className="truncate text-sm">{user.name}</span>}
-            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                className={cn(
+                  'flex items-center gap-2 min-w-0 rounded-md px-1 py-0.5 hover:bg-white/5 transition-colors cursor-pointer outline-hidden',
+                  collapsed ? '' : 'flex-1',
+                )}
+              >
+                <Avatar fallback={user.name} seed={user.id} kind="user" size="sm" />
+                {!collapsed && <span className="truncate text-sm">{user.name}</span>}
+                {!collapsed && <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" />}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" side="top" className="w-52">
+                <DropdownMenuItem onClick={() => navigate('/organizations')}>
+                  <Building2 className="size-4" />
+                  企业管理
+                </DropdownMenuItem>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <ArrowLeftRight className="size-4" />
+                    切换工作区
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="w-52">
+                    <DropdownMenuItem onClick={() => handleOrgSwitch('__personal__')}>
+                      <User className="size-4" />
+                      <span className="truncate">{personalOrg?.name || '个人空间'}</span>
+                      {!activeOrgId && <Check className="ml-auto size-4 opacity-60" />}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    {enterpriseOrgs.map((o) => (
+                      <DropdownMenuItem key={o.id} onClick={() => handleOrgSwitch(o.id)}>
+                        <Building2 className={cn('size-4 shrink-0', o.my_role === 'owner' && 'text-primary')} />
+                        <span className="truncate">{o.name}</span>
+                        <Badge variant="info" className="ml-auto shrink-0">{roleLabel(o.my_role)}</Badge>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={logout} className="text-destructive">
+                  <LogOut className="size-4" />
+                  退出登录
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
           <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={toggleTheme}>
             {isDark ? <Sun className="size-4" /> : <Moon className="size-4" />}
-          </Button>
-          <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={logout}>
-            <LogOut className="size-4" />
           </Button>
         </div>
       </div>

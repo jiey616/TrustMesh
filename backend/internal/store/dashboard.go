@@ -2,13 +2,13 @@ package store
 
 import "trustmesh/backend/internal/model"
 
-func (s *Store) GetDashboardStats(userID string) model.DashboardStats {
+func (s *Store) GetDashboardStats(sc Scope) model.DashboardStats {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	stats := model.DashboardStats{}
 	for _, a := range s.agents {
-		if a.UserID != userID {
+		if !visibleToScope(sc, a.OrgID, a.UserID) {
 			continue
 		}
 		stats.AgentsTotal++
@@ -18,7 +18,7 @@ func (s *Store) GetDashboardStats(userID string) model.DashboardStats {
 	}
 
 	for _, t := range s.tasks {
-		if t.UserID != userID {
+		if !visibleToScope(sc, t.OrgID, t.UserID) {
 			continue
 		}
 		stats.TasksTotal++

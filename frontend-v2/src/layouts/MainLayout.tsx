@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { Layout, Menu, Avatar, Dropdown, Badge, Tooltip, Tag } from 'antd'
 import type { MenuProps } from 'antd'
@@ -19,6 +19,7 @@ import {
   AppstoreOutlined,
   HomeOutlined,
   CrownOutlined,
+  SwapOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
 import { useAuthStore } from '@/stores/authStore'
@@ -26,10 +27,11 @@ import { useUnreadCount } from '@/hooks/useNotifications'
 import { useRealtimeEvents } from '@/hooks/useRealtimeEvents'
 import { useProjects } from '@/hooks/useProjects'
 import { useExternalApps } from '@/hooks/useExternalApps'
+import { useOrganizations } from '@/hooks/useOrgs'
+import { useQueryClient } from '@tanstack/react-query'
 import { FloatingOrbs } from '@/components/FloatingOrbs'
 import { GradientText } from '@/components/GradientText'
 import { ThemeSwitch } from '@/components/ThemeSwitch'
-import { OrgSwitcher } from '@/components/OrgSwitcher'
 import { useTheme } from '@/theme/ThemeProvider'
 import { motion } from 'framer-motion'
 import { hasPlacement, type ProjectWorkStatus } from '@/types'
@@ -55,17 +57,18 @@ const staticMenuItems: MenuProps['items'] = [
   { key: '/knowledge', icon: <BookOutlined />, label: '知识库' },
   { key: '/market', icon: <ShopOutlined />, label: '市场' },
   { key: '/external-apps', icon: <AppstoreOutlined />, label: '外部应用' },
-  { key: '/organizations', icon: <CrownOutlined />, label: '企业管理' },
 ]
 
 export function MainLayout() {
   const [collapsed, setCollapsed] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
-  const { user, logout } = useAuthStore()
   const { data: unreadCount } = useUnreadCount()
   const { data: projects } = useProjects()
   const { data: externalApps } = useExternalApps()
+  const { data: orgs } = useOrganizations()
+  const { user, logout, activeOrgId, setActiveOrg } = useAuthStore()
+  const qc = useQueryClient()
   const { theme } = useTheme()
   useRealtimeEvents()
 
@@ -111,7 +114,53 @@ export function MainLayout() {
     navigate('/login')
   }
 
+  // 防御：持久化的 activeOrgId 已不在我的租户列表（被移出/数据回退）→ 回落个人空间
+  useEffect(() => {
+    if (activeOrgId && orgs && !orgs.some((o) => o.id === activeOrgId)) {
+      setActiveOrg(null)
+      qc.removeQueries()
+    }
+  }, [activeOrgId, orgs, qc, setActiveOrg])
+
+  const personalOrg = useMemo(() => (orgs ?? []).find((o) => o.kind === 'personal'), [orgs])
+  const enterpriseOrgs = useMemo(() => (orgs ?? []).filter((o) => o.kind === 'enterprise'), [orgs])
+  const roleLabel = (r: string) => (r === 'owner' ? 'Owner' : r === 'admin' ? 'Admin' : '成员')
+
+  const orgMenuItems: MenuProps['items'] = useMemo(
+    () => [
+      { key: '__personal__', icon: <UserOutlined />, label: personalOrg?.name || '个人空间' },
+      { type: 'divider' as const },
+      ...enterpriseOrgs.map((o) => ({
+        key: o.id,
+        icon: <CrownOutlined style={{ color: o.my_role === 'owner' ? 'var(--signal)' : undefined }} />,
+        label: (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <span>{o.name}</span>
+            <Tag style={{ marginInlineEnd: 0, fontSize: 10, lineHeight: '16px' }}>{roleLabel(o.my_role)}</Tag>
+          </span>
+        ),
+      })),
+    ],
+    [personalOrg, enterpriseOrgs],
+  )
+
+  const handleOrgSwitch = (key: string) => {
+    if (key === '__personal__') {
+      if (!activeOrgId) return
+      setActiveOrg(null)
+      // 全局刷新：整页重载，所有数据按新租户上下文重新加载
+      window.location.reload()
+      return
+    }
+    if (!orgs?.some((o) => o.id === key) || key === activeOrgId) return
+    setActiveOrg(key)
+    window.location.reload()
+  }
+
   const userMenuItems = [
+    { key: 'orgs', icon: <SwapOutlined />, label: '切换工作区', children: orgMenuItems },
+    { key: 'org-manage', icon: <CrownOutlined />, label: '企业管理' },
+    { type: 'divider' as const },
     { key: 'profile', icon: <UserOutlined />, label: '个人信息' },
     { type: 'divider' as const },
     { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', danger: true },
@@ -300,9 +349,6 @@ export function MainLayout() {
               background: 'var(--surface-inset)',
             }}
           >
-            {/* 租户切换器（阶段 4-B）：个人空间 / 企业租户 */}
-            <OrgSwitcher collapsed={collapsed} />
-
             <Tooltip title={collapsed ? '消息通知' : ''} placement="right">
               <div onClick={() => navigate('/inbox')} style={rowStyle}>
                 <Badge count={unreadCount ?? 0} size="small" offset={collapsed ? [2, -2] : [4, 0]}>
@@ -317,6 +363,8 @@ export function MainLayout() {
                 items: userMenuItems,
                 onClick: ({ key }) => {
                   if (key === 'logout') handleLogout()
+                  else if (key === 'org-manage') navigate('/organizations')
+                  else handleOrgSwitch(key)
                 },
               }}
               trigger={['click']}
