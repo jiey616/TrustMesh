@@ -15,6 +15,7 @@ const (
 	maxEventsPerTask      = 1000               // max events per task before truncation
 	maxEventsPerUser      = 2000               // max events per user before truncation
 	maxEventsPerAgent     = 2000               // max events per agent before truncation
+	maxEventsPerOrg       = 5000               // max events per organization before truncation
 	maxNotificationsPerUser = 500              // max notifications per user
 	maxProcessedMessages  = 10000              // max processed message dedup entries
 	maxChatMessages       = 200                // max messages per agent chat session
@@ -115,6 +116,27 @@ func (s *Store) runCleanup() {
 		}
 	}
 
+	// 3.5 Clean up orgEvents (multi-tenant activity feed)
+	orgEventsCleaned := 0
+	for orgID, events := range s.orgEvents {
+		if len(events) == 0 {
+			delete(s.orgEvents, orgID)
+			continue
+		}
+		filtered := filterUserEventsByAge(events, cutoff)
+		if len(filtered) > maxEventsPerOrg {
+			filtered = filtered[len(filtered)-truncatedKeepCount:]
+		}
+		if len(filtered) < len(events) {
+			orgEventsCleaned += len(events) - len(filtered)
+		}
+		if len(filtered) == 0 {
+			delete(s.orgEvents, orgID)
+		} else {
+			s.orgEvents[orgID] = filtered
+		}
+	}
+
 	// 4. Clean up notifications: keep only most recent N per user
 	notificationsCleaned := 0
 	for userID, ids := range s.userNotifications {
@@ -156,11 +178,12 @@ func (s *Store) runCleanup() {
 
 	elapsed := time.Since(start)
 	if taskEventsCleaned > 0 || userEventsCleaned > 0 || agentEventsCleaned > 0 ||
-		notificationsCleaned > 0 || processedMessagesCleaned > 0 || chatMessagesCleaned > 0 {
+		orgEventsCleaned > 0 || notificationsCleaned > 0 || processedMessagesCleaned > 0 || chatMessagesCleaned > 0 {
 		s.log.Info("store cleanup completed",
 			zap.Int("task_events_cleaned", taskEventsCleaned),
 			zap.Int("user_events_cleaned", userEventsCleaned),
 			zap.Int("agent_events_cleaned", agentEventsCleaned),
+			zap.Int("org_events_cleaned", orgEventsCleaned),
 			zap.Int("notifications_cleaned", notificationsCleaned),
 			zap.Int("processed_messages_cleaned", processedMessagesCleaned),
 			zap.Int("chat_messages_cleaned", chatMessagesCleaned),

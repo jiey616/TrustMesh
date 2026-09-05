@@ -52,6 +52,7 @@ type Store struct {
 	taskEvents         map[string][]model.Event
 	userEvents         map[string][]*model.Event
 	agentEvents        map[string][]*model.Event
+	orgEvents          map[string][]*model.Event // 多租户：orgID → 该租户活动流（与 userEvents 共享事件指针）
 	processedMessages  map[string]processedMessage
 
 	taskArtifacts map[string][]model.TaskArtifact // taskID → []TaskArtifact
@@ -180,6 +181,7 @@ func New() *Store {
 		taskEvents:         make(map[string][]model.Event),
 		userEvents:         make(map[string][]*model.Event),
 		agentEvents:        make(map[string][]*model.Event),
+		orgEvents:          make(map[string][]*model.Event),
 		processedMessages:  make(map[string]processedMessage),
 		taskArtifacts:      make(map[string][]model.TaskArtifact),
 		taskComments:       make(map[string][]model.Comment),

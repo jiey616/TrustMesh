@@ -39,11 +39,64 @@ func (s *Store) rememberProcessedMessageUnsafe(key, action, resourceID string) {
 	}
 }
 
+// resolveEventOrgUnsafe 推导事件的租户归属：任务 → 项目 → 执行 agent → 个人租户兜底。
+// 事件本身没有独立的租户语义，归属应跟随它所在/所描述的资源。
+// 仅能在持锁函数内调用。
+func (s *Store) resolveEventOrgUnsafe(taskID, projectID, actorType, actorID, userID string) string {
+	if taskID != "" {
+		if t, ok := s.tasks[taskID]; ok && t.OrgID != "" {
+			return t.OrgID
+		}
+	}
+	if projectID != "" {
+		if p, ok := s.projects[projectID]; ok && p.OrgID != "" {
+			return p.OrgID
+		}
+	}
+	if actorType == "agent" && actorID != "" {
+		if a, ok := s.agents[actorID]; ok && a.OrgID != "" {
+			return a.OrgID
+		}
+	}
+	return s.personalOrgOfUnsafe(userID)
+}
+
+// reindexEventOrgsUnsafe 重建租户活动流索引，并顺带校正存量事件的租户归属。
+// 背景：改造前事件恒挂邀请人个人租户，企业空间下无法按租户过滤（泄漏源）。
+// userEvents 与 agentEvents 存的是同一批事件指针，用 visited 去重避免重复入索引。
+// 幂等，启动时执行一次即可覆盖存量数据。仅能在持锁函数内调用。
+func (s *Store) reindexEventOrgsUnsafe() {
+	s.orgEvents = make(map[string][]*model.Event)
+	visited := make(map[*model.Event]bool)
+	reindex := func(event *model.Event) {
+		if event == nil || visited[event] {
+			return
+		}
+		visited[event] = true
+		event.OrgID = s.resolveEventOrgUnsafe(event.TaskID, event.ProjectID, event.ActorType, event.ActorID, event.UserID)
+		if event.OrgID != "" {
+			s.orgEvents[event.OrgID] = append(s.orgEvents[event.OrgID], event)
+		}
+	}
+	for _, events := range s.userEvents {
+		for _, e := range events {
+			reindex(e)
+		}
+	}
+	for _, events := range s.agentEvents {
+		for _, e := range events {
+			reindex(e)
+		}
+	}
+}
+
 func (s *Store) addEventUnsafe(userID, projectID, taskID, todoID, actorType, actorID, actorName, eventType string, content *string, metadata map[string]any, at time.Time) *model.Event {
+	// 多租户：归属跟随资源（任务 → 项目 → 执行 agent），不再恒挂个人租户
+	orgID := s.resolveEventOrgUnsafe(taskID, projectID, actorType, actorID, userID)
 	event := model.Event{
 		ID:        newID(),
 		UserID:    userID,
-		OrgID:     s.personalOrgOfUnsafe(userID),
+		OrgID:     orgID,
 		ProjectID: projectID,
 		TaskID:    taskID,
 		TodoID:    todoID,
@@ -67,6 +120,13 @@ func (s *Store) addEventUnsafe(userID, projectID, taskID, todoID, actorType, act
 		// Upper-bound protection: truncate if too many events for a single user
 		if len(s.userEvents[userID]) > maxEventsPerUser {
 			s.userEvents[userID] = s.userEvents[userID][len(s.userEvents[userID])-truncatedKeepCount:]
+		}
+	}
+	if orgID != "" {
+		s.orgEvents[orgID] = append(s.orgEvents[orgID], &event)
+		// Upper-bound protection: truncate if too many events for a single org
+		if len(s.orgEvents[orgID]) > maxEventsPerOrg {
+			s.orgEvents[orgID] = s.orgEvents[orgID][len(s.orgEvents[orgID])-truncatedKeepCount:]
 		}
 	}
 	if actorType == "agent" && actorID != "" {

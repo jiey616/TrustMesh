@@ -364,6 +364,9 @@ func (s *Store) loadMongoState() error {
 	s.orgMemberIndex = orgMemberIndex
 	s.userOrgIndex = userOrgIndex
 	s.projectMembers = projectMembers
+	// 多租户：事件索引按资源归属重建（含存量事件归属校正），幂等。
+	// 必须在 tasks/projects/agents 全部赋值之后执行。
+	s.reindexEventOrgsUnsafe()
 	return nil
 }
 

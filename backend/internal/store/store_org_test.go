@@ -1531,6 +1531,70 @@ func TestExternalAppScopedVisibility(t *testing.T) {
 		t.Fatalf("u1 without org ctx should see own app, got %d", len(got))
 	}
 }
+// 仪表盘活动流的租户隔离：企业空间只看本租户活动，个人空间退回 user 维度。
+func TestDashboardActivityFeedOrgScoped(t *testing.T) {
+	s := New()
+	u1, err := s.CreateUser("u1@example.com", "u1", "hash")
+	if err != nil {
+		t.Fatalf("create u1: %v", err)
+	}
+	u2, err := s.CreateUser("u2@example.com", "u2", "hash")
+	if err != nil {
+		t.Fatalf("create u2: %v", err)
+	}
+	if _, err := s.EnsurePersonalOrg(u1.ID, "u1"); err != nil {
+		t.Fatalf("personal org u1: %v", err)
+	}
+	if _, err := s.EnsurePersonalOrg(u2.ID, "u2"); err != nil {
+		t.Fatalf("personal org u2: %v", err)
+	}
+	orgA, err := s.CreateOrganization(u1.ID, "Acme", "acme", model.OrgKindEnterprise)
+	if err != nil {
+		t.Fatalf("create orgA: %v", err)
+	}
+	orgB, err := s.CreateOrganization(u2.ID, "Globex", "globex", model.OrgKindEnterprise)
+	if err != nil {
+		t.Fatalf("create orgB: %v", err)
+	}
+
+	// 两个任务分别归属 orgA / orgB，事件归属应跟随任务
+	s.mu.Lock()
+	s.tasks["tA"] = &model.TaskDetail{ID: "tA", UserID: u1.ID, OrgID: orgA.ID}
+	s.tasks["tB"] = &model.TaskDetail{ID: "tB", UserID: u2.ID, OrgID: orgB.ID}
+	s.addEventUnsafe(u1.ID, "pA", "tA", "", "agent", "a1", "AgentA", "task_status_changed", nil, nil, time.Now().UTC())
+	s.addEventUnsafe(u2.ID, "pB", "tB", "", "agent", "a2", "AgentB", "task_status_changed", nil, nil, time.Now().UTC())
+	s.mu.Unlock()
+
+	// 企业空间：只看到本租户活动（orgA 成员 u1 不应看到 orgB 的活动）
+	feedA := s.ListUserEvents(Scope{UserID: u1.ID, OrgID: orgA.ID, Role: model.OrgRoleOwner}, 20)
+	if len(feedA) != 1 {
+		t.Fatalf("orgA feed should have 1 event, got %d", len(feedA))
+	}
+	if feedA[0].OrgID != orgA.ID {
+		t.Fatalf("event.OrgID = %q, want %q", feedA[0].OrgID, orgA.ID)
+	}
+	feedB := s.ListUserEvents(Scope{UserID: u2.ID, OrgID: orgB.ID, Role: model.OrgRoleOwner}, 20)
+	if len(feedB) != 1 || feedB[0].OrgID != orgB.ID {
+		t.Fatalf("orgB feed mismatch: len=%d", len(feedB))
+	}
+
+	// 个人空间（无租户头）：退回 user 维度，只看自己的（改造前行为）
+	feedPersonal := s.ListUserEvents(Scope{UserID: u1.ID}, 20)
+	if len(feedPersonal) != 1 || feedPersonal[0].TaskID != "tA" {
+		t.Fatalf("personal feed should only contain own event, got %d", len(feedPersonal))
+	}
+
+	// 存量校正：把事件归属抹成个人租户后重建索引，应依据任务归属回到 orgA
+	s.mu.Lock()
+	last := s.userEvents[u1.ID][len(s.userEvents[u1.ID])-1]
+	last.OrgID = ""
+	s.reindexEventOrgsUnsafe()
+	s.mu.Unlock()
+	feedA2 := s.ListUserEvents(Scope{UserID: u1.ID, OrgID: orgA.ID, Role: model.OrgRoleOwner}, 20)
+	if len(feedA2) != 1 || feedA2[0].TaskID != "tA" {
+		t.Fatalf("after reindex orgA feed should recover 1 event, got %d", len(feedA2))
+	}
+}
 func TestNotificationUserScopedFeed(t *testing.T) {
 	s := New()
 	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)

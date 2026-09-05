@@ -101,12 +101,17 @@ func (s *Store) ListTaskEvents(sc Scope, taskID string) ([]model.Event, *transpo
 	return cloned, nil
 }
 
-// ListUserEvents 返回个人活动流。活动流是 user 维度数据（谁触发了什么），
-// 不按租户共享；这里收 Scope 参数只是为了调用侧统一。
+// ListUserEvents 返回活动流。
+// 多租户：带租户上下文时返回该租户的共享活动流（跨成员，按 org 隔离）；
+// 无租户上下文（个人空间）退回 user 维度，与改造前完全一致。
+// orgEvents 按创建顺序追加，倒序遍历即时间倒序。
 func (s *Store) ListUserEvents(sc Scope, limit int) []model.Event {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	events := s.userEvents[sc.UserID]
+	if sc.HasOrg() {
+		events = s.orgEvents[sc.OrgID]
+	}
 	if limit <= 0 {
 		limit = len(events)
 	}
