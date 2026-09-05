@@ -12,6 +12,7 @@ import (
 type CreateJoinRequestInput struct {
 	TrustRequestID string
 	UserID         string
+	OrgID          string
 	NodeID         string
 	Name           string
 	Description    string
@@ -89,10 +90,31 @@ func (s *Store) CreateJoinRequest(in CreateJoinRequestInput) (*model.JoinRequest
 		}
 	}
 
+	// 发起时锁定归属：reason 携带 org_id（企业空间发起招聘）时，校验
+	// 「org 存在且为企业租户 && 邀请人是该 org 成员」，通过则申请挂该企业；
+	// 校验不过回落邀请人个人租户（宁漏不泄，不放大可见范围）。
+	orgID := strings.TrimSpace(in.OrgID)
+	lockedToEnterprise := false
+	if orgID != "" && userID != "" {
+		if org, ok := s.organizations[orgID]; ok && org.Kind == model.OrgKindEnterprise {
+			if _, isMember := s.findMembershipUnsafe(orgID, userID); isMember {
+				lockedToEnterprise = true
+			} else {
+				orgID = ""
+			}
+		} else {
+			orgID = ""
+		}
+	}
+	ownerOrgID := s.personalOrgOfUnsafe(userID)
+	if lockedToEnterprise {
+		ownerOrgID = orgID
+	}
+
 	jr := &model.JoinRequest{
 		ID:             newID(),
 		UserID:         userID,
-		OrgID:          s.personalOrgOfUnsafe(userID),
+		OrgID:          ownerOrgID,
 		TrustRequestID: in.TrustRequestID,
 		NodeID:         in.NodeID,
 		Name:           name,
@@ -121,11 +143,19 @@ func (s *Store) CreateJoinRequest(in CreateJoinRequestInput) (*model.JoinRequest
 		}
 	}
 
-	// Notify relevant users
+	// Notify relevant users：企业锁定申请通知全企业成员；个人申请通知邀请人；
+	// 无主申请广播全部用户（既有 fallback）。
 	notifyUsers := make([]string, 0)
-	if userID != "" {
+	switch {
+	case lockedToEnterprise:
+		for _, mid := range s.orgMemberIndex[orgID] {
+			if m, ok := s.orgMemberships[mid]; ok {
+				notifyUsers = append(notifyUsers, m.UserID)
+			}
+		}
+	case userID != "":
 		notifyUsers = append(notifyUsers, userID)
-	} else {
+	default:
 		for _, u := range s.users {
 			notifyUsers = append(notifyUsers, u.ID)
 		}
@@ -243,6 +273,29 @@ func (s *Store) ApproveJoinRequest(sc Scope, requestID string, overrides JoinReq
 		return nil, transport.Conflict("AGENT_NODE_ID_EXISTS", "node_id already registered as an agent")
 	}
 
+	// 发起时锁定语义：
+	//   - 企业锁定申请（发起招聘时 reason 带 org_id）：仅该企业 owner/admin 可审；
+	//     agent 归属继承申请归属（该企业 + 邀请人）。
+	//   - 个人申请：可见即可审（joinRequestVisible 已裁决），归属继承申请（邀请人个人租户）。
+	//   - 无主申请（UserID 空的广播 fallback）：保持审批者归属兜底。
+	inviterID := jr.UserID
+	enterpriseLocked := s.isEnterpriseOrgUnsafe(jr.OrgID)
+	var agentUserID, agentOrgID string
+	switch {
+	case inviterID == "":
+		agentUserID = sc.UserID
+		agentOrgID = s.resolveOwnerOrgUnsafe(sc)
+	case enterpriseLocked:
+		if !sc.HasOrg() || sc.OrgID != jr.OrgID || (sc.Role != model.OrgRoleOwner && sc.Role != model.OrgRoleAdmin) {
+			return nil, transport.Forbidden("only organization owner/admin can approve this join request")
+		}
+		agentUserID = inviterID
+		agentOrgID = jr.OrgID
+	default:
+		agentUserID = inviterID
+		agentOrgID = jr.OrgID
+	}
+
 	// Apply overrides
 	name := jr.Name
 	if overrides.Name != nil && strings.TrimSpace(*overrides.Name) != "" {
@@ -272,8 +325,8 @@ func (s *Store) ApproveJoinRequest(sc Scope, requestID string, overrides JoinReq
 			a.Role = role
 			a.Capabilities = capabilities
 			a.Product = defaultProduct(jr.AgentProduct) // 恢复时同步产品标识
-			a.UserID = sc.UserID                       // 恢复时归属审批用户（旧用户可能已删除/变更）
-			a.OrgID = s.resolveOwnerOrgUnsafe(sc)     // 同步归属租户
+			a.UserID = agentUserID                      // 归属继承申请（发起时锁定）
+			a.OrgID = agentOrgID                        // 归属继承申请（发起时锁定）
 			a.Archived = false
 			a.Status = "offline"
 			a.UpdatedAt = now
@@ -286,8 +339,8 @@ func (s *Store) ApproveJoinRequest(sc Scope, requestID string, overrides JoinReq
 		// Create new agent
 		agent = &model.Agent{
 			ID:           newID(),
-			UserID:       sc.UserID,
-			OrgID:        s.resolveOwnerOrgUnsafe(sc),
+			UserID:       agentUserID,
+			OrgID:        agentOrgID,
 			Name:         name,
 			Description:  description,
 			Role:         role,
@@ -309,11 +362,14 @@ func (s *Store) ApproveJoinRequest(sc Scope, requestID string, overrides JoinReq
 		return nil, mongoWriteError(err)
 	}
 
-	// Mark join request as approved
+	// Mark join request as approved（归属发起时已锁定，不再改写为审批者；
+	// 仅无主申请 fallback 时记审批者归属）
 	jr.Status = "approved"
 	jr.ApprovedTrustMeshAgentID = agent.ID
-	jr.UserID = sc.UserID
-	jr.OrgID = s.resolveOwnerOrgUnsafe(sc)
+	if inviterID == "" {
+		jr.UserID = sc.UserID
+		jr.OrgID = agentOrgID
+	}
 	resolvedAt := now
 	jr.ResolvedAt = &resolvedAt
 	if err := s.persistJoinRequestUnsafe(jr); err != nil {
@@ -323,6 +379,15 @@ func (s *Store) ApproveJoinRequest(sc Scope, requestID string, overrides JoinReq
 	clone := copyAgent(agent)
 	clone.Usage = s.agentUsageUnsafe(agent.ID)
 	return clone, nil
+}
+
+// isEnterpriseOrgUnsafe 判断 org 是否企业租户；仅能在持锁函数内调用。
+func (s *Store) isEnterpriseOrgUnsafe(orgID string) bool {
+	if orgID == "" {
+		return false
+	}
+	org, ok := s.organizations[orgID]
+	return ok && org.Kind == model.OrgKindEnterprise
 }
 
 func (s *Store) RejectJoinRequest(sc Scope, requestID string) *transport.AppError {

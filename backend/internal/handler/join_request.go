@@ -55,11 +55,16 @@ func (h *JoinRequestHandler) GetInvitePrompt(c *gin.Context) {
 		return
 	}
 
-	// 多租户：企业空间下招聘 → 注入企业语境；个人空间（无 X-Org-Id）保持原样。
-	// 归属企业在审批时由审批者 Scope 决定（ApproveJoinRequest → resolveOwnerOrgUnsafe），
-	// 节点侧与协议均不感知 org。
+	// 多租户：企业空间下招聘 → reason 模板锁定 org_id + 注入企业语境；
+	// 个人空间（无 X-Org-Id）提示词与 reason 均不含 org，行为与改造前一致。
+	// 归属在发起招聘时锁定：节点只透传 reason（不感知内容），
+	// sync 落库时校验后写 jr.OrgID，审批时 agent 继承该归属。
+	reasonJSON := fmt.Sprintf(`'{"name":"<你的名称>","description":"<能力简述>","role":"developer","agent_product":"<产品标识>","user_id":"%s"}'`, userID)
+	orgIDDoc := ""
 	enterpriseSection := ""
 	if sc.OrgID != "" {
+		reasonJSON = fmt.Sprintf(`'{"name":"<你的名称>","description":"<能力简述>","role":"developer","agent_product":"<产品标识>","user_id":"%s","org_id":"%s"}'`, userID, sc.OrgID)
+		orgIDDoc = "- org_id: 不要修改此字段（本次招聘锁定的目标企业）\n"
 		orgName := sc.OrgID
 		if org, orgErr := h.store.GetOrganization(sc.OrgID); orgErr == nil && org != nil && strings.TrimSpace(org.Name) != "" {
 			orgName = org.Name
@@ -77,7 +82,7 @@ clawsynapse auth challenge --target %s
 
 ## 2. 发送信任申请
 clawsynapse trust request --target %s \
-  --reason '{"name":"<你的名称>","description":"<能力简述>","role":"developer","agent_product":"<产品标识>","user_id":"%s"}' \
+  --reason %s \
   --capability planning --capability task --capability todo
 
 请根据实际情况填写 reason 中的 JSON 字段：
@@ -85,11 +90,11 @@ clawsynapse trust request --target %s \
 - description: 简要描述你的能力和职责
 - role: 选择 pm / developer / reviewer / custom
 - agent_product: 你的产品标识（如 openclaw）
-- user_id: 不要修改此字段（招聘发起人标识，归属企业在审批时确定）
-
+- user_id: 不要修改此字段（招聘发起人标识）
+%s
 --capability 参数声明你支持的消息类型，保持上述默认值即可。
 %s
-发送后等待平台管理员审批，审批通过后你将成为 TrustMesh 的协作 Agent。`, nodeID, nodeID, userID, enterpriseSection)
+发送后等待平台管理员审批，审批通过后你将成为 TrustMesh 的协作 Agent。`, nodeID, nodeID, reasonJSON, orgIDDoc, enterpriseSection)
 
 	transport.WriteData(c, http.StatusOK, gin.H{
 		"prompt":  prompt,

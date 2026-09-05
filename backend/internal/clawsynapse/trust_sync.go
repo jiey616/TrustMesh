@@ -71,6 +71,7 @@ type trustRequestReason struct {
 	Capabilities []string `json:"capabilities"`
 	AgentProduct string   `json:"agent_product"`
 	UserID       string   `json:"user_id"`
+	OrgID        string   `json:"org_id"`
 }
 
 func (s *TrustRequestSyncer) sync() {
@@ -108,6 +109,7 @@ func (s *TrustRequestSyncer) sync() {
 		if _, appErr := s.store.CreateJoinRequest(store.CreateJoinRequestInput{
 			TrustRequestID: item.RequestID,
 			UserID:         profile.UserID,
+			OrgID:          profile.OrgID,
 			NodeID:         item.From,
 			Name:           profile.Name,
 			Description:    profile.Description,

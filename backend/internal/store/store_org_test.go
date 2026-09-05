@@ -1391,13 +1391,56 @@ func TestJoinRequestScopedVisibility(t *testing.T) {
 	}
 }
 
+// seedEnterpriseJoinRequestFixture：企业空间发起招聘（reason 携带 org_id，发起时锁定归属）。
+// 邀请人必须是真实用户且为该企业 owner（CreateJoinRequest 会校验用户与成员身份）。
+func seedEnterpriseJoinRequestFixture(s *Store, inviter, trID, nodeID string) (*model.Organization, *model.JoinRequest) {
+	u, err := s.CreateUser(inviter+"@example.com", inviter, "hash")
+	if err != nil {
+		panic("create user: " + err.Error())
+	}
+	if _, err := s.EnsurePersonalOrg(u.ID, inviter); err != nil {
+		panic("ensure personal org: " + err.Error())
+	}
+	orgA, err := s.CreateOrganization(u.ID, "Acme-"+trID, "acme-"+trID, model.OrgKindEnterprise)
+	if err != nil {
+		panic("create org: " + err.Error())
+	}
+	jr, err := s.CreateJoinRequest(CreateJoinRequestInput{
+		TrustRequestID: trID,
+		UserID:         u.ID,
+		OrgID:          orgA.ID,
+		NodeID:         nodeID,
+		Name:           "locked-agent",
+		Role:           "developer",
+		ReceivedAt:     time.Now().UTC(),
+	})
+	if err != nil {
+		panic("seed join request: " + err.Error())
+	}
+	if jr.OrgID != orgA.ID {
+		panic("seed join request: org lock failed, OrgID=" + jr.OrgID)
+	}
+	return orgA, jr
+}
+
+// 发起时锁定语义：企业锁定申请由该企业 owner/admin 审批，agent 归属继承申请。
 func TestApproveJoinRequestOwnerOrg(t *testing.T) {
 	s := New()
-	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
-	jr := seedJoinRequestFixture(s, orgA)
+	orgA, jr := seedEnterpriseJoinRequestFixture(s, "u1", "tr-lock-1", "node-lock-1")
+	if _, err := s.AddOrgMember(orgA.ID, "u2", model.OrgRoleMember); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
 
-	// 企业租户上下文审批：agent 与申请都应挂到审批人当前租户
-	agent, err := s.ApproveJoinRequest(Scope{UserID: jr.UserID, OrgID: orgA.ID}, jr.ID, JoinRequestOverrides{})
+	// member 带企业头：可见但无权审批
+	if _, err := s.ApproveJoinRequest(Scope{UserID: "u2", OrgID: orgA.ID, Role: model.OrgRoleMember}, jr.ID, JoinRequestOverrides{}); err == nil {
+		t.Fatal("member must not approve enterprise-locked join request")
+	}
+	// owner 无企业头：无权审批
+	if _, err := s.ApproveJoinRequest(Scope{UserID: jr.UserID}, jr.ID, JoinRequestOverrides{}); err == nil {
+		t.Fatal("owner without org ctx must not approve enterprise-locked join request")
+	}
+	// owner 带企业头：可审批，agent 继承申请归属（该企业 + 邀请人）
+	agent, err := s.ApproveJoinRequest(Scope{UserID: jr.UserID, OrgID: orgA.ID, Role: model.OrgRoleOwner}, jr.ID, JoinRequestOverrides{})
 	if err != nil {
 		t.Fatalf("approve: %v", err)
 	}
@@ -1406,6 +1449,45 @@ func TestApproveJoinRequestOwnerOrg(t *testing.T) {
 	}
 	if agent.UserID != jr.UserID {
 		t.Fatalf("agent.UserID = %q, want inviter", agent.UserID)
+	}
+
+	// admin 同样可审（第二条申请）
+	if _, err := s.AddOrgMember(orgA.ID, "u3", model.OrgRoleAdmin); err != nil {
+		t.Fatalf("add admin: %v", err)
+	}
+	jr2, err := s.CreateJoinRequest(CreateJoinRequestInput{
+		TrustRequestID: "tr-lock-2",
+		UserID:         jr.UserID,
+		OrgID:          orgA.ID,
+		NodeID:         "node-lock-2",
+		Name:           "locked-agent-2",
+		Role:           "developer",
+		ReceivedAt:     time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("seed jr2: %v", err)
+	}
+	if _, err := s.ApproveJoinRequest(Scope{UserID: "u3", OrgID: orgA.ID, Role: model.OrgRoleAdmin}, jr2.ID, JoinRequestOverrides{}); err != nil {
+		t.Fatalf("admin approve: %v", err)
+	}
+}
+
+// 个人申请（发起时无 org）：归属继承申请（邀请人个人租户），审批不改写归属。
+func TestApproveJoinRequestPersonalInherit(t *testing.T) {
+	s := New()
+	orgA, _ := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	jr := seedJoinRequestFixture(s, orgA)
+
+	// 邀请人在企业空间（带企业头）审批个人申请：归属仍继承申请（个人租户），不挂企业
+	agent, err := s.ApproveJoinRequest(Scope{UserID: jr.UserID, OrgID: orgA.ID, Role: model.OrgRoleOwner}, jr.ID, JoinRequestOverrides{})
+	if err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if agent.OrgID == orgA.ID {
+		t.Fatal("personal join request must not attach agent to approver enterprise")
+	}
+	if agent.OrgID != jr.OrgID {
+		t.Fatalf("agent.OrgID = %q, want jr.OrgID %q", agent.OrgID, jr.OrgID)
 	}
 }
 
