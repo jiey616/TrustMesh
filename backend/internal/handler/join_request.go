@@ -25,10 +25,11 @@ func NewJoinRequestHandler(s *store.Store, clawClient *clawsynapse.Client, cfg c
 }
 
 func (h *JoinRequestHandler) GetInvitePrompt(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
+	userID := sc.UserID
 
 	if h.clawClient == nil {
 		transport.WriteError(c, &transport.AppError{
@@ -54,6 +55,21 @@ func (h *JoinRequestHandler) GetInvitePrompt(c *gin.Context) {
 		return
 	}
 
+	// 多租户：企业空间下招聘 → 注入企业语境；个人空间（无 X-Org-Id）保持原样。
+	// 归属企业在审批时由审批者 Scope 决定（ApproveJoinRequest → resolveOwnerOrgUnsafe），
+	// 节点侧与协议均不感知 org。
+	enterpriseSection := ""
+	if sc.OrgID != "" {
+		orgName := sc.OrgID
+		if org, orgErr := h.store.GetOrganization(sc.OrgID); orgErr == nil && org != nil && strings.TrimSpace(org.Name) != "" {
+			orgName = org.Name
+		}
+		enterpriseSection = fmt.Sprintf(`
+
+## 本次招聘归属
+你正在被企业「%s」招聘。审批通过后，你将加入该企业（org_id: %s），参与其下的项目、任务与会议室协作。`, orgName, sc.OrgID)
+	}
+
 	prompt := fmt.Sprintf(`你被邀请加入 TrustMesh 工作平台协作网络。请按以下步骤操作：
 
 ## 1. 身份认证
@@ -69,11 +85,11 @@ clawsynapse trust request --target %s \
 - description: 简要描述你的能力和职责
 - role: 选择 pm / developer / reviewer / custom
 - agent_product: 你的产品标识（如 openclaw）
-- user_id: 不要修改此字段
+- user_id: 不要修改此字段（招聘发起人标识，归属企业在审批时确定）
 
 --capability 参数声明你支持的消息类型，保持上述默认值即可。
-
-发送后等待平台管理员审批，审批通过后你将成为 TrustMesh 的协作 Agent。`, nodeID, nodeID, userID)
+%s
+发送后等待平台管理员审批，审批通过后你将成为 TrustMesh 的协作 Agent。`, nodeID, nodeID, userID, enterpriseSection)
 
 	transport.WriteData(c, http.StatusOK, gin.H{
 		"prompt":  prompt,
