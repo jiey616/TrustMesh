@@ -9,6 +9,7 @@ interface AuthState {
   activeOrgId: string | null // null = 个人空间（不携带 X-Org-Id，保持无头兼容语义）
   setActiveOrg: (orgId: string | null) => void
   setAuth: (accessToken: string, refreshToken: string, user: User) => void
+  setUser: (user: User) => void
   setTokens: (accessToken: string, refreshToken: string) => void
   logout: () => void
   isAuthenticated: () => boolean
@@ -23,6 +24,7 @@ export const useAuthStore = create<AuthState>()(
       activeOrgId: null,
       setActiveOrg: (orgId) => set({ activeOrgId: orgId }),
       setAuth: (accessToken, refreshToken, user) => set({ accessToken, refreshToken, user }),
+      setUser: (user) => set({ user }),
       setTokens: (accessToken, refreshToken) => set({ accessToken, refreshToken }),
       logout: () => set({ accessToken: null, refreshToken: null, user: null, activeOrgId: null }),
       isAuthenticated: () => !!get().refreshToken,

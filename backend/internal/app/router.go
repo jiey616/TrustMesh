@@ -63,6 +63,7 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	}
 
 	authHandler := handler.NewAuthHandler(s, jwtManager)
+	userHandler := handler.NewUserHandler(s)
 	agentHandler := handler.NewAgentHandler(s, clawClient)
 	agentChatHandler := handler.NewAgentChatHandler(s, clawClient, log)
 	projectHandler := handler.NewProjectHandler(s)
@@ -267,6 +268,12 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	ext.PATCH("/:id", externalAppHandler.Update)
 	ext.DELETE("/:id", externalAppHandler.Delete)
 	ext.POST("/:id/launch", externalAppHandler.Launch)
+
+	// Current user account: rename + password change.
+	// 账号是 user 维度资源，不参与租户裁决（不受 X-Org-Id 影响）。
+	authed.GET("/users/me", userHandler.Me)
+	authed.PATCH("/users/me", userHandler.UpdateProfile)
+	authed.POST("/users/me/password", userHandler.ChangePassword)
 
 	// Multi-tenant organizations (stage 4-A): org CRUD + member management.
 	orgs := authed.Group("/organizations")

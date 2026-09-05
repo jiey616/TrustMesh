@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/crypto/bcrypt"
 
 	"trustmesh/backend/internal/model"
 	"trustmesh/backend/internal/transport"
@@ -70,4 +71,80 @@ func (s *Store) FindUserByID(userID string) (*model.User, bool) {
 		return nil, false
 	}
 	return copyUser(u), true
+}
+
+// UpdateUserName 更新用户显示名，并同步其个人租户名称。
+// 个人租户即用户本人的工作区，不同步会导致改名后侧边栏「个人空间」仍显示旧名。
+// 企业租户名称独立于用户名，不受影响。
+func (s *Store) UpdateUserName(userID, name string) (*model.User, *transport.AppError) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, transport.Validation("invalid update payload", map[string]any{"name": "required"})
+	}
+	if len([]rune(name)) > 64 {
+		return nil, transport.Validation("invalid update payload", map[string]any{"name": "must be at most 64 chars"})
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	u, ok := s.users[userID]
+	if !ok {
+		return nil, transport.NotFound("user not found")
+	}
+	u.Name = name
+	u.UpdatedAt = time.Now().UTC()
+	if err := s.persistUserUnsafe(u); err != nil {
+		return nil, mongoWriteError(err)
+	}
+
+	if orgID := s.personalOrgOfUnsafe(userID); orgID != "" {
+		if org, ok := s.organizations[orgID]; ok && org.Kind == model.OrgKindPersonal {
+			org.Name = name
+			org.UpdatedAt = u.UpdatedAt
+			if err := s.persistOrganizationUnsafe(org); err != nil && s.log != nil {
+				s.log.Warn("sync personal org name failed", zap.String("user_id", userID), zap.Error(err))
+			}
+		}
+	}
+
+	return copyUser(u), nil
+}
+
+// VerifyUserPassword 校验用户当前密码。用于改密前的身份确认。
+// bcrypt 比对耗时较长，先拷出哈希再释放锁，避免长时间持锁。
+func (s *Store) VerifyUserPassword(userID, plainPassword string) bool {
+	s.mu.RLock()
+	u, ok := s.users[userID]
+	var hash string
+	if ok {
+		hash = u.PasswordHash
+	}
+	s.mu.RUnlock()
+
+	if !ok || hash == "" {
+		return false
+	}
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(plainPassword)) == nil
+}
+
+// UpdateUserPassword 写入新密码哈希。调用方须先用 VerifyUserPassword 确认旧密码。
+func (s *Store) UpdateUserPassword(userID, newPasswordHash string) *transport.AppError {
+	if newPasswordHash == "" {
+		return transport.Validation("invalid update payload", map[string]any{"password": "required"})
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	u, ok := s.users[userID]
+	if !ok {
+		return transport.NotFound("user not found")
+	}
+	u.PasswordHash = newPasswordHash
+	u.UpdatedAt = time.Now().UTC()
+	if err := s.persistUserUnsafe(u); err != nil {
+		return mongoWriteError(err)
+	}
+	return nil
 }
