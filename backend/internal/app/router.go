@@ -78,6 +78,7 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	platformHandler := handler.NewPlatformHandler(cfg.PlatformName)
 	externalAppHandler := handler.NewExternalAppHandler(s, auth.ExternalTokenIssuer, cfg.ExternalAppTokenTTL)
 	workflowTemplateHandler := handler.NewWorkflowTemplateHandler(s)
+	orgHandler := handler.NewOrgHandler(s)
 
 	// Knowledge base components (optional - requires EMBEDDING_API_KEY)
 	var knowledgeHandler *handler.KnowledgeHandler
@@ -266,6 +267,16 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	ext.PATCH("/:id", externalAppHandler.Update)
 	ext.DELETE("/:id", externalAppHandler.Delete)
 	ext.POST("/:id/launch", externalAppHandler.Launch)
+
+	// Multi-tenant organizations (stage 4-A): org CRUD + member management.
+	orgs := authed.Group("/organizations")
+	orgs.GET("", orgHandler.List)
+	orgs.POST("", orgHandler.Create)
+	orgs.GET("/:id", orgHandler.Get)
+	orgs.GET("/:id/members", orgHandler.ListMembers)
+	orgs.POST("/:id/members", orgHandler.AddMember)
+	orgs.PATCH("/:id/members/:userId", orgHandler.UpdateMemberRole)
+	orgs.DELETE("/:id/members/:userId", orgHandler.RemoveMember)
 
 	kb := authed.Group("/knowledge")
 	kb.POST("/documents", knowledgeHandler.Upload)
