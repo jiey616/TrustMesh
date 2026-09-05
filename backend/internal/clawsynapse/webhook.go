@@ -1075,13 +1075,13 @@ func (h *WebhookHandler) handleTodoAdd(c *gin.Context, webhook protocol.WebhookP
 
 	// Add the todo via store.
 	if payload.BeforeTodoID != "" {
-		task, appErr = h.store.InsertTodo(task.UserID, payload.TaskID, payload.BeforeTodoID, store.TodoModifyInput{
+		task, appErr = h.store.InsertTodo(store.SystemScope(), payload.TaskID, payload.BeforeTodoID, store.TodoModifyInput{
 			Title:       payload.Title,
 			Description: payload.Description,
 			AssigneeID:  assigneeAgent.ID,
 		})
 	} else {
-		task, appErr = h.store.AppendTodo(task.UserID, payload.TaskID, store.TodoModifyInput{
+		task, appErr = h.store.AppendTodo(store.SystemScope(), payload.TaskID, store.TodoModifyInput{
 			Title:       payload.Title,
 			Description: payload.Description,
 			AssigneeID:  assigneeAgent.ID,
@@ -1129,7 +1129,7 @@ func (h *WebhookHandler) handleTodoModify(c *gin.Context, webhook protocol.Webho
 		assigneeID = assigneeAgent.ID
 	}
 
-	task, appErr = h.store.UpdateTodo(task.UserID, payload.TaskID, payload.TodoID, store.TodoModifyInput{
+	task, appErr = h.store.UpdateTodo(store.SystemScope(), payload.TaskID, payload.TodoID, store.TodoModifyInput{
 		Title:       payload.Title,
 		Description: payload.Description,
 		AssigneeID:  assigneeID,
@@ -1440,7 +1440,7 @@ func (h *WebhookHandler) handleTodoReview(c *gin.Context, webhook protocol.Webho
 		payload.TaskID = webhook.SessionKey
 	}
 
-	task, reworked, appErr := h.store.ReviewTodo("", webhook.From, payload.TaskID, payload.TodoID, payload.Action, payload.Reason)
+	task, reworked, appErr := h.store.ReviewTodo(store.SystemScope(), webhook.From, payload.TaskID, payload.TodoID, payload.Action, payload.Reason)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -1988,7 +1988,7 @@ func (h *WebhookHandler) resolveStepInput(task *model.TaskDetail, current *model
 				return nil
 			}
 		}
-		if st, tds, ok := h.store.FindTaskForWorkflowStep(task.UserID, task.ProjectID, task.WorkflowRef.WorkflowName, step); ok {
+		if st, tds, ok := h.store.FindTaskForWorkflowStep(store.SystemScope(), task.ProjectID, task.WorkflowRef.WorkflowName, step); ok {
 			srcTask = st
 			candidates = append(candidates, tds...)
 		}

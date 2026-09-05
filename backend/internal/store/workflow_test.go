@@ -493,7 +493,7 @@ func TestRecordTodoDispatchMarksTaskInProgress(t *testing.T) {
 		t.Fatalf("create task: %v", appErr)
 	}
 
-	task, appErr = s.RecordTodoDispatch(userID, task.ID, "todo-1")
+	task, appErr = s.RecordTodoDispatch(Scope{UserID: userID}, task.ID, "todo-1")
 	if appErr != nil {
 		t.Fatalf("dispatch todo: %v", appErr)
 	}
@@ -670,7 +670,7 @@ func TestCancelTaskStopsFurtherTodoUpdates(t *testing.T) {
 		t.Fatalf("expected in_progress before cancel, got %s", task.Status)
 	}
 
-	task, appErr = s.CancelTask(userID, TaskCancelInput{
+	task, appErr = s.CancelTask(Scope{UserID: userID}, TaskCancelInput{
 		TaskID: task.ID,
 		Reason: "manual stop",
 	})
@@ -832,7 +832,7 @@ func TestCreateTaskByUserTodoWorkflow(t *testing.T) {
 	}
 
 	// Dispatch the todo
-	task, appErr = s.RecordTodoDispatch(userID, task.ID, task.Todos[0].ID)
+	task, appErr = s.RecordTodoDispatch(Scope{UserID: userID}, task.ID, task.Todos[0].ID)
 	if appErr != nil {
 		t.Fatalf("dispatch todo: %v", appErr)
 	}
@@ -953,7 +953,7 @@ func TestProjectWorkflowRefAndProgress(t *testing.T) {
 	}
 
 	// 进度聚合：步骤 0/1 归任务 A，步骤 2 归任务 B
-	progress, appErr := s.GetProjectWorkflowProgress(userID, project.ID)
+	progress, appErr := s.GetProjectWorkflowProgress(Scope{UserID: userID}, project.ID)
 	if appErr != nil {
 		t.Fatalf("get progress: %v", appErr)
 	}
@@ -971,7 +971,7 @@ func TestProjectWorkflowRefAndProgress(t *testing.T) {
 	}
 
 	// 跨任务查找：步骤 0（剧本创作）应由任务 A 负责，且能匹配到其 todo
-	srcTask, srcTodos, ok := s.FindTaskForWorkflowStep(userID, project.ID, "总流程", "剧本创作")
+	srcTask, srcTodos, ok := s.FindTaskForWorkflowStep(Scope{UserID: userID}, project.ID, "总流程", "剧本创作")
 	if !ok {
 		t.Fatalf("cross-task step lookup failed")
 	}
@@ -982,7 +982,7 @@ func TestProjectWorkflowRefAndProgress(t *testing.T) {
 		t.Fatalf("source todo should be matched")
 	}
 	// 不存在的步骤名返回 false
-	if _, _, ok := s.FindTaskForWorkflowStep(userID, project.ID, "总流程", "不存在的步骤"); ok {
+	if _, _, ok := s.FindTaskForWorkflowStep(Scope{UserID: userID}, project.ID, "总流程", "不存在的步骤"); ok {
 		t.Fatalf("lookup of unknown step should fail")
 	}
 }
@@ -1079,11 +1079,11 @@ func TestFindTaskForWorkflowStepSkipsCanceled(t *testing.T) {
 	s.projectTasks[projectID] = append(s.projectTasks[projectID], canceled.ID, active.ID)
 
 	// Mistyped workflow name must not match anything.
-	if _, _, ok := s.FindTaskForWorkflowStep(userID, projectID, "画宗AIGC无人工厂产线工作线工作流", "剧本创作"); ok {
+	if _, _, ok := s.FindTaskForWorkflowStep(Scope{UserID: userID}, projectID, "画宗AIGC无人工厂产线工作线工作流", "剧本创作"); ok {
 		t.Fatal("did not expect a match for a mistyped workflow name")
 	}
 
-	task, todos, ok := s.FindTaskForWorkflowStep(userID, projectID, "画宗AIGC无人工厂产线工作流", "剧本创作")
+	task, todos, ok := s.FindTaskForWorkflowStep(Scope{UserID: userID}, projectID, "画宗AIGC无人工厂产线工作流", "剧本创作")
 	if !ok {
 		t.Fatal("expected to find an active task for the step")
 	}
@@ -1135,7 +1135,7 @@ func TestFindTaskForWorkflowStepReturnsAllTodosForStep(t *testing.T) {
 	s.tasks[task.ID] = task
 	s.projectTasks[projectID] = append(s.projectTasks[projectID], task.ID)
 
-	_, todos, ok := s.FindTaskForWorkflowStep(userID, projectID, "画宗AIGC无人工厂产线工作流", "分镜拆解")
+	_, todos, ok := s.FindTaskForWorkflowStep(Scope{UserID: userID}, projectID, "画宗AIGC无人工厂产线工作流", "分镜拆解")
 	if !ok {
 		t.Fatal("expected to find the storyboard task for the step")
 	}
@@ -1203,7 +1203,7 @@ func TestPrimaryStepAggregatesMultipleTodos(t *testing.T) {
 	}
 	s.projectTasks[projectID] = append(s.projectTasks[projectID], task.ID)
 
-	prog, appErr := s.GetProjectWorkflowProgress(userID, projectID)
+	prog, appErr := s.GetProjectWorkflowProgress(Scope{UserID: userID}, projectID)
 	if appErr != nil {
 		t.Fatalf("progress: %v", appErr)
 	}
@@ -1220,21 +1220,21 @@ func TestPrimaryStepAggregatesMultipleTodos(t *testing.T) {
 
 	// An in-progress sub-todo must make the whole step in_progress.
 	task.Todos[1].Status = "in_progress"
-	prog, _ = s.GetProjectWorkflowProgress(userID, projectID)
+	prog, _ = s.GetProjectWorkflowProgress(Scope{UserID: userID}, projectID)
 	if prog.Steps[0].Status != "in_progress" {
 		t.Fatalf("expected in_progress, got %s", prog.Steps[0].Status)
 	}
 
 	// A failed sub-todo dominates the aggregated status.
 	task.Todos[1].Status = "failed"
-	prog, _ = s.GetProjectWorkflowProgress(userID, projectID)
+	prog, _ = s.GetProjectWorkflowProgress(Scope{UserID: userID}, projectID)
 	if prog.Steps[0].Status != "failed" {
 		t.Fatalf("expected failed, got %s", prog.Steps[0].Status)
 	}
 
 	// Restored to done: all outputs remain aggregated.
 	task.Todos[1].Status = "done"
-	prog, _ = s.GetProjectWorkflowProgress(userID, projectID)
+	prog, _ = s.GetProjectWorkflowProgress(Scope{UserID: userID}, projectID)
 	if len(prog.Steps[0].Outputs) != 2 {
 		t.Fatalf("expected 2 outputs after restore, got %d", len(prog.Steps[0].Outputs))
 	}
@@ -1281,7 +1281,7 @@ func TestPipelineExcludesProcessArtifacts(t *testing.T) {
 	}
 	s.projectTasks[projectID] = append(s.projectTasks[projectID], task.ID)
 
-	prog, appErr := s.GetProjectWorkflowProgress(userID, projectID)
+	prog, appErr := s.GetProjectWorkflowProgress(Scope{UserID: userID}, projectID)
 	if appErr != nil {
 		t.Fatalf("progress: %v", appErr)
 	}
@@ -1330,7 +1330,7 @@ func TestCancelledTaskKeepsCompletedSteps(t *testing.T) {
 	s.projectTasks[projectID] = append(s.projectTasks[projectID], task.ID)
 
 	// Cancelled owner, done todo: step must stay done (history preserved).
-	prog, appErr := s.GetProjectWorkflowProgress(userID, projectID)
+	prog, appErr := s.GetProjectWorkflowProgress(Scope{UserID: userID}, projectID)
 	if appErr != nil {
 		t.Fatalf("progress: %v", appErr)
 	}
@@ -1343,14 +1343,14 @@ func TestCancelledTaskKeepsCompletedSteps(t *testing.T) {
 
 	// Cancelled owner, cancelled todo: step shows cancelled.
 	task.Todos[0].Status = "canceled"
-	prog, _ = s.GetProjectWorkflowProgress(userID, projectID)
+	prog, _ = s.GetProjectWorkflowProgress(Scope{UserID: userID}, projectID)
 	if prog.Steps[0].Status != "canceled" {
 		t.Fatalf("expected cancelled step, got %s", prog.Steps[0].Status)
 	}
 
 	// Cancelled owner with NO todo at all: node falls back to unassigned.
 	task.Todos = nil
-	prog, _ = s.GetProjectWorkflowProgress(userID, projectID)
+	prog, _ = s.GetProjectWorkflowProgress(Scope{UserID: userID}, projectID)
 	if prog.Steps[0].Status != "unassigned" {
 		t.Fatalf("expected unassigned, got %s", prog.Steps[0].Status)
 	}
@@ -1377,7 +1377,7 @@ func TestCancelledTaskKeepsCompletedSteps(t *testing.T) {
 	}
 	s.tasks[planning.ID] = planning
 	s.projectTasks[projectID] = append(s.projectTasks[projectID], planning.ID)
-	prog, _ = s.GetProjectWorkflowProgress(userID, projectID)
+	prog, _ = s.GetProjectWorkflowProgress(Scope{UserID: userID}, projectID)
 	if prog.Steps[0].Status != "done" || prog.Steps[0].TaskID != task.ID {
 		t.Fatalf("cancelled history must survive a planning task: status=%s task=%s", prog.Steps[0].Status, prog.Steps[0].TaskID)
 	}
@@ -1403,7 +1403,7 @@ func TestCancelledTaskKeepsCompletedSteps(t *testing.T) {
 	}
 	s.tasks[active.ID] = active
 	s.projectTasks[projectID] = append(s.projectTasks[projectID], active.ID)
-	prog, _ = s.GetProjectWorkflowProgress(userID, projectID)
+	prog, _ = s.GetProjectWorkflowProgress(Scope{UserID: userID}, projectID)
 	if prog.Steps[0].TaskID != active.ID {
 		t.Fatalf("active task should override cancelled owner, got task %s", prog.Steps[0].TaskID)
 	}

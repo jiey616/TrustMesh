@@ -51,8 +51,6 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// 归属判断统一走 sc；其余仅按作者维度使用的地方保留 userID。
-	userID := sc.UserID
 
 	var body struct {
 		Title           string          `json:"title"`
@@ -87,7 +85,7 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		return
 	}
 
-	task = h.autoDispatchFirstTodo(c.Request.Context(), userID, task)
+	task = h.autoDispatchFirstTodo(c.Request.Context(), sc, task)
 	transport.WriteData(c, http.StatusCreated, task)
 }
 
@@ -100,8 +98,6 @@ func (h *TaskHandler) CreateFromText(c *gin.Context) {
 		return
 	}
 
-	// 归属判断统一走 sc；其余仅按作者维度使用的地方保留 userID。
-	userID := sc.UserID
 
 	var body struct {
 		Content       string          `json:"content"`
@@ -136,7 +132,7 @@ func (h *TaskHandler) CreateFromText(c *gin.Context) {
 			transport.WriteError(c, appErr)
 			return
 		}
-		task = h.autoDispatchFirstTodo(c.Request.Context(), userID, task)
+		task = h.autoDispatchFirstTodo(c.Request.Context(), sc, task)
 		transport.WriteData(c, http.StatusCreated, task)
 		return
 	}
@@ -183,13 +179,13 @@ func (h *TaskHandler) createPlanningTask(c *gin.Context, sc store.Scope, project
 		transport.WriteError(c, appErr)
 		return
 	}
-	h.notifyPMTaskMessage(c, sc.UserID, projectID, task.ID, content, true, nil)
+	h.notifyPMTaskMessage(c, sc, projectID, task.ID, content, true, nil)
 	transport.WriteData(c, http.StatusCreated, task)
 }
 
 // autoDispatchFirstTodo publishes a todo.assigned event for the first todo and records the dispatch.
 // It returns the updated task if dispatch succeeds, or the original task if it fails (non-fatal).
-func (h *TaskHandler) autoDispatchFirstTodo(ctx context.Context, userID string, task *model.TaskDetail) *model.TaskDetail {
+func (h *TaskHandler) autoDispatchFirstTodo(ctx context.Context, sc store.Scope, task *model.TaskDetail) *model.TaskDetail {
 	if h.publisher == nil || len(task.Todos) == 0 {
 		return task
 	}
@@ -214,7 +210,7 @@ func (h *TaskHandler) autoDispatchFirstTodo(ctx context.Context, userID string, 
 		}
 		return task
 	}
-	dispatched, dispatchErr := h.store.RecordTodoDispatch(userID, task.ID, todo.ID)
+	dispatched, dispatchErr := h.store.RecordTodoDispatch(sc, task.ID, todo.ID)
 	if dispatchErr != nil {
 		if h.log != nil {
 			h.log.Warn("record todo dispatch failed", zap.String("task_id", task.ID), zap.String("todo_id", todo.ID), zap.Error(dispatchErr))
@@ -270,8 +266,6 @@ func (h *TaskHandler) DispatchTodo(c *gin.Context) {
 		return
 	}
 
-	// 归属判断统一走 sc；其余仅按作者维度使用的地方保留 userID。
-	userID := sc.UserID
 
 	task, appErr := h.store.GetTask(sc, c.Param("id"))
 	if appErr != nil {
@@ -323,7 +317,7 @@ func (h *TaskHandler) DispatchTodo(c *gin.Context) {
 		return
 	}
 
-	task, appErr = h.store.RecordTodoDispatch(userID, task.ID, todo.ID)
+	task, appErr = h.store.RecordTodoDispatch(sc, task.ID, todo.ID)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -364,7 +358,7 @@ func (h *TaskHandler) BindTodoOutput(c *gin.Context) {
 }
 
 func (h *TaskHandler) ReviewTodo(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -378,7 +372,7 @@ func (h *TaskHandler) ReviewTodo(c *gin.Context) {
 		return
 	}
 
-	task, reworked, appErr := h.store.ReviewTodo(userID, "", c.Param("id"), c.Param("todoId"), body.Action, body.Reason)
+	task, reworked, appErr := h.store.ReviewTodo(sc, "", c.Param("id"), c.Param("todoId"), body.Action, body.Reason)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -387,11 +381,11 @@ func (h *TaskHandler) ReviewTodo(c *gin.Context) {
 		if body.Action == "approve" {
 			// Approved review unblocks the sequential pipeline: dispatch the next
 			// ready todo.
-			task = h.dispatchNextTodo(c.Request.Context(), userID, task)
+			task = h.dispatchNextTodo(c.Request.Context(), sc, task)
 		} else if reworked != nil {
 			// Rejected review triggered a rework: the audited predecessor was
 			// reset and must be re-dispatched to its assignee immediately.
-			h.publishReworkDispatch(c.Request.Context(), userID, task, reworked, body.Reason)
+			h.publishReworkDispatch(c.Request.Context(), sc, task, reworked, body.Reason)
 		}
 	}
 	transport.WriteData(c, http.StatusOK, task)
@@ -401,7 +395,7 @@ func (h *TaskHandler) ReviewTodo(c *gin.Context) {
 // todo resumes to in_progress and todo.answer is forwarded to the agent so it
 // keeps executing in the same context.
 func (h *TaskHandler) AnswerTodo(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -419,7 +413,7 @@ func (h *TaskHandler) AnswerTodo(c *gin.Context) {
 		return
 	}
 
-	task, question, appErr := h.store.AnswerTodo(userID, c.Param("id"), c.Param("todoId"), body.QuestionID, body.Answer, userID, false)
+	task, question, appErr := h.store.AnswerTodo(sc, c.Param("id"), c.Param("todoId"), body.QuestionID, body.Answer, sc.UserID, false)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -466,7 +460,7 @@ func (h *TaskHandler) PublishTodoAnswer(ctx context.Context, task *model.TaskDet
 
 // publishReworkDispatch publishes a todo.assigned message for a todo that was
 // sent back for rework (review rejection), telling the assignee to redo it.
-func (h *TaskHandler) publishReworkDispatch(ctx context.Context, userID string, task *model.TaskDetail, todo *model.Todo, reason string) {
+func (h *TaskHandler) publishReworkDispatch(ctx context.Context, sc store.Scope, task *model.TaskDetail, todo *model.Todo, reason string) {
 	if h.publisher == nil || task == nil || todo == nil {
 		return
 	}
@@ -494,7 +488,7 @@ func (h *TaskHandler) publishReworkDispatch(ctx context.Context, userID string, 
 // dispatchNextTodo publishes todo.assigned for the next dispatchable todo (if
 // any) and records the dispatch, mirroring autoDispatchFirstTodo for later
 // positions in the chain.
-func (h *TaskHandler) dispatchNextTodo(ctx context.Context, userID string, task *model.TaskDetail) *model.TaskDetail {
+func (h *TaskHandler) dispatchNextTodo(ctx context.Context, sc store.Scope, task *model.TaskDetail) *model.TaskDetail {
 	if h.publisher == nil {
 		return task
 	}
@@ -522,7 +516,7 @@ func (h *TaskHandler) dispatchNextTodo(ctx context.Context, userID string, task 
 		}
 		return task
 	}
-	dispatched, dispatchErr := h.store.RecordTodoDispatch(userID, task.ID, todo.ID)
+	dispatched, dispatchErr := h.store.RecordTodoDispatch(sc, task.ID, todo.ID)
 	if dispatchErr != nil {
 		if h.log != nil {
 			h.log.Warn("record next todo dispatch failed", zap.String("task_id", task.ID), zap.String("todo_id", todo.ID), zap.Error(dispatchErr))
@@ -582,7 +576,7 @@ func (h *TaskHandler) AddComment(c *gin.Context) {
 }
 
 func (h *TaskHandler) Cancel(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -595,7 +589,7 @@ func (h *TaskHandler) Cancel(c *gin.Context) {
 		return
 	}
 
-	task, appErr := h.store.CancelTask(userID, store.TaskCancelInput{
+	task, appErr := h.store.CancelTask(sc, store.TaskCancelInput{
 		TaskID: c.Param("id"),
 		Reason: strings.TrimSpace(body.Reason),
 	})
@@ -732,8 +726,6 @@ func (h *TaskHandler) RejectPlan(c *gin.Context) {
 		return
 	}
 
-	// 归属判断统一走 sc；其余仅按作者维度使用的地方保留 userID。
-	userID := sc.UserID
 
 	var body struct {
 		Feedback string `json:"feedback"`
@@ -750,7 +742,7 @@ func (h *TaskHandler) RejectPlan(c *gin.Context) {
 		return
 	}
 
-	h.notifyPMTaskMessage(c, userID, task.ProjectID, task.ID, body.Feedback, false, nil)
+	h.notifyPMTaskMessage(c, sc, task.ProjectID, task.ID, body.Feedback, false, nil)
 	transport.WriteData(c, http.StatusOK, task)
 }
 
@@ -760,8 +752,6 @@ func (h *TaskHandler) CreatePlanning(c *gin.Context) {
 		return
 	}
 
-	// 归属判断统一走 sc；其余仅按作者维度使用的地方保留 userID。
-	userID := sc.UserID
 
 	var body struct {
 		Content       string          `json:"content"`
@@ -783,7 +773,7 @@ func (h *TaskHandler) CreatePlanning(c *gin.Context) {
 		return
 	}
 
-	h.notifyPMTaskMessage(c, userID, projectID, task.ID, body.Content, true, nil)
+	h.notifyPMTaskMessage(c, sc, projectID, task.ID, body.Content, true, nil)
 	transport.WriteData(c, http.StatusCreated, task)
 }
 
@@ -793,8 +783,6 @@ func (h *TaskHandler) AppendTaskMessage(c *gin.Context) {
 		return
 	}
 
-	// 归属判断统一走 sc；其余仅按作者维度使用的地方保留 userID。
-	userID := sc.UserID
 
 	var body struct {
 		Content    string            `json:"content"`
@@ -812,22 +800,22 @@ func (h *TaskHandler) AppendTaskMessage(c *gin.Context) {
 		return
 	}
 
-	h.notifyPMTaskMessage(c, userID, task.ProjectID, task.ID, body.Content, false, body.UIResponse)
+	h.notifyPMTaskMessage(c, sc, task.ProjectID, task.ID, body.Content, false, body.UIResponse)
 	transport.WriteData(c, http.StatusOK, task)
 }
 
-func (h *TaskHandler) notifyPMTaskMessage(c *gin.Context, userID, projectID, taskID, content string, initial bool, uiResponse *model.UIResponse) {
+func (h *TaskHandler) notifyPMTaskMessage(c *gin.Context, sc store.Scope, projectID, taskID, content string, initial bool, uiResponse *model.UIResponse) {
 	if h.publisher == nil {
 		return
 	}
-	pmNodeID, appErr := h.store.GetTaskPMPublishTarget(store.Scope{UserID: userID}, taskID)
+	pmNodeID, appErr := h.store.GetTaskPMPublishTarget(sc, taskID)
 	if appErr != nil {
 		if h.log != nil {
 			h.log.Warn("skip notify task.message", zap.String("task_id", taskID), zap.String("code", appErr.Code))
 		}
 		return
 	}
-	payload := h.buildPMTaskMessage(userID, projectID, taskID, content, initial, uiResponse)
+	payload := h.buildPMTaskMessage(sc, projectID, taskID, content, initial, uiResponse)
 	if _, err := h.publisher.Publish(c.Request.Context(), pmNodeID, "task.message", payload, taskID, nil); err != nil {
 		if h.log != nil {
 			h.log.Warn("notify task.message failed", zap.String("task_id", taskID), zap.Error(err))
@@ -835,7 +823,7 @@ func (h *TaskHandler) notifyPMTaskMessage(c *gin.Context, userID, projectID, tas
 	}
 }
 
-func (h *TaskHandler) buildPMTaskMessage(userID, projectID, taskID, userContent string, initial bool, uiResponse *model.UIResponse) protocol.PMTaskMessage {
+func (h *TaskHandler) buildPMTaskMessage(sc store.Scope, projectID, taskID, userContent string, initial bool, uiResponse *model.UIResponse) protocol.PMTaskMessage {
 	payload := protocol.PMTaskMessage{
 		SchemaVersion:  "1.0",
 		TaskID:         taskID,
@@ -846,7 +834,7 @@ func (h *TaskHandler) buildPMTaskMessage(userID, projectID, taskID, userContent 
 	}
 
 	// Enrich with attached files from the task.
-	task, err := h.store.GetTask(store.Scope{UserID: userID}, taskID)
+	task, err := h.store.GetTask(sc, taskID)
 	if err == nil && task != nil {
 		payload.AttachedFiles = h.enrichAttachedFiles(task.AttachedFiles)
 		// Carry the workflow snapshot so the PM can plan against it.
@@ -873,7 +861,7 @@ func (h *TaskHandler) buildPMTaskMessage(userID, projectID, taskID, userContent 
 		return payload
 	}
 
-	project, appErr := h.store.GetProject(store.Scope{UserID: userID}, projectID)
+	project, appErr := h.store.GetProject(sc, projectID)
 	if appErr != nil {
 		if h.log != nil {
 			h.log.Warn("build initial pm task message missing project context", zap.String("project_id", projectID))
@@ -881,7 +869,7 @@ func (h *TaskHandler) buildPMTaskMessage(userID, projectID, taskID, userContent 
 		return payload
 	}
 
-	candidates := buildCandidateAgents(project.PMAgent.ID, h.store.ListAgents(store.Scope{UserID: userID}))
+	candidates := buildCandidateAgents(project.PMAgent.ID, h.store.ListAgents(sc))
 	payload.Project = &protocol.PMTaskProject{
 		Name:        project.Name,
 		Description: project.Description,
@@ -935,7 +923,7 @@ func (h *TaskHandler) enrichAttachedFiles(files []model.TaskAttachedFile) []prot
 
 // AddTodo creates a new TODO at the end of a task's todo list.
 func (h *TaskHandler) AddTodo(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -950,7 +938,7 @@ func (h *TaskHandler) AddTodo(c *gin.Context) {
 		return
 	}
 
-	task, appErr := h.store.AppendTodo(userID, c.Param("id"), store.TodoModifyInput{
+	task, appErr := h.store.AppendTodo(sc, c.Param("id"), store.TodoModifyInput{
 		Title:       body.Title,
 		Description: body.Description,
 		AssigneeID:  body.AssigneeID,
@@ -969,7 +957,7 @@ func (h *TaskHandler) AddTodo(c *gin.Context) {
 
 // InsertTodo creates a new TODO before a specified todo.
 func (h *TaskHandler) InsertTodo(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -984,7 +972,7 @@ func (h *TaskHandler) InsertTodo(c *gin.Context) {
 		return
 	}
 
-	task, appErr := h.store.InsertTodo(userID, c.Param("id"), c.Param("todoId"), store.TodoModifyInput{
+	task, appErr := h.store.InsertTodo(sc, c.Param("id"), c.Param("todoId"), store.TodoModifyInput{
 		Title:       body.Title,
 		Description: body.Description,
 		AssigneeID:  body.AssigneeID,
@@ -1003,7 +991,7 @@ func (h *TaskHandler) InsertTodo(c *gin.Context) {
 
 // UpdateTodo updates a todo's title, description, and/or assignee.
 func (h *TaskHandler) UpdateTodo(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -1018,7 +1006,7 @@ func (h *TaskHandler) UpdateTodo(c *gin.Context) {
 		return
 	}
 
-	task, appErr := h.store.UpdateTodo(userID, c.Param("id"), c.Param("todoId"), store.TodoModifyInput{
+	task, appErr := h.store.UpdateTodo(sc, c.Param("id"), c.Param("todoId"), store.TodoModifyInput{
 		Title:       body.Title,
 		Description: body.Description,
 		AssigneeID:  body.AssigneeID,
@@ -1032,12 +1020,12 @@ func (h *TaskHandler) UpdateTodo(c *gin.Context) {
 
 // RemoveTodo deletes a pending todo from a task.
 func (h *TaskHandler) RemoveTodo(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
 
-	task, appErr := h.store.RemoveTodo(userID, c.Param("id"), c.Param("todoId"))
+	task, appErr := h.store.RemoveTodo(sc, c.Param("id"), c.Param("todoId"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
@@ -1052,7 +1040,7 @@ func (h *TaskHandler) RemoveTodo(c *gin.Context) {
 
 // ReorderTodos reorders all todos in a task.
 func (h *TaskHandler) ReorderTodos(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -1065,7 +1053,7 @@ func (h *TaskHandler) ReorderTodos(c *gin.Context) {
 		return
 	}
 
-	task, appErr := h.store.ReorderTodos(userID, c.Param("id"), body.TodoIDs)
+	task, appErr := h.store.ReorderTodos(sc, c.Param("id"), body.TodoIDs)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return

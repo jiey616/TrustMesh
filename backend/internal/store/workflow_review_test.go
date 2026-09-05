@@ -109,7 +109,7 @@ func TestReviewTodoHumanRejectReworksSelf(t *testing.T) {
 		t.Fatalf("expected awaiting_review, got %s", task.Status)
 	}
 
-	task, reworked, appErr := s.ReviewTodo(userID, "", task.ID, "todo-1", "reject", "节奏太拖，重写")
+	task, reworked, appErr := s.ReviewTodo(Scope{UserID: userID}, "", task.ID, "todo-1", "reject", "节奏太拖，重写")
 	if appErr != nil {
 		t.Fatalf("human reject: %v", appErr)
 	}
@@ -159,7 +159,7 @@ func TestReviewTodoAgentRejectReworksPredecessor(t *testing.T) {
 		t.Fatalf("complete todo-2: %v", appErr)
 	}
 
-	task, reworked, appErr := s.ReviewTodo(userID, developer.NodeID, task.ID, "todo-2", "reject", "前稿不合格")
+	task, reworked, appErr := s.ReviewTodo(Scope{UserID: userID}, developer.NodeID, task.ID, "todo-2", "reject", "前稿不合格")
 	if appErr != nil {
 		t.Fatalf("agent reject: %v", appErr)
 	}

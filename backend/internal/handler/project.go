@@ -75,11 +75,11 @@ func (h *ProjectHandler) Get(c *gin.Context) {
 
 // WorkflowProgress handles GET /api/v1/projects/:projectId/workflow-progress.
 func (h *ProjectHandler) WorkflowProgress(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
-	progress, appErr := h.store.GetProjectWorkflowProgress(userID, c.Param("projectId"))
+	progress, appErr := h.store.GetProjectWorkflowProgress(sc, c.Param("projectId"))
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return

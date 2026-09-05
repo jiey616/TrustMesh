@@ -157,7 +157,7 @@ func TestProjectTaskSummaryTracksCanceledWithoutAttention(t *testing.T) {
 		t.Fatalf("create task: %v", appErr)
 	}
 
-	if _, appErr := s.CancelTask(userID, TaskCancelInput{TaskID: task.ID, Reason: "user stop"}); appErr != nil {
+	if _, appErr := s.CancelTask(Scope{UserID: userID}, TaskCancelInput{TaskID: task.ID, Reason: "user stop"}); appErr != nil {
 		t.Fatalf("cancel task: %v", appErr)
 	}
 
@@ -348,7 +348,7 @@ func TestArchiveProjectBlocksTaskExecutionMutations(t *testing.T) {
 		}
 	}
 
-	_, appErr = s.RecordTodoDispatch(userID, task.ID, "todo-1")
+	_, appErr = s.RecordTodoDispatch(Scope{UserID: userID}, task.ID, "todo-1")
 	assertArchivedError("manual dispatch", appErr)
 
 	_, appErr = s.UpdateTodoProgressByNode(developer.NodeID, TodoProgressInput{

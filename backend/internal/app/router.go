@@ -329,7 +329,7 @@ func superviseQuestionTimeouts(s *store.Store, taskHandler *handler.TaskHandler,
 	for range ticker.C {
 		now := time.Now().UTC()
 		for _, it := range s.ListTimedOutQuestions(now, timeout) {
-			task, q, appErr := s.AnswerTodo(it.UserID, it.TaskID, it.TodoID, it.QuestionID, "__timeout__", "system", true)
+			task, q, appErr := s.AnswerTodo(store.SystemScope(), it.TaskID, it.TodoID, it.QuestionID, "__timeout__", "system", true)
 			if appErr != nil {
 				if log != nil {
 					log.Warn("question timeout auto-answer failed",

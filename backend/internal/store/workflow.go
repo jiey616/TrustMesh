@@ -95,7 +95,7 @@ type TaskCommentMentionInput struct {
 	AgentID string
 }
 
-func (s *Store) RecordTodoDispatch(userID, taskID, todoID string) (*model.TaskDetail, *transport.AppError) {
+func (s *Store) RecordTodoDispatch(sc Scope, taskID, todoID string) (*model.TaskDetail, *transport.AppError) {
 	taskID = strings.TrimSpace(taskID)
 	todoID = strings.TrimSpace(todoID)
 	if taskID == "" || todoID == "" {
@@ -106,7 +106,7 @@ func (s *Store) RecordTodoDispatch(userID, taskID, todoID string) (*model.TaskDe
 	defer s.mu.Unlock()
 
 	task, ok := s.tasks[taskID]
-	if !ok || task.UserID != userID {
+	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 		return nil, transport.NotFound("task not found")
 	}
 	if appErr := s.ensureTaskProjectActiveUnsafe(task); appErr != nil {
@@ -134,11 +134,11 @@ func (s *Store) RecordTodoDispatch(userID, taskID, todoID string) (*model.TaskDe
 
 	now := time.Now().UTC()
 	userName := ""
-	if u, ok := s.users[userID]; ok {
+	if u, ok := s.users[sc.UserID]; ok {
 		userName = u.Name
 	}
 	message := fmt.Sprintf("手动派发给 %s", todo.Assignee.Name)
-	s.recordTodoDispatchUnsafe(task, todo, "user", userID, userName, &message, map[string]any{
+	s.recordTodoDispatchUnsafe(task, todo, "user", sc.UserID, userName, &message, map[string]any{
 		"todo_id":           todo.ID,
 		"assignee_agent_id": todo.Assignee.AgentID,
 		"manual":            true,
@@ -914,7 +914,7 @@ func (s *Store) AskTodoByNode(nodeID string, in TodoAskInput) (*model.TaskDetail
 // AnswerTodo records a user's (or timeout's) answer to a parked question and
 // resumes the todo back to in_progress. Returns the answered question so the
 // caller can forward todo.answer to the assignee agent.
-func (s *Store) AnswerTodo(userID, taskID, todoID, questionID, answer, answeredBy string, timedOut bool) (*model.TaskDetail, *model.TodoQuestion, *transport.AppError) {
+func (s *Store) AnswerTodo(sc Scope, taskID, todoID, questionID, answer, answeredBy string, timedOut bool) (*model.TaskDetail, *model.TodoQuestion, *transport.AppError) {
 	taskID = strings.TrimSpace(taskID)
 	todoID = strings.TrimSpace(todoID)
 	questionID = strings.TrimSpace(questionID)
@@ -927,7 +927,7 @@ func (s *Store) AnswerTodo(userID, taskID, todoID, questionID, answer, answeredB
 	defer s.mu.Unlock()
 
 	task, ok := s.tasks[taskID]
-	if !ok || task.UserID != userID {
+	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 		return nil, nil, transport.NotFound("task not found")
 	}
 	if appErr := s.ensureTaskProjectActiveUnsafe(task); appErr != nil {
@@ -971,7 +971,12 @@ func (s *Store) AnswerTodo(userID, taskID, todoID, questionID, answer, answeredB
 		source = "system"
 	}
 	msg := fmt.Sprintf("question answered: %s", q.Question)
-	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, source, userID, answeredBy, "todo_answer_received", &msg, map[string]any{"question_id": q.ID, "todo_id": todo.ID, "task_title": task.Title, "todo_title": todo.Title}, now)
+	// 事件 actor：用户路径=当前操作者（org 成员协作时记录真实操作者）；系统路径回落任务主人
+	eventActor := sc.UserID
+	if eventActor == "" && sc.System {
+		eventActor = task.UserID
+	}
+	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, source, eventActor, answeredBy, "todo_answer_received", &msg, map[string]any{"question_id": q.ID, "todo_id": todo.ID, "task_title": task.Title, "todo_title": todo.Title}, now)
 
 	// Mark the original ask event answered so the timeline renders a readonly
 	// state after refresh (the ask event itself stays as history).
@@ -1231,7 +1236,7 @@ func (s *Store) AppendSystemTaskComment(taskID, content string) (*model.Comment,
 	return comment, nil
 }
 
-func (s *Store) CancelTask(userID string, in TaskCancelInput) (*model.TaskDetail, *transport.AppError) {
+func (s *Store) CancelTask(sc Scope, in TaskCancelInput) (*model.TaskDetail, *transport.AppError) {
 	in.TaskID = strings.TrimSpace(in.TaskID)
 	in.Reason = strings.TrimSpace(in.Reason)
 	if in.TaskID == "" {
@@ -1242,7 +1247,7 @@ func (s *Store) CancelTask(userID string, in TaskCancelInput) (*model.TaskDetail
 	defer s.mu.Unlock()
 
 	task, ok := s.tasks[in.TaskID]
-	if !ok || task.UserID != userID {
+	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 		return nil, transport.NotFound("task not found")
 	}
 	if appErr := s.ensureTaskProjectActiveUnsafe(task); appErr != nil {
@@ -1258,11 +1263,11 @@ func (s *Store) CancelTask(userID string, in TaskCancelInput) (*model.TaskDetail
 
 	now := time.Now().UTC()
 	userName := ""
-	if u, ok := s.users[userID]; ok {
+	if u, ok := s.users[sc.UserID]; ok {
 		userName = u.Name
 	}
 
-	affectedAgents := s.cancelTaskUnsafe(task, "user", userID, userName, in.Reason, now)
+	affectedAgents := s.cancelTaskUnsafe(task, "user", sc.UserID, userName, in.Reason, now)
 	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
 		return nil, mongoWriteError(err)
 	}
@@ -1685,7 +1690,7 @@ type TodoModifyInput struct {
 	AssigneeID  string // agent ID to assign to
 }
 
-func (s *Store) AppendTodo(userID, taskID string, in TodoModifyInput) (*model.TaskDetail, *transport.AppError) {
+func (s *Store) AppendTodo(sc Scope, taskID string, in TodoModifyInput) (*model.TaskDetail, *transport.AppError) {
 	taskID = strings.TrimSpace(taskID)
 	in.Title = strings.TrimSpace(in.Title)
 	in.Description = strings.TrimSpace(in.Description)
@@ -1698,7 +1703,7 @@ func (s *Store) AppendTodo(userID, taskID string, in TodoModifyInput) (*model.Ta
 	defer s.mu.Unlock()
 
 	task, ok := s.tasks[taskID]
-	if !ok || task.UserID != userID {
+	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 		return nil, transport.NotFound("task not found")
 	}
 	// Only allow mutation while task is active
@@ -1706,7 +1711,7 @@ func (s *Store) AppendTodo(userID, taskID string, in TodoModifyInput) (*model.Ta
 		return nil, err
 	}
 	assignee, ok := s.agents[in.AssigneeID]
-	if !ok || assignee.UserID != userID {
+	if !ok || !visibleToScope(sc, assignee.OrgID, assignee.UserID) {
 		return nil, transport.Validation("invalid assignee_id", nil)
 	}
 
@@ -1740,7 +1745,7 @@ func (s *Store) AppendTodo(userID, taskID string, in TodoModifyInput) (*model.Ta
 	task.UpdatedAt = now
 	task.Version++
 
-	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "user", userID, getAgentName(s, userID), "todo_appended", &in.Title, map[string]any{
+	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "user", sc.UserID, getAgentName(s, sc.UserID), "todo_appended", &in.Title, map[string]any{
 		"todo_id":    todo.ID,
 		"todo_title": todo.Title,
 	}, now)
@@ -1755,7 +1760,7 @@ func (s *Store) AppendTodo(userID, taskID string, in TodoModifyInput) (*model.Ta
 	return s.copyTaskWithArtifactsUnsafe(task), nil
 }
 
-func (s *Store) InsertTodo(userID, taskID, beforeTodoID string, in TodoModifyInput) (*model.TaskDetail, *transport.AppError) {
+func (s *Store) InsertTodo(sc Scope, taskID, beforeTodoID string, in TodoModifyInput) (*model.TaskDetail, *transport.AppError) {
 	taskID = strings.TrimSpace(taskID)
 	beforeTodoID = strings.TrimSpace(beforeTodoID)
 	in.Title = strings.TrimSpace(in.Title)
@@ -1769,7 +1774,7 @@ func (s *Store) InsertTodo(userID, taskID, beforeTodoID string, in TodoModifyInp
 	defer s.mu.Unlock()
 
 	task, ok := s.tasks[taskID]
-	if !ok || task.UserID != userID {
+	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 		return nil, transport.NotFound("task not found")
 	}
 	if err := ensureTaskAcceptingUpdates(task); err != nil {
@@ -1782,7 +1787,7 @@ func (s *Store) InsertTodo(userID, taskID, beforeTodoID string, in TodoModifyInp
 	}
 
 	assignee, ok := s.agents[in.AssigneeID]
-	if !ok || assignee.UserID != userID {
+	if !ok || !visibleToScope(sc, assignee.OrgID, assignee.UserID) {
 		return nil, transport.Validation("invalid assignee_id", nil)
 	}
 
@@ -1819,7 +1824,7 @@ func (s *Store) InsertTodo(userID, taskID, beforeTodoID string, in TodoModifyInp
 	task.UpdatedAt = now
 	task.Version++
 
-	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "user", userID, getAgentName(s, userID), "todo_appended", &in.Title, map[string]any{
+	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "user", sc.UserID, getAgentName(s, sc.UserID), "todo_appended", &in.Title, map[string]any{
 		"todo_id":    todo.ID,
 		"todo_title": todo.Title,
 	}, now)
@@ -1833,7 +1838,7 @@ func (s *Store) InsertTodo(userID, taskID, beforeTodoID string, in TodoModifyInp
 	return s.copyTaskWithArtifactsUnsafe(task), nil
 }
 
-func (s *Store) UpdateTodo(userID, taskID, todoID string, in TodoModifyInput) (*model.TaskDetail, *transport.AppError) {
+func (s *Store) UpdateTodo(sc Scope, taskID, todoID string, in TodoModifyInput) (*model.TaskDetail, *transport.AppError) {
 	taskID = strings.TrimSpace(taskID)
 	todoID = strings.TrimSpace(todoID)
 	if taskID == "" || todoID == "" {
@@ -1844,7 +1849,7 @@ func (s *Store) UpdateTodo(userID, taskID, todoID string, in TodoModifyInput) (*
 	defer s.mu.Unlock()
 
 	task, ok := s.tasks[taskID]
-	if !ok || task.UserID != userID {
+	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 		return nil, transport.NotFound("task not found")
 	}
 	if err := ensureTaskAcceptingUpdates(task); err != nil {
@@ -1870,7 +1875,7 @@ func (s *Store) UpdateTodo(userID, taskID, todoID string, in TodoModifyInput) (*
 	}
 	if in.AssigneeID != "" {
 		assignee, ok := s.agents[in.AssigneeID]
-		if !ok || assignee.UserID != userID {
+		if !ok || !visibleToScope(sc, assignee.OrgID, assignee.UserID) {
 			return nil, transport.Validation("invalid assignee_id", nil)
 		}
 		todo.Assignee = model.TodoAssignee{
@@ -1883,7 +1888,7 @@ func (s *Store) UpdateTodo(userID, taskID, todoID string, in TodoModifyInput) (*
 	task.UpdatedAt = now
 	task.Version++
 
-	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todoID, "user", userID, getAgentName(s, userID), "todo_updated", nil, map[string]any{
+	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todoID, "user", sc.UserID, getAgentName(s, sc.UserID), "todo_updated", nil, map[string]any{
 		"todo_id":    todoID,
 		"todo_title": todo.Title,
 	}, now)
@@ -1895,7 +1900,7 @@ func (s *Store) UpdateTodo(userID, taskID, todoID string, in TodoModifyInput) (*
 	return s.copyTaskWithArtifactsUnsafe(task), nil
 }
 
-func (s *Store) RemoveTodo(userID, taskID, todoID string) (*model.TaskDetail, *transport.AppError) {
+func (s *Store) RemoveTodo(sc Scope, taskID, todoID string) (*model.TaskDetail, *transport.AppError) {
 	taskID = strings.TrimSpace(taskID)
 	todoID = strings.TrimSpace(todoID)
 	if taskID == "" || todoID == "" {
@@ -1906,7 +1911,7 @@ func (s *Store) RemoveTodo(userID, taskID, todoID string) (*model.TaskDetail, *t
 	defer s.mu.Unlock()
 
 	task, ok := s.tasks[taskID]
-	if !ok || task.UserID != userID {
+	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 		return nil, transport.NotFound("task not found")
 	}
 	if err := ensureTaskAcceptingUpdates(task); err != nil {
@@ -1936,7 +1941,7 @@ func (s *Store) RemoveTodo(userID, taskID, todoID string) (*model.TaskDetail, *t
 	task.UpdatedAt = now
 	task.Version++
 
-	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todoID, "user", userID, getAgentName(s, userID), "todo_removed", &todoTitle, map[string]any{
+	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todoID, "user", sc.UserID, getAgentName(s, sc.UserID), "todo_removed", &todoTitle, map[string]any{
 		"todo_id":    todoID,
 		"todo_title": todoTitle,
 	}, now)
@@ -1952,7 +1957,7 @@ func (s *Store) RemoveTodo(userID, taskID, todoID string) (*model.TaskDetail, *t
 	return s.copyTaskWithArtifactsUnsafe(task), nil
 }
 
-func (s *Store) ReorderTodos(userID, taskID string, todoIDs []string) (*model.TaskDetail, *transport.AppError) {
+func (s *Store) ReorderTodos(sc Scope, taskID string, todoIDs []string) (*model.TaskDetail, *transport.AppError) {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" || len(todoIDs) == 0 {
 		return nil, transport.Validation("invalid payload", map[string]any{"task_id": "required", "todo_ids": "required"})
@@ -1962,7 +1967,7 @@ func (s *Store) ReorderTodos(userID, taskID string, todoIDs []string) (*model.Ta
 	defer s.mu.Unlock()
 
 	task, ok := s.tasks[taskID]
-	if !ok || task.UserID != userID {
+	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 		return nil, transport.NotFound("task not found")
 	}
 	if err := ensureTaskAcceptingUpdates(task); err != nil {
@@ -1994,7 +1999,7 @@ func (s *Store) ReorderTodos(userID, taskID string, todoIDs []string) (*model.Ta
 	task.UpdatedAt = now
 	task.Version++
 
-	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, "", "user", userID, getAgentName(s, userID), "todos_reordered", nil, map[string]any{
+	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, "", "user", sc.UserID, getAgentName(s, sc.UserID), "todos_reordered", nil, map[string]any{
 		"count": len(todoIDs),
 	}, now)
 
@@ -2023,7 +2028,7 @@ func getAgentName(s *Store, userID string) string {
 //   - action "reject": cascade-reset the todo and everything from its
 //     predecessor onward back to pending, bump rework counters, then
 //     re-dispatch the predecessor (the todo being audited).
-func (s *Store) ReviewTodo(userID, nodeID, taskID, todoID, action, reason string) (*model.TaskDetail, *model.Todo, *transport.AppError) {
+func (s *Store) ReviewTodo(sc Scope, nodeID, taskID, todoID, action, reason string) (*model.TaskDetail, *model.Todo, *transport.AppError) {
 	taskID = strings.TrimSpace(taskID)
 	todoID = strings.TrimSpace(todoID)
 	action = strings.TrimSpace(action)
@@ -2045,7 +2050,7 @@ func (s *Store) ReviewTodo(userID, nodeID, taskID, todoID, action, reason string
 		return nil, nil, transport.NotFound("task not found")
 	}
 	// Authorize: either the owning user or an agent belonging to that user.
-	if userID != "" && task.UserID != userID {
+	if !sc.System && !visibleToScope(sc, task.OrgID, task.UserID) {
 		return nil, nil, transport.Forbidden("task does not belong to this user")
 	}
 	if nodeID != "" {
@@ -2578,7 +2583,7 @@ func dedupInts(xs []int) []int {
 // todos, and the produced artifact may be linked to any of them — returning
 // only the first matched todo would silently drop the step's real output).
 // Ordered alignment mirrors applyWorkflowReviewFlags.
-func (s *Store) FindTaskForWorkflowStep(userID, projectID, workflowName, stepName string) (*model.TaskDetail, []*model.Todo, bool) {
+func (s *Store) FindTaskForWorkflowStep(sc Scope, projectID, workflowName, stepName string) (*model.TaskDetail, []*model.Todo, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	wantStep := strings.TrimSpace(stepName)
@@ -2589,7 +2594,7 @@ func (s *Store) FindTaskForWorkflowStep(userID, projectID, workflowName, stepNam
 	var bestTodos []*model.Todo
 	for _, taskID := range s.projectTasks[projectID] {
 		task, ok := s.tasks[taskID]
-		if !ok || task.UserID != userID {
+		if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 			continue
 		}
 		// Skip canceled tasks so a terminated test run never supplies a step's
@@ -2654,11 +2659,11 @@ func (s *Store) assigneeRoleUnsafe(todo model.Todo) string {
 // workflow ("项目总流程"): one entry per step with the owning task, derived
 // execution status and the produced output files. Returns an empty progress
 // when the project has no primary workflow configured.
-func (s *Store) GetProjectWorkflowProgress(userID, projectID string) (*model.WorkflowProgress, *transport.AppError) {
+func (s *Store) GetProjectWorkflowProgress(sc Scope, projectID string) (*model.WorkflowProgress, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	project, ok := s.projects[projectID]
-	if !ok || project.UserID != userID {
+	if !ok || !visibleToScope(sc, project.OrgID, project.UserID) {
 		return nil, transport.NotFound("project not found")
 	}
 	if !hasPrimaryWorkflow(project) {
