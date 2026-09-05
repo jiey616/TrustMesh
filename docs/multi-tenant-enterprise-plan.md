@@ -635,18 +635,20 @@ func SystemScope() Scope { return Scope{System: true} }
 共 8 批全部上线，累计 25 个新测试。剩余：阶段 3（节点 org 绑定，跨仓库）、
 阶段 4（前端双轨）、阶段 5（越权测试）。
 
-## 阶段 3 — 节点 org 绑定与 NATS 隔离（🔴 **跨仓库 + 跨环境**）
+## 阶段 3 — 节点 org 绑定（✅ 已完成，2026-09-05 方向修订：协议零改动）
 
-> 方案已按容器核查结果重写：不新造凭证，复用现有 identity/trust 体系（见 §3 与 §0.5）。
+> **方向修订（用户拍板）**：放弃 subject 插 org 段方案，改为「org 绑定进现有字段」——
+> 节点只订阅自己的 inbox（`clawsynapse.msg.<nodeID>.inbox`，service.go:76 点对点投递），
+> 隔离由「点对点投递 + backend 只派发给 org 内 agent 的节点 + 业务层 scope 裁决」保证，
+> 与原方案强度等价。**clawsynapse 仓库零改动、不发镜像**（R3 高风险消除）。
+> 未来若需 org 级广播（会议室全员/公告），用 node_id 内嵌 org 前缀 + 通配订阅，协议依然零改。
 
 | 项 | 内容 |
 |---|---|
-| **目标** | 执行节点绑定 org，跨企业不可互订阅 |
-| 前置认知 | ① 节点身份= `identity.key/pub`；信任= `trust.json`（`trustMode: tofu`）<br>② subject 前缀体系已存在：`config.yaml` 的 `deliverablePrefixes: [chat, task, todo, meeting]`<br>③ 平台侧已有 `node_id` + `trust_request_id` 关联（`model.JoinRequest`）<br>④ 节点配置在**挂载卷** `/root/.clawsynapse/config.yaml`，**不在 env** |
-| 改动 | ① **平台侧**：JoinRequest 审批通过 → 给 `Agent` 写入 `org_id`（`node_id ↔ org` 绑定），**不新发凭证**<br>② **平台侧**：`backend/internal/clawsynapse/` 的 subject 构造处，在现有 `deliverablePrefixes` 之上插入 org 层（如 `tm.<org_id>.chat / .task / .todo / .meeting`）<br>③ 🔴 **节点侧**：同步改 **ClawSynapse 仓库**（`jiey616/clawsynapse`）并重新发镜像（当前 `v1.0.35`）——**TrustMesh 单方面改不动，必须跨仓库协同发版**<br>④ 升级 4 个本地节点 + SZJT 远程节点：改 volume 内 `config.yaml`、必要时重新走 trust 配对<br>⑤ **兼容期**：节点同时订阅 legacy 与 org 前缀两套 subject，限期切换后下线 legacy |
-| 验收 | A org 节点订阅不到 B org subject；4 个本地节点（`clawsynapse` / `clawsynapse-default` / `clawsynapse3` / `clawsynapse4`）+ SZJT 节点功能正常；转发节点 `trustmesh-clawsynapse` 转发不中断 |
-| 回滚 | 兼容期双订阅可随时回退；节点镜像回滚到 `v1.0.35` |
-| 风险 | 🔴 **高**：跨仓库发版（ClawSynapse）+ 跨环境（本地 4 节点 + SZJT 远程）+ 配置在 volume 不在 env（改法与常规不同）+ 生产 SSH 凭据状态待确认 |
+| **改动** | 平台侧 only：审批带企业头 → `agent.org_id` 挂企业（2-6 已实现 `resolveOwnerOrgUnsafe(sc)`） |
+| **闭环实测** | ① 新节点容器（v1.0.35 现有镜像）auth challenge → trust request → 平台 sync 出 JoinRequest<br>② A 带企业头 `POST /agents/join-requests/:id/approve` → **agent.org_id = 企业 org** ✅<br>③ `PATCH /agents/:id {"role":"pm"}`（trust reason role 需在白名单 pm/developer/reviewer/custom 内，否则降级 custom）<br>④ **企业租户建项目 201（409 解除）** ✅<br>⑤ B(member) 带头读项目 200 / 无头 404 / 带头建 meeting 201 / 建 task 201 ✅ |
+| **踩坑** | ① 节点 NODE_ID 是自动生成 `n1-<hash>`，env NODE_ID 不影响 nodeID<br>② 节点容器内无 curl/wget，trust request 用宿主机 curl 打映射端口<br>③ trust request 的 reason 是**内嵌 JSON 的字符串**不是对象<br>④ trust request 前必须先 `POST /v1/auth/challenge` 完成 auth 握手<br>⑤ 已互信的 peer 不能重复发 trust request（`trust.already_trusted`）<br>⑥ 转发节点实际 nodeID 是 `n1-cb979d6a…`（env NODE_ID=trustmesh-server 未生效） |
+| **遗留可选** | ① 存量 agent 批量绑 org 的迁移脚本（管理 API 逐个 PATCH 也可）<br>② SZJT 远程节点加入企业的审批（走同一流程，SSH 恢复后即可）<br>③ org 级广播（二期） |
 
 ### 阶段 4 — 前端
 
