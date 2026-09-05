@@ -8,7 +8,8 @@ func (s *Store) GetDashboardStats(sc Scope) model.DashboardStats {
 
 	stats := model.DashboardStats{}
 	for _, a := range s.agents {
-		if !visibleToScope(sc, a.OrgID, a.UserID) {
+		// 与 ListAgents 口径一致：已归档（离职）的数字员工不计入统计
+		if a.Archived || !visibleToScope(sc, a.OrgID, a.UserID) {
 			continue
 		}
 		stats.AgentsTotal++
