@@ -1137,7 +1137,7 @@ func TestMeetingScopedVisibility(t *testing.T) {
 	if _, err := s.GetMeeting(Scope{UserID: "u2", OrgID: orgA.ID}, "mA"); err != nil {
 		t.Fatalf("u2 in orgA should read mA: %v", err)
 	}
-	if got := s.ListMeetingMessages(Scope{UserID: "u2", OrgID: orgA.ID}, "mA"); len(got) != 1 {
+	if got, _ := s.ListMeetingMessages(Scope{UserID: "u2", OrgID: orgA.ID}, "mA"); len(got) != 1 {
 		t.Fatalf("u2 in orgA should read mA messages, got %d", len(got))
 	}
 
@@ -1148,7 +1148,7 @@ func TestMeetingScopedVisibility(t *testing.T) {
 	if _, err := s.GetMeeting(Scope{UserID: "u9", OrgID: orgB.ID}, "mA"); err == nil {
 		t.Fatal("mA must not be visible under orgB")
 	}
-	if got := s.ListMeetingMessages(Scope{UserID: "u9", OrgID: orgB.ID}, "mA"); len(got) != 0 {
+	if got, _ := s.ListMeetingMessages(Scope{UserID: "u9", OrgID: orgB.ID}, "mA"); len(got) != 0 {
 		t.Fatalf("orgB must not read mA messages, got %d", len(got))
 	}
 
@@ -1199,7 +1199,7 @@ func TestSystemScopeBypassesMeetingOwnership(t *testing.T) {
 	if err := s.UpdateMeetingStatus(SystemScope(), "mA", model.MeetingCompleted); err != nil {
 		t.Fatalf("SystemScope should update mA status: %v", err)
 	}
-	if got := s.ListMeetingMessages(SystemScope(), "mA"); len(got) != 1 {
+	if got, _ := s.ListMeetingMessages(SystemScope(), "mA"); len(got) != 1 {
 		t.Fatalf("SystemScope should read mA messages, got %d", len(got))
 	}
 	if got := s.ListMeetings(SystemScope(), "pA"); len(got) != 1 {

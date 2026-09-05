@@ -182,7 +182,7 @@ func (s *Store) RenameProjectFile(sc Scope, projectID, fileID, name string) (*mo
 
 	project, ok := s.projects[projectID]
 	if !ok || !s.projectVisible(sc, project) {
-		return nil, transport.Forbidden("access denied")
+		return nil, transport.NotFound("project not found") // 不可见 = 不存在，防存在性泄漏
 	}
 
 	// Check duplicate name at the same level (same parent).
@@ -221,7 +221,7 @@ func (s *Store) MoveProjectFile(sc Scope, projectID, fileID, targetParentID stri
 
 	project, ok := s.projects[projectID]
 	if !ok || !s.projectVisible(sc, project) {
-		return nil, transport.Forbidden("access denied")
+		return nil, transport.NotFound("project not found") // 不可见 = 不存在，防存在性泄漏
 	}
 
 	// If target is not root, validate it's a folder in the same project.
@@ -518,7 +518,7 @@ func (s *Store) GetProjectFile(sc Scope, fileID string) (*model.ProjectFile, *tr
 
 	project, ok := s.projects[pf.ProjectID]
 	if !ok || !s.projectVisible(sc, project) {
-		return nil, transport.Forbidden("access denied")
+		return nil, transport.NotFound("project not found") // 不可见 = 不存在，防存在性泄漏
 	}
 
 	return pf, nil
@@ -566,7 +566,7 @@ func (s *Store) DeleteProjectFile(sc Scope, fileID string) (*model.ProjectFile, 
 
 	project, ok := s.projects[pf.ProjectID]
 	if !ok || !s.projectVisible(sc, project) {
-		return nil, transport.Forbidden("access denied")
+		return nil, transport.NotFound("project not found") // 不可见 = 不存在，防存在性泄漏
 	}
 
 	// If it's a folder, recursively delete all children.
@@ -881,7 +881,7 @@ func (s *Store) BrowseProjectFiles(sc Scope, projectID, parentID string) (*model
 
 	project, ok := s.projects[projectID]
 	if !ok || !s.projectVisible(sc, project) {
-		return nil, transport.Forbidden("access denied")
+		return nil, transport.NotFound("project not found") // 不可见 = 不存在，防存在性泄漏
 	}
 
 	// ---- Virtual artifact folder routing ----
@@ -1178,7 +1178,7 @@ func (s *Store) ListArtifactGroups(sc Scope, projectID string) ([]model.Artifact
 
 	project, ok := s.projects[projectID]
 	if !ok || !s.projectVisible(sc, project) {
-		return nil, transport.Forbidden("access denied")
+		return nil, transport.NotFound("project not found") // 不可见 = 不存在，防存在性泄漏
 	}
 
 	// Collect artifacts and group by task.

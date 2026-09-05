@@ -202,7 +202,11 @@ func (h *MeetingHandler) ListMessages(c *gin.Context) {
 	}
 	meetingID := c.Param("id")
 
-	items := h.store.ListMeetingMessages(sc, meetingID)
+	items, appErr := h.store.ListMeetingMessages(sc, meetingID)
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
 	transport.WriteList(c, items, len(items))
 }
 

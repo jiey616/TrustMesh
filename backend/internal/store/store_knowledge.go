@@ -268,7 +268,8 @@ func (s *Store) ValidateProjectOwnership(sc Scope, projectID string) *transport.
 		return transport.NotFound("project not found")
 	}
 	if !visibleToScope(sc, project.OrgID, project.UserID) {
-		return transport.Forbidden("access denied to project")
+		// 不可见 = 不存在：不向探测者泄露项目 ID 的存在性（与其他域的 404 语义一致）
+		return transport.NotFound("project not found")
 	}
 	return nil
 }

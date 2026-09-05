@@ -276,14 +276,41 @@ func (s *Store) publishMeetingMessageUnsafe(m *model.Meeting, msg *model.Meeting
 	}, msg.CreatedAt)
 }
 
-func (s *Store) ListMeetingMessages(sc Scope, meetingID string) []*model.MeetingMessage {
+// ListMeetingMessages 返回会议消息。归属校验 fail-closed：
+// 会议不在内存时对齐 GetMeeting 先懒加载 Mongo 再裁决，不可见一律 404。
+// （旧实现「不在内存就不裁决、不可见回空列表」是 fail-open，越权探测抓出后修复。）
+func (s *Store) ListMeetingMessages(sc Scope, meetingID string) ([]*model.MeetingMessage, *transport.AppError) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	// 会议不在内存（懒加载边界）时不裁决，沿用改造前行为。
-	if m, ok := s.meetings[meetingID]; ok && !s.meetingVisible(sc, m) {
-		return []*model.MeetingMessage{}
+	m, ok := s.meetings[meetingID]
+	if ok {
+		visible := s.meetingVisible(sc, m)
+		s.mu.RUnlock()
+		if !visible {
+			return nil, transport.NotFound("meeting not found")
+		}
+	} else {
+		s.mu.RUnlock()
+		if s.mongoEnabled {
+			ctx, cancel := s.mongoContext()
+			defer cancel()
+			var mm model.Meeting
+			if err := s.mongoMeetings.FindOne(ctx, bson.M{"_id": meetingID}).Decode(&mm); err == nil {
+				s.mu.Lock()
+				s.meetings[meetingID] = &mm
+				s.projectMeetings[mm.ProjectID] = append(s.projectMeetings[mm.ProjectID], mm.ID)
+				visible := s.meetingVisible(sc, &mm)
+				s.mu.Unlock()
+				if !visible {
+					return nil, transport.NotFound("meeting not found")
+				}
+			} else {
+				return nil, transport.NotFound("meeting not found")
+			}
+		} else {
+			return nil, transport.NotFound("meeting not found")
+		}
 	}
+
 	ids := s.meetingMessageIndex[meetingID]
 	out := make([]*model.MeetingMessage, 0, len(ids))
 	for _, id := range ids {
@@ -294,7 +321,7 @@ func (s *Store) ListMeetingMessages(sc Scope, meetingID string) []*model.Meeting
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].CreatedAt.Before(out[j].CreatedAt)
 	})
-	return out
+	return out, nil
 }
 
 // ─── Meeting Summary / Todos / Agenda ───
@@ -372,7 +399,8 @@ func (s *Store) GenerateMeetingMinutesFile(sc Scope, meeting *model.Meeting) (st
 		return "", fmt.Errorf("meeting not found")
 	}
 
-	messages := s.ListMeetingMessages(sc, meeting.ID)
+	// 可见性已在本函数前置校验，此处错误不可能触发
+	messages, _ := s.ListMeetingMessages(sc, meeting.ID)
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("# 会议纪要：%s\n\n", meeting.Title))

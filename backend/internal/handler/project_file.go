@@ -181,6 +181,11 @@ func (h *ProjectFileHandler) GetTree(c *gin.Context) {
 
 	projectID := c.Param("projectId")
 
+	// 不可见 = 不存在：先校验归属，避免对越权者回 200 空树
+	if appErr := h.store.ValidateProjectOwnership(sc, projectID); appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
 	tree := h.store.GetProjectFileTree(sc, projectID)
 	transport.WriteData(c, http.StatusOK, tree)
 }
