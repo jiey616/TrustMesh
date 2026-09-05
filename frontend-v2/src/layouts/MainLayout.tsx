@@ -387,6 +387,8 @@ export function MainLayout() {
                 onClick: ({ key }) => {
                   if (key === 'logout') handleLogout()
                   else if (key === 'org-manage') navigate('/organizations')
+                  else if (key === 'profile') navigate('/profile')
+                  // 其余 key 为工作区 id（含 __personal__）
                   else handleOrgSwitch(key)
                 },
               }}

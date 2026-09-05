@@ -22,6 +22,7 @@ import { RoleDetailPage } from '@/pages/RoleDetailPage'
 import { ExternalAppsPage } from '@/pages/ExternalAppsPage'
 import { ExternalAppFramePage } from '@/pages/ExternalAppFramePage'
 import { OrgSettingsPage } from '@/pages/OrgSettingsPage'
+import { ProfilePage } from '@/pages/ProfilePage'
 
 // 办公室引入 three 生态（体积大），单独成 chunk 按需加载
 const OfficePage = lazy(() =>
@@ -70,6 +71,7 @@ export function AppRouter() {
         <Route path="/market/roles/:id" element={<RoleDetailPage />} />
         <Route path="/external-apps" element={<ExternalAppsPage />} />
         <Route path="/organizations" element={<OrgSettingsPage />} />
+        <Route path="/profile" element={<ProfilePage />} />
         {/* 侧边栏挂载的外部平台外壳页 */}
         <Route path="/app/:id" element={<ExternalAppFramePage />} />
       </Route>
