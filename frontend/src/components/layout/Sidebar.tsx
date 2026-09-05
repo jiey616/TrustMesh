@@ -31,6 +31,7 @@ import { useExternalApps, useLaunchExternalApp } from '@/hooks/useExternalApps'
 import { useUnreadCount } from '@/hooks/useNotifications'
 import { useJoinRequests } from '@/hooks/useJoinRequests'
 import { useAuthStore } from '@/stores/authStore'
+import { OrgSwitcher } from '@/components/OrgSwitcher'
 import { usePlatformStore } from '@/stores/platformStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { useState, useEffect } from 'react'
@@ -377,6 +378,9 @@ export function Sidebar({ onCreateProject }: SidebarProps) {
 
       {/* Footer */}
       <div className="p-2">
+        <div className={cn('mb-2', collapsed && 'px-0')}>
+          <OrgSwitcher collapsed={collapsed} />
+        </div>
         <div className={cn('flex items-center gap-2', collapsed ? 'flex-col' : 'px-2')}>
           {user && (
             <div className={cn('flex items-center gap-2 min-w-0', collapsed ? '' : 'flex-1')}>

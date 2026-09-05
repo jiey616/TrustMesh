@@ -16,6 +16,7 @@ import { RoleDetailPage } from '@/pages/RoleDetailPage'
 import MeetingListPage from '@/pages/MeetingListPage'
 import MeetingRoomPage from '@/pages/MeetingRoomPage'
 import { ExternalAppsPage } from '@/pages/ExternalAppsPage'
+import { OrgSettingsPage } from '@/pages/OrgSettingsPage'
 
 // 办公室可视化页路由级懒加载，pixi.js 独立打包
 const OfficePage = lazy(() => import('@/pages/OfficePage'))
@@ -114,6 +115,7 @@ export default function App() {
                 <Route path="/market" element={<MarketPage />} />
                 <Route path="/market/roles/:id" element={<RoleDetailPage />} />
                 <Route path="/external-apps" element={<ExternalAppsPage />} />
+                <Route path="/organizations" element={<OrgSettingsPage />} />
               </Route>
 
               {/* Redirect */}

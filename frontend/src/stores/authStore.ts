@@ -6,6 +6,8 @@ interface AuthState {
   accessToken: string | null
   refreshToken: string | null
   user: User | null
+  activeOrgId: string | null // null = 个人空间（不携带 X-Org-Id，保持无头兼容语义）
+  setActiveOrg: (orgId: string | null) => void
   setAuth: (accessToken: string, refreshToken: string, user: User) => void
   setTokens: (accessToken: string, refreshToken: string) => void
   logout: () => void
@@ -18,6 +20,8 @@ export const useAuthStore = create<AuthState>()(
       accessToken: null,
       refreshToken: null,
       user: null,
+      activeOrgId: null,
+      setActiveOrg: (orgId) => set({ activeOrgId: orgId }),
       setAuth: (accessToken, refreshToken, user) => {
         set({ accessToken, refreshToken, user })
       },
@@ -25,7 +29,7 @@ export const useAuthStore = create<AuthState>()(
         set({ accessToken, refreshToken })
       },
       logout: () => {
-        set({ accessToken: null, refreshToken: null, user: null })
+        set({ accessToken: null, refreshToken: null, user: null, activeOrgId: null })
       },
       isAuthenticated: () => !!get().refreshToken,
     }),
@@ -34,6 +38,7 @@ export const useAuthStore = create<AuthState>()(
       partialize: (state) => ({
         refreshToken: state.refreshToken,
         user: state.user,
+        activeOrgId: state.activeOrgId,
       }),
     }
   )
