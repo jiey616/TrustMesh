@@ -20,6 +20,8 @@ import {
   HomeOutlined,
   CrownOutlined,
   SwapOutlined,
+  CheckOutlined,
+  BankOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
 import { useAuthStore } from '@/stores/authStore'
@@ -126,9 +128,27 @@ export function MainLayout() {
   const enterpriseOrgs = useMemo(() => (orgs ?? []).filter((o) => o.kind === 'enterprise'), [orgs])
   const roleLabel = (r: string) => (r === 'owner' ? 'Owner' : r === 'admin' ? 'Admin' : '成员')
 
+  // 当前生效工作区：activeOrgId 为空 = 个人空间。侧边栏用户区与切换菜单都需要它。
+  const activeOrg = useMemo(
+    () => (orgs ?? []).find((o) => o.id === activeOrgId),
+    [orgs, activeOrgId],
+  )
+  const activeWorkspaceName = activeOrg?.name || personalOrg?.name || '个人空间'
+
   const orgMenuItems: MenuProps['items'] = useMemo(
     () => [
-      { key: '__personal__', icon: <UserOutlined />, label: personalOrg?.name || '个人空间' },
+      {
+        key: '__personal__',
+        icon: <UserOutlined />,
+        label: (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <span>{personalOrg?.name || '个人空间'}</span>
+            {!activeOrgId && (
+              <CheckOutlined style={{ fontSize: 11, color: 'var(--signal)' }} />
+            )}
+          </span>
+        ),
+      },
       { type: 'divider' as const },
       ...enterpriseOrgs.map((o) => ({
         key: o.id,
@@ -137,11 +157,14 @@ export function MainLayout() {
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
             <span>{o.name}</span>
             <Tag style={{ marginInlineEnd: 0, fontSize: 10, lineHeight: '16px' }}>{roleLabel(o.my_role)}</Tag>
+            {activeOrgId === o.id && (
+              <CheckOutlined style={{ fontSize: 11, color: 'var(--signal)' }} />
+            )}
           </span>
         ),
       })),
     ],
-    [personalOrg, enterpriseOrgs],
+    [personalOrg, enterpriseOrgs, activeOrgId],
   )
 
   const handleOrgSwitch = (key: string) => {
@@ -369,16 +392,44 @@ export function MainLayout() {
               }}
               trigger={['click']}
             >
-              <Tooltip title={collapsed ? (user?.name || '个人信息') : ''} placement="right">
+              <Tooltip title={collapsed ? `当前工作区：${activeWorkspaceName}` : ''} placement="right">
                 <div style={rowStyle}>
-                  <Avatar
-                    size={20}
-                    icon={<UserOutlined />}
-                    style={{ background: 'linear-gradient(135deg, var(--signal), var(--signal))', flexShrink: 0 }}
-                  />
+                  {activeOrgId ? (
+                    <BankOutlined style={{ fontSize: 15, flexShrink: 0 }} />
+                  ) : (
+                    <Avatar
+                      size={20}
+                      icon={<UserOutlined />}
+                      style={{ background: 'linear-gradient(135deg, var(--signal), var(--signal))', flexShrink: 0 }}
+                    />
+                  )}
                   {!collapsed && (
-                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {user?.name || '用户'}
+                    <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      <span
+                        style={{
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          fontSize: 13,
+                          color: 'var(--text-primary)',
+                          fontWeight: 500,
+                          lineHeight: '16px',
+                        }}
+                      >
+                        {activeWorkspaceName}
+                      </span>
+                      <span
+                        style={{
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          fontSize: 11,
+                          color: 'var(--text-quaternary)',
+                          lineHeight: '13px',
+                        }}
+                      >
+                        {user?.name || '用户'}
+                      </span>
                     </span>
                   )}
                   {!collapsed && <DownOutlined style={{ fontSize: 10, color: 'var(--text-quaternary)' }} />}

@@ -113,6 +113,8 @@ export function Sidebar({ onCreateProject }: SidebarProps) {
   const personalOrg = orgs?.find((o) => o.kind === 'personal')
   const enterpriseOrgs = orgs?.filter((o) => o.kind === 'enterprise') ?? []
   const roleLabel = (r: string) => (r === 'owner' ? 'Owner' : r === 'admin' ? 'Admin' : '成员')
+  // 当前生效工作区：activeOrgId 为空 = 个人空间
+  const activeWorkspaceName = orgs?.find((o) => o.id === activeOrgId)?.name || personalOrg?.name || '个人空间'
 
   // 防御：持久化的 activeOrgId 已不在我的租户列表（被移出/数据回退）→ 回落个人空间
   useEffect(() => {
@@ -430,7 +432,12 @@ export function Sidebar({ onCreateProject }: SidebarProps) {
                 )}
               >
                 <Avatar fallback={user.name} seed={user.id} kind="user" size="sm" />
-                {!collapsed && <span className="truncate text-sm">{user.name}</span>}
+                {!collapsed && (
+                  <span className="flex min-w-0 flex-1 flex-col gap-px">
+                    <span className="truncate text-sm leading-4">{activeWorkspaceName}</span>
+                    <span className="truncate text-[11px] leading-3 opacity-50">{user.name}</span>
+                  </span>
+                )}
                 {!collapsed && <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" />}
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" side="top" className="w-52">
@@ -454,7 +461,8 @@ export function Sidebar({ onCreateProject }: SidebarProps) {
                       <DropdownMenuItem key={o.id} onClick={() => handleOrgSwitch(o.id)}>
                         <Building2 className={cn('size-4 shrink-0', o.my_role === 'owner' && 'text-primary')} />
                         <span className="truncate">{o.name}</span>
-                        <Badge variant="info" className="ml-auto shrink-0">{roleLabel(o.my_role)}</Badge>
+                        {activeOrgId === o.id && <Check className="ml-auto size-4 shrink-0 opacity-60" />}
+                        <Badge variant="info" className="shrink-0">{roleLabel(o.my_role)}</Badge>
                       </DropdownMenuItem>
                     ))}
                   </DropdownMenuSubContent>
