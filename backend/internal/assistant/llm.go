@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 
 	openai "github.com/sashabaranov/go-openai"
 	"trustmesh/backend/internal/store"
@@ -215,4 +216,71 @@ func (c *LLMClient) streamFinalResponse(
 			w.WriteEvent("delta", DeltaEvent{Content: resp.Choices[0].Delta.Content})
 		}
 	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LLMProvider（A1+B2+C1）：按租户解析 LLM 配置并缓存客户端。
+// lookup 由 app 层注入（闭包 store.ResolveLLMParams），每次调用实时解析——
+// 配置保存即生效，无需重启；按配置指纹缓存 client，避免重复建连。
+// store 不能 import assistant（反向依赖），所以解析闭包在这里组装。
+// ─────────────────────────────────────────────────────────────────────────────
+
+// LLMParams 是一次解析得到的 LLM 连接参数。
+type LLMParams struct {
+	APIURL   string
+	APIKey   string
+	Model    string // 对话模型
+	OpsModel string // 归因模型（解析层已兜底 = Model）
+	Source   string // org | platform | env
+}
+
+type LLMProvider struct {
+	lookup func(orgID string) (LLMParams, bool)
+	mu     sync.Mutex
+	cache  map[string]*LLMClient // 指纹 → client
+}
+
+func NewLLMProvider(lookup func(orgID string) (LLMParams, bool)) *LLMProvider {
+	return &LLMProvider{lookup: lookup, cache: make(map[string]*LLMClient)}
+}
+
+// ParamsFor 暴露解析结果（归因器需要 OpsModel 维度）。
+func (p *LLMProvider) ParamsFor(orgID string) (LLMParams, bool) {
+	if p == nil || p.lookup == nil {
+		return LLMParams{}, false
+	}
+	return p.lookup(orgID)
+}
+
+func (p *LLMProvider) clientForParams(params LLMParams, model string) *LLMClient {
+	if params.APIKey == "" || params.APIURL == "" || model == "" {
+		return nil
+	}
+	fp := params.APIURL + "|" + params.APIKey + "|" + model
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if c, ok := p.cache[fp]; ok {
+		return c
+	}
+	c := NewLLMClient(params.APIURL, params.APIKey, model)
+	p.cache[fp] = c
+	return c
+}
+
+// ClientFor 对话客户端（chat 模型维度）。无可用配置返回 nil。
+func (p *LLMProvider) ClientFor(orgID string) *LLMClient {
+	params, ok := p.ParamsFor(orgID)
+	if !ok {
+		return nil
+	}
+	return p.clientForParams(params, params.Model)
+}
+
+// AttributionClientFor 归因客户端（ops_model 维度，解析层兜底为 chat 模型）。
+func (p *LLMProvider) AttributionClientFor(orgID string) *LLMClient {
+	params, ok := p.ParamsFor(orgID)
+	if !ok {
+		return nil
+	}
+	return p.clientForParams(params, params.OpsModel)
 }

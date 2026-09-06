@@ -60,6 +60,10 @@ type Store struct {
 	opsAttributionHook func(ctx context.Context, inc *model.OpsIncident, snapshot string) (string, error)
 
 	// 运维工单（ops_incidents）：与其余资源一致，全内存状态机 + Mongo 持久化镜像
+	llmConfigs     map[string]*model.PlatformLLMSetting // orgID(""=平台默认) → LLM 配置
+	llmEnvURL      string                        // env 兜底（bootstrap 注入）
+	llmEnvKey      string
+	llmEnvModel    string
 	opsIncidents   map[string]*model.OpsIncident // 工单 ID → 工单
 	opsByDedupeKey map[string]string             // dedupeKey → 工单 ID（活跃工单去重）
 	opsByTask      map[string][]string           // taskID → 工单 ID 列表
@@ -130,7 +134,8 @@ type Store struct {
 	mongoOrgMemberships *mongo.Collection
 	mongoProjectMembers *mongo.Collection
 	mongoWorkflowTemplates *mongo.Collection
-	mongoOpsIncidents      *mongo.Collection
+	mongoOpsIncidents      *mongo.Collection
+	mongoLLMSettings      *mongo.Collection
 	mongoTimeout           time.Duration
 	log                    *zap.Logger
 
@@ -196,6 +201,7 @@ func New() *Store {
 		userEvents:         make(map[string][]*model.Event),
 		agentEvents:        make(map[string][]*model.Event),
 		orgEvents:          make(map[string][]*model.Event),
+		llmConfigs:         make(map[string]*model.PlatformLLMSetting),
 		opsIncidents:       make(map[string]*model.OpsIncident),
 		opsByDedupeKey:     make(map[string]string),
 		opsByTask:          make(map[string][]string),

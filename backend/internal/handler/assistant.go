@@ -11,14 +11,14 @@ import (
 )
 
 type AssistantHandler struct {
-	llm   *assistant.LLMClient
+	llm   *assistant.LLMProvider
 	tools *assistant.ToolExecutor
 	defs  []openai.Tool
 	log   *zap.Logger
 }
 
 func NewAssistantHandler(
-	llm *assistant.LLMClient,
+	llm *assistant.LLMProvider,
 	tools *assistant.ToolExecutor,
 	hasKnowledge bool,
 	log *zap.Logger,
@@ -54,8 +54,16 @@ func (h *AssistantHandler) Chat(c *gin.Context) {
 	beginSSE(c)
 	w := &ginSSEWriter{c: c}
 
+	// Resolve per-tenant LLM client (B2/C1): nil = 当前租户/平台/env 均未配置
+	client := h.llm.ClientFor(sc.OrgID)
+	if client == nil {
+		w.WriteEvent("error", map[string]string{"message": "LLM 未配置：请在 设置 → LLM 配置 中完成平台或租户配置"})
+		w.WriteEvent("done", map[string]any{})
+		return
+	}
+
 	// Run agent loop
-	if err := h.llm.RunAgentLoop(c.Request.Context(), messages, h.defs, h.tools, sc, w); err != nil {
+	if err := client.RunAgentLoop(c.Request.Context(), messages, h.defs, h.tools, sc, w); err != nil {
 		h.log.Error("assistant agent loop failed", zap.Error(err))
 		w.WriteEvent("error", map[string]string{"message": err.Error()})
 	}

@@ -22,10 +22,17 @@ const opsAttributionSystemPrompt = `你是 AIGC 生产平台的运维归因助�
 4. 用中文。`
 
 // OpsAttributor 生成 store.SetOpsAttributionHook 需要的归因函数。
-func OpsAttributor(client *LLMClient) func(ctx context.Context, inc *model.OpsIncident, snapshot string) (string, error) {
+// B2：LLM 配置按租户解析——工单归属哪个租户，就用哪个租户的生效配置；
+// 工单 OrgID 为空（个人租户兜底）时走平台默认/env。解析层保证 ops_model
+// 兜底为对话模型；配置不可用返回 error（store 侧降级模板 + 标记人工复核）。
+func OpsAttributor(provider *LLMProvider) func(ctx context.Context, inc *model.OpsIncident, snapshot string) (string, error) {
 	return func(ctx context.Context, inc *model.OpsIncident, snapshot string) (string, error) {
+		if provider == nil {
+			return "", fmt.Errorf("llm provider unavailable")
+		}
+		client := provider.AttributionClientFor(inc.OrgID)
 		if client == nil {
-			return "", fmt.Errorf("llm client unavailable")
+			return "", fmt.Errorf("llm not configured for org %q", inc.OrgID)
 		}
 		user := fmt.Sprintf("工单 %s（规则 %s，严重级别 %s）\n\n%s", inc.ID, inc.RuleID, inc.Severity, snapshot)
 		return client.Complete(ctx, opsAttributionSystemPrompt, user)

@@ -65,16 +65,21 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	s.SetPlanningStallHook(webhookHandler.NudgePlanningPM)
 	// 统一干预编排器：运维修复指引的唯一下发出口（C.2）。
 	s.SetOpsPublishHook(webhookHandler.PublishOpsMention)
-	// LLM 归因（F）：复用助手配置，OpsModel 可单独覆盖；未配 key 时优雅
-	// 降级为模板指引并标记需人工复核，规则引擎与工单不受影响。
-	if cfg.AssistantAPIKey != "" {
-		attributorModel := cfg.OpsModel
-		if attributorModel == "" {
-			attributorModel = cfg.AssistantModel
+	// LLM 配置（A1+B2+C1）：env 兜底注入 + 平台/租户两级 UI 配置，热生效。
+	s.SetLLMEnvDefaults(cfg.AssistantAPIURL, cfg.AssistantAPIKey, cfg.AssistantModel)
+	s.EnsurePlatformAdminExists()
+	llmProvider := assistant.NewLLMProvider(func(orgID string) (assistant.LLMParams, bool) {
+		url, key, _, opsModel, source := s.ResolveLLMParams(orgID)
+		if url == "" || key == "" {
+			return assistant.LLMParams{}, false
 		}
-		s.SetOpsAttributionHook(assistant.OpsAttributor(
-			assistant.NewLLMClient(cfg.AssistantAPIURL, cfg.AssistantAPIKey, attributorModel)))
-	}
+		return assistant.LLMParams{
+			APIURL: url, APIKey: key, Model: opsModel, OpsModel: opsModel, Source: source,
+		}, true
+	})
+	// LLM 归因（F）：按工单归属租户解析配置（B2）；不可用时优雅降级为
+	// 模板指引并标记需人工复核，规则引擎与工单不受影响。
+	s.SetOpsAttributionHook(assistant.OpsAttributor(llmProvider))
 	peerSyncer := clawsynapse.NewPeerSyncer(clawClient, s, cfg.ClawSynapsePeerSync, log)
 	if peerSyncer != nil {
 		peerSyncer.Start()
@@ -337,15 +342,28 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 		mkt.GET("/roles/:id", marketHandler.GetRole)
 	}
 
-	// Assistant (LLM-powered, optional)
-	if cfg.AssistantAPIKey != "" {
-		llmClient := assistant.NewLLMClient(cfg.AssistantAPIURL, cfg.AssistantAPIKey, cfg.AssistantModel)
+	// Assistant (LLM-powered): 配置解析已热生效化（平台/租户 UI 配置 > env），
+	// 路由常驻注册；当前租户无可用配置时 Chat 返回友好 SSE 错误。
+	{
 		toolExecutor := assistant.NewToolExecutor(s, embeddingClient, qdrantClient)
 		hasKnowledge := embeddingClient != nil && qdrantClient != nil
-		assistantHandler := handler.NewAssistantHandler(llmClient, toolExecutor, hasKnowledge, log)
+		assistantHandler := handler.NewAssistantHandler(llmProvider, toolExecutor, hasKnowledge, log)
 		authed.POST("/assistant/chat", assistantHandler.Chat)
-		log.Info("assistant enabled", zap.String("model", cfg.AssistantModel))
+		log.Info("assistant enabled (per-tenant llm config)",
+			zap.String("env_model", cfg.AssistantModel), zap.Bool("env_key_set", cfg.AssistantAPIKey != ""))
 	}
+
+	// Platform/org LLM configuration UI endpoints (A1+B2+D1).
+	llmConfigHandler := handler.NewLLMConfigHandler(s)
+	platLLM := authed.Group("/platform/llm-config")
+	platLLM.GET("", llmConfigHandler.GetPlatform)
+	platLLM.PUT("", llmConfigHandler.PutPlatform)
+	platLLM.DELETE("", llmConfigHandler.DeletePlatform)
+	orgLLM := authed.Group("/organizations/:id/llm-config")
+	orgLLM.GET("", llmConfigHandler.GetOrg)
+	orgLLM.PUT("", llmConfigHandler.PutOrg)
+	orgLLM.DELETE("", llmConfigHandler.DeleteOrg)
+	authed.POST("/llm-config/test", llmConfigHandler.Test)
 
 	// Question timeout supervisor: periodically auto-resumes waiting_user todos
 	// whose non-required question went unanswered past the timeout.

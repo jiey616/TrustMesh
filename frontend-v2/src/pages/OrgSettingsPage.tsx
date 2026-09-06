@@ -18,6 +18,7 @@ import {
 import { PlusOutlined, TeamOutlined } from '@ant-design/icons'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { useAuthStore } from '@/stores/authStore'
+import { LLMConfigCard } from '@/components/settings/LLMConfigCard'
 import {
   useAddOrgMember,
   useCreateOrg,
@@ -271,6 +272,7 @@ function MembersCard({ org }: { org: OrgView }) {
 
 export function OrgSettingsPage() {
   const { activeOrgId } = useAuthStore()
+  const { user } = useAuthStore()
   const { data: orgs, isLoading } = useOrganizations()
   const [createOpen, setCreateOpen] = useState(false)
 
@@ -331,6 +333,12 @@ export function OrgSettingsPage() {
             </Card>
           ) : (
             <MembersCard org={current} />
+          )}
+
+          {/* LLM 配置：平台默认层（仅平台管理员）+ 本租户覆盖层（org owner/admin) */}
+          {user?.is_admin && <LLMConfigCard />}
+          {!isPersonal && (current.my_role === 'owner' || current.my_role === 'admin') && (
+            <LLMConfigCard orgId={current.id} />
           )}
         </div>
       )}

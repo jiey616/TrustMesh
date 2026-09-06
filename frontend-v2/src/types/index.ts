@@ -106,6 +106,8 @@ export interface User {
   id: string
   email: string
   name: string
+  /** 平台管理员（首个注册用户自动获得），可管平台级 LLM 配置 */
+  is_admin?: boolean
   created_at: string
   updated_at: string
 }

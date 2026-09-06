@@ -25,11 +25,14 @@ func (s *Store) CreateUser(email, name, passwordHash string) (*model.User, *tran
 	}
 	now := time.Now().UTC()
 	id := newID()
+	// A1：首个注册用户自动成为平台管理员（可管平台级 LLM 配置）。
+	firstUser := len(s.users) == 0
 	u := &model.User{
 		ID:           id,
 		Email:        normalized,
 		Name:         strings.TrimSpace(name),
 		PasswordHash: passwordHash,
+		IsAdmin:      firstUser,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}

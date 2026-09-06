@@ -1,0 +1,258 @@
+import { useEffect, useState } from 'react'
+import {
+  Alert,
+  App,
+  Button,
+  Card,
+  Form,
+  Input,
+  Popconfirm,
+  Space,
+  Tag,
+  Typography,
+} from 'antd'
+import { ApiOutlined, CheckCircleOutlined, ExperimentOutlined, SaveOutlined } from '@ant-design/icons'
+import {
+  deleteOrgLLMConfig,
+  deletePlatformLLMConfig,
+  getOrgLLMConfig,
+  getPlatformLLMConfig,
+  testLLMConfig,
+  updateOrgLLMConfig,
+  updatePlatformLLMConfig,
+  type LLMConfigTestResult,
+  type LLMConfigView,
+} from '@/api/llmConfig'
+import { ApiRequestError } from '@/types'
+
+const { Text } = Typography
+
+const SOURCE_LABEL: Record<string, { text: string; color: string }> = {
+  org: { text: '生效来源：本租户配置', color: 'var(--signal)' },
+  platform: { text: '生效来源：平台默认', color: 'var(--info)' },
+  env: { text: '生效来源：环境变量兜底', color: 'var(--text-tertiary)' },
+}
+
+function errText(err: unknown): string {
+  return err instanceof ApiRequestError ? err.message : '请求失败'
+}
+
+/**
+ * LLM 配置卡片（orgId 缺省 = 平台默认层，仅平台管理员可见可改）。
+ * D1：key write-only，只回掩码；留空 = 保持不变。C1：保存即生效。
+ */
+export function LLMConfigCard({ orgId }: { orgId?: string }) {
+  const { message } = App.useApp()
+  const isPlatform = !orgId
+  const [form] = Form.useForm()
+  const [config, setConfig] = useState<LLMConfigView | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<LLMConfigTestResult | null>(null)
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      const res = isPlatform ? await getPlatformLLMConfig() : await getOrgLLMConfig(orgId!)
+      setConfig(res.data.config)
+      form.setFieldsValue({
+        api_url: res.data.config.api_url,
+        model: res.data.config.model,
+        ops_model: res.data.config.ops_model,
+        api_key: '',
+      })
+    } catch (err) {
+      message.error(errText(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId])
+
+  const handleSave = async () => {
+    const values = await form.validateFields()
+    setSaving(true)
+    try {
+      const input = {
+        api_url: values.api_url,
+        model: values.model,
+        ops_model: values.ops_model || '',
+        api_key: values.api_key || '',
+      }
+      const res = isPlatform
+        ? await updatePlatformLLMConfig(input)
+        : await updateOrgLLMConfig(orgId!, input)
+      setConfig(res.data.config)
+      form.setFieldValue('api_key', '')
+      message.success(isPlatform ? '平台默认配置已保存并生效' : '租户配置已保存并生效')
+    } catch (err) {
+      message.error(errText(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleReset = async () => {
+    try {
+      if (isPlatform) {
+        await deletePlatformLLMConfig()
+      } else {
+        await deleteOrgLLMConfig(orgId!)
+      }
+      message.success('已清除该层配置，回退到下一级')
+      await load()
+    } catch (err) {
+      message.error(errText(err))
+    }
+  }
+
+  const handleTest = async () => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const res = await testLLMConfig(isPlatform ? {} : { org_id: orgId })
+      setTestResult(res.data.test)
+    } catch (err) {
+      setTestResult({ ok: false, error: errText(err) })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const sourceMeta = config ? SOURCE_LABEL[config.source] : null
+
+  return (
+    <Card
+      loading={loading}
+      title={
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 14 }}>
+          <ApiOutlined style={{ color: 'var(--signal)' }} />
+          {isPlatform ? '平台默认 LLM 配置' : '本租户 LLM 配置（覆盖平台默认）'}
+          {config && (
+            <Tag
+              style={{
+                marginInlineEnd: 0,
+                fontSize: 10,
+                background: 'transparent',
+                borderColor: sourceMeta?.color,
+                color: sourceMeta?.color,
+              }}
+            >
+              {sourceMeta?.text}
+            </Tag>
+          )}
+        </span>
+      }
+      style={{ background: 'var(--surface)', border: '1px solid var(--line)' }}
+    >
+      {config && !config.has_override && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={
+            isPlatform
+              ? '尚未保存平台配置，当前使用 .env 兜底值（下方表单已带出）。保存后即热生效，无需重启。'
+              : '本租户尚未覆盖，当前回落到上一级配置。填写并保存后本租户独立生效。'
+          }
+        />
+      )}
+
+      <Form form={form} layout="vertical" style={{ maxWidth: 560 }} requiredMark={false}>
+        <Form.Item
+          label="API 地址（OpenAI 兼容）"
+          name="api_url"
+          rules={[{ required: true, message: '必填' }]}
+          style={{ marginBottom: 12 }}
+        >
+          <Input placeholder="https://api.deepseek.com/v1" style={{ fontSize: 13 }} />
+        </Form.Item>
+        <Form.Item
+          label={config?.api_key_masked ? `API Key（当前 ${config.api_key_masked}，留空保持不变）` : 'API Key'}
+          name="api_key"
+          rules={
+            config?.api_key_masked
+              ? []
+              : [{ required: true, message: '该层尚无 key，必填' }]
+          }
+          style={{ marginBottom: 12 }}
+        >
+          <Input.Password
+            placeholder={config?.api_key_masked ? '留空 = 保持已有 key' : 'sk-...'}
+            autoComplete="new-password"
+            style={{ fontSize: 13 }}
+          />
+        </Form.Item>
+        <Form.Item
+          label="模型（助手对话 + 工单归因默认）"
+          name="model"
+          rules={[{ required: true, message: '必填' }]}
+          style={{ marginBottom: 12 }}
+        >
+          <Input placeholder="deepseek-v4-flash / gpt-4o-mini / ..." style={{ fontSize: 13 }} />
+        </Form.Item>
+        <Form.Item
+          label="运维归因模型（可选，留空用上面的模型）"
+          name="ops_model"
+          style={{ marginBottom: 12 }}
+        >
+          <Input placeholder="留空 = 与对话模型一致" style={{ fontSize: 13 }} />
+        </Form.Item>
+        <Space wrap>
+          <Button
+            type="primary"
+            icon={<SaveOutlined />}
+            loading={saving}
+            onClick={() => void handleSave()}
+            style={{ fontSize: 12 }}
+          >
+            保存并生效
+          </Button>
+          <Button
+            icon={<ExperimentOutlined />}
+            loading={testing}
+            onClick={() => void handleTest()}
+            style={{ fontSize: 12 }}
+          >
+            测试连接
+          </Button>
+          {config?.has_override && (
+            <Popconfirm
+              title={isPlatform ? '删除平台配置？' : '清除本租户覆盖？'}
+              description={isPlatform ? '将回退到 .env 兜底配置。' : '将回退到平台默认 / env 配置。'}
+              okText="确认"
+              cancelText="取消"
+              onConfirm={() => void handleReset()}
+            >
+              <Button danger style={{ fontSize: 12 }}>
+                清除该层配置
+              </Button>
+            </Popconfirm>
+          )}
+        </Space>
+      </Form>
+
+      {testResult && (
+        <Alert
+          style={{ marginTop: 12, maxWidth: 560 }}
+          type={testResult.ok ? 'success' : 'error'}
+          showIcon
+          icon={testResult.ok ? <CheckCircleOutlined /> : undefined}
+          message={testResult.ok ? `连接成功（${testResult.model}，${testResult.latency_ms}ms）` : '连接失败'}
+          description={testResult.ok ? undefined : testResult.error}
+        />
+      )}
+
+      <div style={{ marginTop: 12 }}>
+        <Text style={{ fontSize: 11, color: 'var(--text-quaternary)' }}>
+          解析优先级：本租户配置 → 平台默认 → .env 兜底；保存后立即生效，无需重启服务。
+        </Text>
+      </div>
+    </Card>
+  )
+}

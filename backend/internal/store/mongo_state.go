@@ -67,6 +67,7 @@ func (s *Store) enableMongo(cfg config.Config, log *zap.Logger) error {
 	s.mongoOrgMemberships = db.Collection("org_memberships")
 	s.mongoProjectMembers = db.Collection("project_members")
 	s.mongoOpsIncidents = db.Collection("ops_incidents")
+	s.mongoLLMSettings = db.Collection("platform_settings")
 	s.mongoTimeout = cfg.MongoTimeout
 	if log != nil {
 		s.log = log
@@ -124,6 +125,7 @@ func (s *Store) clearMongoCollections() {
 	s.mongoOrgMemberships = nil
 	s.mongoProjectMembers = nil
 	s.mongoOpsIncidents = nil
+	s.mongoLLMSettings = nil
 }
 
 func (s *Store) mongoContext() (context.Context, context.CancelFunc) {
@@ -211,6 +213,9 @@ func (s *Store) ensureMongoIndexes() error {
 		},
 		s.mongoWorkflowTemplates: {
 			{Keys: bson.D{{Key: "user_id", Value: 1}}},
+		},
+		s.mongoLLMSettings: {
+			{Keys: bson.D{{Key: "org_id", Value: 1}}, Options: options.Index().SetUnique(true)},
 		},
 		s.mongoOpsIncidents: {
 			// 去重硬保证：同一主体+规则在活跃期只允许一个工单。
@@ -331,6 +336,10 @@ func (s *Store) loadMongoState() error {
 	if err != nil {
 		return err
 	}
+	llmConfigs, err := s.loadLLMConfigs()
+	if err != nil {
+		return err
+	}
 	usersByMail := make(map[string]string, len(users))
 	for id, user := range users {
 		usersByMail[user.Email] = id
@@ -382,6 +391,7 @@ func (s *Store) loadMongoState() error {
 	s.orgMemberIndex = orgMemberIndex
 	s.userOrgIndex = userOrgIndex
 	s.projectMembers = projectMembers
+	s.llmConfigs = llmConfigs
 	s.opsIncidents = opsIncidents
 	s.opsByDedupeKey = opsByDedupeKey
 	s.opsByTask = opsByTask
