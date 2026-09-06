@@ -266,6 +266,9 @@ func (s *Store) SaveArtifactWithFiling(artifact model.TaskArtifact, declared []m
 	artifact.OutputName = outputName
 	if artifact.OutputName != "" {
 		artifact.Kind = "deliverable"
+		// 绑定成功 = deliverable_unbound 规则不再满足 → 进入观察期，
+		// 由扫描器在 OpsResolveObserve 期满后自动关闭工单。
+		s.markOpsIncidentClearedUnsafe(model.RuleDeliverableUnbound, artifact.TaskID, artifact.TodoID, time.Now().UTC())
 	} else {
 		artifact.Kind = "process"
 	}

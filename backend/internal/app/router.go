@@ -43,6 +43,11 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	go s.StartCleanupTicker(context.Background())
 	// Start timeout monitor to detect and retry/fail stuck in_progress todos.
 	go s.StartTimeoutMonitor(context.Background())
+	// Ops scanner: rule-based anomaly discovery feeding ops_incident tickets.
+	// Off by default; flip OPS_ENABLED=1 to enable.
+	if cfg.OpsEnabled {
+		go s.StartOpsScanner(context.Background())
+	}
 	jwtManager := auth.NewJWTManager(cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
 	clawClient := clawsynapse.NewClient(cfg.ClawSynapseAPIURL, cfg.ClawSynapseTimeout)
 	webhookHandler := clawsynapse.NewWebhookHandler(s, clawClient, log)

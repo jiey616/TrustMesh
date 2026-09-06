@@ -58,6 +58,8 @@ type Store struct {
 	opsIncidents   map[string]*model.OpsIncident // 工单 ID → 工单
 	opsByDedupeKey map[string]string             // dedupeKey → 工单 ID（活跃工单去重）
 	opsByTask      map[string][]string           // taskID → 工单 ID 列表
+	opsClearSince  map[string]time.Time          // 工单 ID → 规则不再满足的观察起点（内存即可，重启后重新观察）
+	opsRuntime     opsRuntime                    // 运维扫描运行参数（bootstrap 注入）
 	processedMessages  map[string]processedMessage
 
 	taskArtifacts map[string][]model.TaskArtifact // taskID → []TaskArtifact
@@ -191,6 +193,7 @@ func New() *Store {
 		opsIncidents:       make(map[string]*model.OpsIncident),
 		opsByDedupeKey:     make(map[string]string),
 		opsByTask:          make(map[string][]string),
+		opsClearSince:      make(map[string]time.Time),
 		processedMessages:  make(map[string]processedMessage),
 		taskArtifacts:      make(map[string][]model.TaskArtifact),
 		taskComments:       make(map[string][]model.Comment),

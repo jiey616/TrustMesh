@@ -2637,6 +2637,15 @@ func (h *WebhookHandler) warnTransferRejected(taskID, fromNode, transferID, file
 			zap.String("task_id", taskID), zap.String("transfer_id", transferID), zap.Error(cErr))
 	}
 	h.notifySystemWarningToAgent(context.Background(), taskID, "", fromNode, content)
+	// 运维发现层：交付物被拒 → 聚合进 ops_incident 工单（去重由 store 侧保证）。
+	h.store.ReportOpsFinding(store.OpsFinding{
+		RuleID:   model.RuleDeliverableReject,
+		Severity: model.OpsSeverityCritical,
+		Title:    "文件上传未入库",
+		Summary:  fmt.Sprintf("%s（%s）", strings.TrimSpace(fileName), reason),
+		TaskID:   taskID,
+		NodeID:   fromNode,
+	})
 }
 
 // warnUnboundDeliverable reports an upload that looks like a final deliverable
@@ -2676,6 +2685,17 @@ func (h *WebhookHandler) warnUnboundDeliverable(taskID, todoID, fromNode, transf
 			zap.String("transfer_id", transferID), zap.Error(cErr))
 	}
 	h.notifySystemWarningToAgent(context.Background(), taskID, todoID, fromNode, content)
+	// 运维发现层：疑似交付物未绑定 → 聚合进 ops_incident 工单；
+	// 绑定成功后由 store_artifact 的挂点进入观察期并自动关闭。
+	h.store.ReportOpsFinding(store.OpsFinding{
+		RuleID:   model.RuleDeliverableUnbound,
+		Severity: model.OpsSeverityCritical,
+		Title:    "交付物未绑定输出位",
+		Summary:  fmt.Sprintf("%s 未携带 outputName，已按过程文件入库（输出位：%s）", strings.TrimSpace(fileName), slots),
+		TaskID:   taskID,
+		TodoID:   todoID,
+		NodeID:   fromNode,
+	})
 }
 
 // findTodoByID locates a todo by id in a task detail; nil when absent or id empty.
