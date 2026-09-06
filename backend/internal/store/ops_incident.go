@@ -83,6 +83,12 @@ func (s *Store) reportOpsFindingLocked(f OpsFinding, now time.Time) string {
 	}
 	key := opsDedupeKey(f.RuleID, f.TaskID, f.TodoID)
 
+	// 升级抑制窗：该主体刚被转人工（escalated），静默期内不再自动开工单，
+	// 否则会立刻新建工单再次指导——「新建→指导→升级」无限循环。
+	if s.opsSuppressedLocked(key, now) {
+		return ""
+	}
+
 	if id, ok := s.opsByDedupeKey[key]; ok {
 		inc := s.opsIncidents[id]
 		if inc != nil && inc.IsActive() {

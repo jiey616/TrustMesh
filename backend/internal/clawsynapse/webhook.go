@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -2646,6 +2647,8 @@ func (h *WebhookHandler) warnTransferRejected(taskID, fromNode, transferID, file
 		TaskID:   taskID,
 		NodeID:   fromNode,
 	})
+	// 干预留痕：把这次系统警告记进工单时间线（下发本体在上面既有链路完成）。
+	h.store.RecordOpsWarning(model.RuleDeliverableReject, taskID, "", fromNode, content)
 }
 
 // warnUnboundDeliverable reports an upload that looks like a final deliverable
@@ -2696,6 +2699,8 @@ func (h *WebhookHandler) warnUnboundDeliverable(taskID, todoID, fromNode, transf
 		TodoID:   todoID,
 		NodeID:   fromNode,
 	})
+	// 干预留痕：把这次系统警告记进工单时间线（下发本体在上面既有链路完成）。
+	h.store.RecordOpsWarning(model.RuleDeliverableUnbound, taskID, todoID, fromNode, content)
 }
 
 // findTodoByID locates a todo by id in a task detail; nil when absent or id empty.
@@ -2762,6 +2767,34 @@ func (h *WebhookHandler) notifySystemWarningToAgent(ctx context.Context, taskID,
 			zap.String("task_id", taskID), zap.String("todo_id", todoID),
 			zap.String("target_node", target), zap.Error(err))
 	}
+}
+
+// PublishOpsMention 统一干预编排器的推送适配器：把 store 侧的
+// OpsPublishRequest 组装成 task.mention 并经节点 daemon 下发。
+// 由 app 层注册为 store 的 opsPublishHook。
+func (h *WebhookHandler) PublishOpsMention(ctx context.Context, req store.OpsPublishRequest) error {
+	if h == nil || h.client == nil {
+		return errors.New("clawsynapse client unavailable")
+	}
+	payload := protocol.TaskMentionPayload{
+		TaskID:     req.TaskID,
+		ProjectID:  req.ProjectID,
+		TodoID:     req.TodoID,
+		TaskTitle:  req.TaskTitle,
+		TaskStatus: req.TaskStatus,
+		AuthorName: req.AuthorName,
+		UserContent: req.Content,
+		Content:    req.Content,
+	}
+	metadata := req.Metadata
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	metadata["task_id"] = req.TaskID
+	if _, err := h.client.Publish(ctx, req.TargetNode, "task.mention", payload, req.TaskID, metadata); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (h *WebhookHandler) handleTransferReceived(c *gin.Context, webhook protocol.WebhookPayload) {

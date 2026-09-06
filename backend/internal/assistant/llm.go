@@ -11,6 +11,25 @@ import (
 
 const maxToolRounds = 3
 
+// Complete 非流式单轮补全：运维归因等后台场景用（不需要 SSE，也不带工具）。
+func (c *LLMClient) Complete(ctx context.Context, system, user string) (string, error) {
+	resp, err := c.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+		Model: c.model,
+		Messages: []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleSystem, Content: system},
+			{Role: openai.ChatMessageRoleUser, Content: user},
+		},
+		Temperature: 0.2,
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(resp.Choices) == 0 {
+		return "", errors.New("empty completion response")
+	}
+	return resp.Choices[0].Message.Content, nil
+}
+
 // LLMClient wraps the OpenAI-compatible API for chat completions.
 type LLMClient struct {
 	client *openai.Client

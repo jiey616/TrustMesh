@@ -54,12 +54,18 @@ type Store struct {
 	agentEvents        map[string][]*model.Event
 	orgEvents          map[string][]*model.Event // 多租户：orgID → 该租户活动流（与 userEvents 共享事件指针）
 
+	// 统一干预编排器（ops_dispatcher.go）：实际推送与 LLM 归因由 app 层注入
+	// （store 不能 import clawsynapse/assistant，与 remindHook 同款注入模式）。
+	opsPublishHook     func(ctx context.Context, req OpsPublishRequest) error
+	opsAttributionHook func(ctx context.Context, inc *model.OpsIncident, snapshot string) (string, error)
+
 	// 运维工单（ops_incidents）：与其余资源一致，全内存状态机 + Mongo 持久化镜像
 	opsIncidents   map[string]*model.OpsIncident // 工单 ID → 工单
 	opsByDedupeKey map[string]string             // dedupeKey → 工单 ID（活跃工单去重）
 	opsByTask      map[string][]string           // taskID → 工单 ID 列表
 	opsClearSince  map[string]time.Time          // 工单 ID → 规则不再满足的观察起点（内存即可，重启后重新观察）
 	opsRuntime     opsRuntime                    // 运维扫描运行参数（bootstrap 注入）
+	opsSuppress    map[string]time.Time          // dedupeKey → 升级抑制窗截止时间（内存即可）
 	processedMessages  map[string]processedMessage
 
 	taskArtifacts map[string][]model.TaskArtifact // taskID → []TaskArtifact
@@ -194,6 +200,7 @@ func New() *Store {
 		opsByDedupeKey:     make(map[string]string),
 		opsByTask:          make(map[string][]string),
 		opsClearSince:      make(map[string]time.Time),
+		opsSuppress:        make(map[string]time.Time),
 		processedMessages:  make(map[string]processedMessage),
 		taskArtifacts:      make(map[string][]model.TaskArtifact),
 		taskComments:       make(map[string][]model.Comment),

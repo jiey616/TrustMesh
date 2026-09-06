@@ -25,6 +25,9 @@ type opsRuntime struct {
 	scanInterval    time.Duration
 	silentThreshold time.Duration
 	resolveObserve  time.Duration
+	guideMax        int           // 每 todo 自动指导上限（超出转 escalated）
+	guideCooldown   time.Duration // 指导下发冷却
+	suppressWindow  time.Duration // escalated 后同主体抑制窗（防「新建→再指导」循环）
 }
 
 func opsRuntimeFromConfig(cfg config.Config) opsRuntime {
@@ -32,6 +35,9 @@ func opsRuntimeFromConfig(cfg config.Config) opsRuntime {
 		scanInterval:    cfg.OpsScanInterval,
 		silentThreshold: cfg.OpsSilentThreshold,
 		resolveObserve:  cfg.OpsResolveObserve,
+		guideMax:        cfg.OpsGuideMaxPerTodo,
+		guideCooldown:   cfg.OpsGuideCooldown,
+		suppressWindow:  4 * time.Hour,
 	}
 	if rt.scanInterval <= 0 {
 		rt.scanInterval = 5 * time.Minute
@@ -41,6 +47,12 @@ func opsRuntimeFromConfig(cfg config.Config) opsRuntime {
 	}
 	if rt.resolveObserve <= 0 {
 		rt.resolveObserve = 10 * time.Minute
+	}
+	if rt.guideMax <= 0 {
+		rt.guideMax = 3
+	}
+	if rt.guideCooldown <= 0 {
+		rt.guideCooldown = 15 * time.Minute
 	}
 	return rt
 }
@@ -68,13 +80,14 @@ func (s *Store) StartOpsScanner(ctx context.Context) {
 }
 
 // runOpsScanOnce 单轮扫描：评估扫描型规则 → 反向验证 → 观察期关闭。
-// 全程持锁一次完成（与 timeout monitor 的 checkTodoTimeouts 同款纪律）。
+// 评估阶段全程持锁一次完成（与 timeout monitor 的 checkTodoTimeouts 同款纪律）；
+// 干预（归因+指引下发）在解锁后进行——LLM 调用与推送绝不能持锁。
 func (s *Store) runOpsScanOnce(rt opsRuntime) {
 	now := time.Now().UTC()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
-	hits := make(map[string]bool) // dedupeKey → 本轮命中
+	hits := make(map[string]bool)  // dedupeKey → 本轮命中
+	var newIncidents []string      // 本轮新建工单 → 解锁后触发干预
 
 	for _, task := range s.tasks {
 		// 与 timeout monitor 同款口径：只盯执行态任务。
@@ -96,14 +109,16 @@ func (s *Store) runOpsScanOnce(rt opsRuntime) {
 			}
 			key := opsDedupeKey(model.RuleTodoStalled, task.ID, todo.ID)
 			hits[key] = true
-			s.reportOpsFindingLocked(OpsFinding{
+			if id := s.reportOpsFindingLocked(OpsFinding{
 				RuleID:  model.RuleTodoStalled,
 				Title:   "todo 长时间无进展",
 				Summary: task.Title + " / " + todo.Title,
 				TaskID:  task.ID,
 				TodoID:  todo.ID,
 				NodeID:  todo.Assignee.NodeID,
-			}, now)
+			}, now); id != "" && !s.incidentExistedBeforeLocked(id, now) {
+				newIncidents = append(newIncidents, id)
+			}
 		}
 
 		// 规则 2：task_silent —— 沉默型卡死：任务在执行态但全渠道无任何活动。
@@ -114,12 +129,14 @@ func (s *Store) runOpsScanOnce(rt opsRuntime) {
 		if now.Sub(last) >= rt.silentThreshold {
 			key := opsDedupeKey(model.RuleTaskSilent, task.ID, "")
 			hits[key] = true
-			s.reportOpsFindingLocked(OpsFinding{
+			if id := s.reportOpsFindingLocked(OpsFinding{
 				RuleID:  model.RuleTaskSilent,
 				Title:   "任务长时间无任何活动",
 				Summary: task.Title + "（超过 " + rt.silentThreshold.String() + " 无事件、无 todo 上报）",
 				TaskID:  task.ID,
-			}, now)
+			}, now); id != "" && !s.incidentExistedBeforeLocked(id, now) {
+				newIncidents = append(newIncidents, id)
+			}
 		}
 	}
 
@@ -127,9 +144,10 @@ func (s *Store) runOpsScanOnce(rt opsRuntime) {
 	// 事件驱动上报（warnUnboundDeliverable / warnTransferRejected），不在此扫描。
 	// 其「规则不再满足」信号由绑定成功点 markOpsIncidentClearedUnsafe 设置。
 
-	// 反向验证 + 观察期关闭。
+	// 反向验证 + 观察期关闭。活跃工单恢复即进入观察；escalated 工单若规则
+	// 不再满足也自动关闭（释放抑制窗），人工仍可在前端忽略/关闭。
 	for _, inc := range s.opsIncidents {
-		if !inc.IsActive() {
+		if inc.IsTerminal() && inc.Status != model.OpsStatusEscalated {
 			continue
 		}
 		var cleared bool
@@ -151,11 +169,35 @@ func (s *Store) runOpsScanOnce(rt opsRuntime) {
 			if s.log != nil {
 				s.log.Info("ops incident auto-resolved",
 					zap.String("incident_id", inc.ID),
-					zap.String("rule_id", inc.RuleID))
+					zap.String("rule_id", inc.RuleID),
+					zap.Bool("was_escalated", inc.Status == model.OpsStatusEscalated))
+			}
+			if inc.Status == model.OpsStatusEscalated {
+				// 升级后问题自行恢复：仍记 resolved（历史保留），释放抑制窗。
+				delete(s.opsSuppress, inc.DedupeKey)
 			}
 			s.resolveOpsIncidentLocked(inc, now)
 		}
 	}
+	s.mu.Unlock()
+
+	// 干预阶段（锁外）：归因 + 指引下发。只在有下发通道时推进，
+	// 纯 L0 记录模式（未注册 publish hook）下工单保持 open 等人工。
+	if s.opsPublishHook != nil {
+		for _, id := range newIncidents {
+			s.attributeAndGuide(context.Background(), id)
+		}
+	}
+}
+
+// incidentExistedBeforeLocked 判断工单是否本轮之前已存在（CreatedAt 早于本轮
+// 开始即视为旧工单）。重复命中不该触发干预。仅能持锁调用。
+func (s *Store) incidentExistedBeforeLocked(id string, scanStart time.Time) bool {
+	inc, ok := s.opsIncidents[id]
+	if !ok {
+		return false
+	}
+	return inc.CreatedAt.Before(scanStart)
 }
 
 // todoLastActivityAt todo 最近活动时间：上报 > 完结/失败 > 指派 > 开始 > 兜底。

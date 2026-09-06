@@ -659,6 +659,10 @@ func (s *Store) BindArtifactOutput(sc Scope, taskID, todoID, transferID, outputN
 	}
 	s.publishTaskUnsafe(taskID)
 
+	// 手工绑定交付物成功 = deliverable_unbound 规则不再满足 → 进入观察期
+	//（与自动绑定路径 SaveArtifactWithFiling 同款处理，第 2 批遗留缺口）。
+	s.markOpsIncidentClearedUnsafe(model.RuleDeliverableUnbound, taskID, todoID, time.Now().UTC())
+
 	clone := arts[artIdx]
 	return &clone, nil
 }

@@ -54,10 +54,27 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	// Timeout retries must actually re-dispatch the todo to its assignee.
 	s.SetDispatchHook(webhookHandler.RedispatchTodo)
 	// Timeout reminders nudge the assignee without re-dispatching the todo.
-	s.SetRemindHook(webhookHandler.RemindTodo)
+	// C.2 统一干预编排：remind 先经编排器留痕（进运维工单时间线），再走
+	// 原有下发；计时与判死仍在 timeout_monitor，编排器不改变其语义。
+	s.SetRemindHook(func(ctx context.Context, taskID, todoID string) {
+		s.RecordTimeoutRemind(taskID, todoID)
+		webhookHandler.RemindTodo(ctx, taskID, todoID)
+	})
 	// Planning-stall nudges wake the PM via task.message when a task has been
 	// stuck in planning without a finalized plan.
 	s.SetPlanningStallHook(webhookHandler.NudgePlanningPM)
+	// 统一干预编排器：运维修复指引的唯一下发出口（C.2）。
+	s.SetOpsPublishHook(webhookHandler.PublishOpsMention)
+	// LLM 归因（F）：复用助手配置，OpsModel 可单独覆盖；未配 key 时优雅
+	// 降级为模板指引并标记需人工复核，规则引擎与工单不受影响。
+	if cfg.AssistantAPIKey != "" {
+		attributorModel := cfg.OpsModel
+		if attributorModel == "" {
+			attributorModel = cfg.AssistantModel
+		}
+		s.SetOpsAttributionHook(assistant.OpsAttributor(
+			assistant.NewLLMClient(cfg.AssistantAPIURL, cfg.AssistantAPIKey, attributorModel)))
+	}
 	peerSyncer := clawsynapse.NewPeerSyncer(clawClient, s, cfg.ClawSynapsePeerSync, log)
 	if peerSyncer != nil {
 		peerSyncer.Start()

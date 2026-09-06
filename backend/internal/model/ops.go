@@ -52,6 +52,7 @@ const (
 	OpsActionCreated    = "created"    // 工单创建
 	OpsActionDiagnosed  = "diagnosed"  // 归因完成
 	OpsActionGuided     = "guided"     // 下发修复指引
+	OpsActionReminded   = "reminded"   // timeout_monitor 催办留痕（不占指导预算）
 	OpsActionEscalated  = "escalated"  // 升级人工
 	OpsActionResolved   = "resolved"   // 关闭
 	OpsActionIgnored    = "ignored"    // 人工忽略
