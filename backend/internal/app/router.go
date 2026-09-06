@@ -291,6 +291,14 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	ext.DELETE("/:id", externalAppHandler.Delete)
 	ext.POST("/:id/launch", externalAppHandler.Launch)
 
+	// Ops incidents: rule-based anomaly tickets + manual intervention (ignore/close).
+	opsHandler := handler.NewOpsHandler(s)
+	ops := authed.Group("/ops")
+	ops.GET("/incidents", opsHandler.List)
+	ops.GET("/incidents/:id", opsHandler.Get)
+	ops.POST("/incidents/:id/ignore", opsHandler.Ignore)
+	ops.POST("/incidents/:id/close", opsHandler.Close)
+
 	// Current user account: rename + password change.
 	// 账号是 user 维度资源，不参与租户裁决（不受 X-Org-Id 影响）。
 	authed.GET("/users/me", userHandler.Me)

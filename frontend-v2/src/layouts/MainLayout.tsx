@@ -22,6 +22,7 @@ import {
   SwapOutlined,
   CheckOutlined,
   BankOutlined,
+  AlertOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
 import { useAuthStore } from '@/stores/authStore'
@@ -59,6 +60,7 @@ const staticMenuItems: MenuProps['items'] = [
   { key: '/knowledge', icon: <BookOutlined />, label: '知识库' },
   { key: '/market', icon: <ShopOutlined />, label: '市场' },
   { key: '/external-apps', icon: <AppstoreOutlined />, label: '外部应用' },
+  { key: '/ops', icon: <AlertOutlined />, label: '运维工单' },
 ]
 
 export function MainLayout() {

@@ -2,12 +2,13 @@ package store
 
 import (
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
-	"time"
 
 	"github.com/google/uuid"
 	"trustmesh/backend/internal/model"
+	"trustmesh/backend/internal/transport"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -236,4 +237,58 @@ func opsIncidentVisible(sc Scope, inc *model.OpsIncident) bool {
 		return inc.UserID == sc.UserID
 	}
 	return inc.UserID == sc.UserID
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 人工动作（一期第 4 批）：工单页的忽略 / 关闭。人工关闭属 L2 类干预，
+// 必须留痕（OpsAction）并同步内存索引 + Mongo 镜像。
+// 只对活跃工单有效；终态工单（resolved/escalated/ignored）不可再操作。
+// ─────────────────────────────────────────────────────────────────────────────
+
+// IgnoreOpsIncident 人工忽略：不再对该问题做任何自动干预，也不阻止同类复发新开单。
+func (s *Store) IgnoreOpsIncident(sc Scope, incidentID, reason string) (*model.OpsIncident, *transport.AppError) {
+	return s.closeOpsIncidentManually(sc, incidentID, model.OpsStatusIgnored, model.OpsActionIgnored, reason)
+}
+
+// CloseOpsIncident 人工关闭：确认问题已解决或无需跟踪，语义等同 resolved。
+func (s *Store) CloseOpsIncident(sc Scope, incidentID, note string) (*model.OpsIncident, *transport.AppError) {
+	return s.closeOpsIncidentManually(sc, incidentID, model.OpsStatusResolved, model.OpsActionResolved, note)
+}
+
+func (s *Store) closeOpsIncidentManually(sc Scope, incidentID, status, kind, note string) (*model.OpsIncident, *transport.AppError) {
+	if note == "" {
+		if status == model.OpsStatusIgnored {
+			note = "人工忽略"
+		} else {
+			note = "人工关闭"
+		}
+	}
+	now := time.Now().UTC()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	inc, ok := s.opsIncidents[incidentID]
+	if !ok || !opsIncidentVisible(sc, inc) {
+		return nil, transport.NotFound("ops incident not found")
+	}
+	if inc.IsTerminal() {
+		return nil, transport.Validation("ops incident already terminal", map[string]any{"status": inc.Status})
+	}
+	inc.Status = status
+	inc.Active = false
+	inc.ResolvedAt = &now
+	inc.UpdatedAt = now
+	inc.Actions = append(inc.Actions, model.OpsAction{
+		ID:     uuid.NewString(),
+		At:     now,
+		Level:  model.OpsLevelL0,
+		Kind:   kind,
+		Result: model.OpsResultSent,
+		Detail: note,
+	})
+	delete(s.opsByDedupeKey, inc.DedupeKey)
+	delete(s.opsClearSince, inc.ID)
+	if err := s.persistOpsIncidentUnsafe(inc); err != nil && s.log != nil {
+		s.log.Warn("persist ops incident manual close failed", zap.Error(err))
+	}
+	return inc, nil
 }
