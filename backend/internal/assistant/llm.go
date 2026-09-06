@@ -235,21 +235,22 @@ type LLMParams struct {
 }
 
 type LLMProvider struct {
-	lookup func(orgID string) (LLMParams, bool)
+	lookup func(orgID, userID string) (LLMParams, bool)
 	mu     sync.Mutex
 	cache  map[string]*LLMClient // 指纹 → client
 }
 
-func NewLLMProvider(lookup func(orgID string) (LLMParams, bool)) *LLMProvider {
+func NewLLMProvider(lookup func(orgID, userID string) (LLMParams, bool)) *LLMProvider {
 	return &LLMProvider{lookup: lookup, cache: make(map[string]*LLMClient)}
 }
 
 // ParamsFor 暴露解析结果（归因器需要 OpsModel 维度）。
-func (p *LLMProvider) ParamsFor(orgID string) (LLMParams, bool) {
+// userID 供个人空间解析（orgID 空 + userID 非空 = 按用户个人租户键）。
+func (p *LLMProvider) ParamsFor(orgID, userID string) (LLMParams, bool) {
 	if p == nil || p.lookup == nil {
 		return LLMParams{}, false
 	}
-	return p.lookup(orgID)
+	return p.lookup(orgID, userID)
 }
 
 func (p *LLMProvider) clientForParams(params LLMParams, model string) *LLMClient {
@@ -268,8 +269,8 @@ func (p *LLMProvider) clientForParams(params LLMParams, model string) *LLMClient
 }
 
 // ClientFor 对话客户端（chat 模型维度）。无可用配置返回 nil。
-func (p *LLMProvider) ClientFor(orgID string) *LLMClient {
-	params, ok := p.ParamsFor(orgID)
+func (p *LLMProvider) ClientFor(orgID, userID string) *LLMClient {
+	params, ok := p.ParamsFor(orgID, userID)
 	if !ok {
 		return nil
 	}
@@ -278,7 +279,9 @@ func (p *LLMProvider) ClientFor(orgID string) *LLMClient {
 
 // AttributionClientFor 归因客户端（ops_model 维度，解析层兜底为 chat 模型）。
 func (p *LLMProvider) AttributionClientFor(orgID string) *LLMClient {
-	params, ok := p.ParamsFor(orgID)
+	// 归因只按工单 OrgID 解析：工单归属已把个人空间任务落到其个人租户键，
+	// 所以这里 userID 传空即可命中个人配置。
+	params, ok := p.ParamsFor(orgID, "")
 	if !ok {
 		return nil
 	}

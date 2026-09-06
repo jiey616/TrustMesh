@@ -73,15 +73,52 @@ export async function deleteOrgLLMConfig(orgId: string) {
     .json<ApiResponse<{ deleted: boolean }>>()
 }
 
-// ---- 连接测试（字段可选：缺省测生效配置） ----
+// ---- 连接测试 / 模型列表（字段可选：缺省测生效配置） ----
 
-export async function testLLMConfig(input?: {
+export interface LLMConfigScopeInput {
+  /** personal | org | platform；空 = 按 org_id 推断（默认平台层） */
+  scope?: string
   org_id?: string
   api_url?: string
   api_key?: string
   model?: string
-}) {
+}
+
+export async function testLLMConfig(input?: LLMConfigScopeInput) {
   return apiClient
     .post('/api/v1/llm-config/test', { json: input ?? {} })
     .json<ApiResponse<{ test: LLMConfigTestResult }>>()
+}
+
+export interface LLMModelsResult {
+  ok: boolean
+  error?: string
+  items?: string[]
+}
+
+/** 拉取 provider 可用模型列表（OpenAI 兼容 GET {api_url}/models）。 */
+export async function fetchLLMModels(input?: LLMConfigScopeInput) {
+  return apiClient
+    .post('/api/v1/llm-config/models', { json: input ?? {} })
+    .json<ApiResponse<{ models: LLMModelsResult }>>()
+}
+
+// ---- 个人空间层（任何登录用户） ----
+
+export async function getPersonalLLMConfig() {
+  return apiClient
+    .get('/api/v1/llm-config/personal')
+    .json<ApiResponse<{ config: LLMConfigView }>>()
+}
+
+export async function updatePersonalLLMConfig(input: UpdateLLMConfigRequest) {
+  return apiClient
+    .put('/api/v1/llm-config/personal', { json: input })
+    .json<ApiResponse<{ config: LLMConfigView }>>()
+}
+
+export async function deletePersonalLLMConfig() {
+  return apiClient
+    .delete('/api/v1/llm-config/personal')
+    .json<ApiResponse<{ deleted: boolean }>>()
 }

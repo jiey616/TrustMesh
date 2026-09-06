@@ -55,7 +55,7 @@ func (h *AssistantHandler) Chat(c *gin.Context) {
 	w := &ginSSEWriter{c: c}
 
 	// Resolve per-tenant LLM client (B2/C1): nil = 当前租户/平台/env 均未配置
-	client := h.llm.ClientFor(sc.OrgID)
+	client := h.llm.ClientFor(sc.OrgID, sc.UserID)
 	if client == nil {
 		w.WriteEvent("error", map[string]string{"message": "LLM 未配置：请在 设置 → LLM 配置 中完成平台或租户配置"})
 		w.WriteEvent("done", map[string]any{})

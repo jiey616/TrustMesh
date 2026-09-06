@@ -68,8 +68,8 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	// LLM 配置（A1+B2+C1）：env 兜底注入 + 平台/租户两级 UI 配置，热生效。
 	s.SetLLMEnvDefaults(cfg.AssistantAPIURL, cfg.AssistantAPIKey, cfg.AssistantModel)
 	s.EnsurePlatformAdminExists()
-	llmProvider := assistant.NewLLMProvider(func(orgID string) (assistant.LLMParams, bool) {
-		url, key, _, opsModel, source := s.ResolveLLMParams(orgID)
+	llmProvider := assistant.NewLLMProvider(func(orgID, userID string) (assistant.LLMParams, bool) {
+		url, key, _, opsModel, source := s.ResolveLLMParams(orgID, userID)
 		if url == "" || key == "" {
 			return assistant.LLMParams{}, false
 		}
@@ -364,6 +364,12 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	orgLLM.PUT("", llmConfigHandler.PutOrg)
 	orgLLM.DELETE("", llmConfigHandler.DeleteOrg)
 	authed.POST("/llm-config/test", llmConfigHandler.Test)
+	authed.POST("/llm-config/models", llmConfigHandler.Models)
+	// 个人空间层：配置挂在本人个人租户键上，任何登录用户可配自己的。
+	personalLLM := authed.Group("/llm-config/personal")
+	personalLLM.GET("", llmConfigHandler.GetPersonal)
+	personalLLM.PUT("", llmConfigHandler.PutPersonal)
+	personalLLM.DELETE("", llmConfigHandler.DeletePersonal)
 
 	// Question timeout supervisor: periodically auto-resumes waiting_user todos
 	// whose non-required question went unanswered past the timeout.

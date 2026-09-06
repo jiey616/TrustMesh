@@ -17,6 +17,7 @@ const (
 	LLMSourceOrg      = "org"      // 生效配置来自租户覆盖
 	LLMSourcePlatform = "platform" // 生效配置来自平台默认
 	LLMSourceEnv      = "env"      // 生效配置来自 env 兜底（未做任何 UI 配置）
+	LLMSourcePersonal = "personal" // 生效配置来自个人空间配置（挂在用户个人租户键上）
 )
 
 // PlatformLLMSetting 是一层 LLM 配置的存储实体。
@@ -57,6 +58,7 @@ type LLMConfigInput struct {
 // LLMConfigTestRequest 是连接测试请求：字段全部可选——
 // 提供了就用提交值测（测未保存的表单值），没提供就用解析后的生效配置测。
 type LLMConfigTestRequest struct {
+	Scope  string `json:"scope"` // personal | org | platform（空=按 org_id 推断，默认平台层）
 	OrgID  string `json:"org_id"`
 	APIURL string `json:"api_url"`
 	APIKey string `json:"api_key"`

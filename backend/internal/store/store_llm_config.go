@@ -38,6 +38,13 @@ func (s *Store) UserIsPlatformAdmin(userID string) bool {
 	return ok && u.IsAdmin
 }
 
+// PersonalOrgIDOf 返回用户的个人租户 ID（无则空串）。
+func (s *Store) PersonalOrgIDOf(userID string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.personalOrgOfUnsafe(userID)
+}
+
 // UserIsOrgAdmin 判断用户是否某租户的 owner/admin（org 成员角色）。
 func (s *Store) UserIsOrgAdmin(userID, orgID string) bool {
 	s.mu.RLock()
@@ -108,10 +115,20 @@ func (s *Store) resolveLLMLayeredUnsafe(orgID string) (url, key, opsModel, sourc
 
 // ResolveLLMParams 解析某租户（或个人空间）的生效 LLM 参数。
 // 供 assistant.LLMProvider 每次调用时取配置（C1 热生效核心）。
-func (s *Store) ResolveLLMParams(orgID string) (url, key, chatModel, opsModel, source string) {
+// 个人空间（orgID 空）按 userID 定位其个人租户键解析：个人配置 > 平台默认 > env。
+func (s *Store) ResolveLLMParams(orgID, userID string) (url, key, chatModel, opsModel, source string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	personal := false
+	if orgID == "" && userID != "" {
+		orgID = s.personalOrgOfUnsafe(userID)
+		personal = orgID != ""
+	}
 	url, key, opsModel, source = s.resolveLLMLayeredUnsafe(orgID)
+	// 个人空间命中的是个人租户键（存储上与 org 层同构），来源标记纠正为 personal。
+	if personal && source == model.LLMSourceOrg {
+		source = model.LLMSourcePersonal
+	}
 	chatModel = opsModel // chat 与归因同模型；ops_model 是归因的显式覆盖
 	return url, key, chatModel, opsModel, source
 }
@@ -158,6 +175,11 @@ func (s *Store) GetPlatformLLMConfigView() *model.LLMConfigView {
 func (s *Store) GetOrgLLMConfigView(orgID string) *model.LLMConfigView {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.getOrgLLMConfigViewLocked(orgID)
+}
+
+// getOrgLLMConfigViewLocked 要求持锁。
+func (s *Store) getOrgLLMConfigViewLocked(orgID string) *model.LLMConfigView {
 	if cfg := s.llmConfigs[orgID]; cfg != nil {
 		return &model.LLMConfigView{
 			OrgID:        orgID,
@@ -191,6 +213,47 @@ func (s *Store) GetOrgLLMConfigView(orgID string) *model.LLMConfigView {
 		Source:       source,
 		HasOverride:  false,
 	}
+}
+
+// GetPersonalLLMConfigView 个人空间视图：配置挂在用户个人租户键上。
+// 未配置时回落展示平台默认 / env 生效值。
+func (s *Store) GetPersonalLLMConfigView(userID string) *model.LLMConfigView {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	pid := s.personalOrgOfUnsafe(userID)
+	if cfg := s.llmConfigs[pid]; cfg != nil && pid != "" {
+		return &model.LLMConfigView{
+			OrgID:        pid,
+			APIURL:       cfg.APIURL,
+			APIKeyMasked: llmMaskedKey(cfg.APIKey),
+			Model:        cfg.Model,
+			OpsModel:     cfg.OpsModel,
+			Source:       model.LLMSourcePersonal,
+			HasOverride:  true,
+			UpdatedAt:    cfg.UpdatedAt,
+			UpdatedBy:    cfg.UpdatedBy,
+		}
+	}
+	v := s.getOrgLLMConfigViewLocked(pid)
+	if v != nil {
+		v.OrgID = "" // 个人层视图不外泄内部键
+	}
+	return v
+}
+
+// SetPersonalLLMSetting 保存个人空间配置（幂等 upsert，任何登录用户可配自己的）。
+func (s *Store) SetPersonalLLMSetting(userID, setterID string, in model.LLMConfigInput) (*model.LLMConfigView, *transport.AppError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pid := s.personalOrgOfUnsafe(userID)
+	if pid == "" {
+		return nil, transport.Validation("personal org not found for user", nil)
+	}
+	view, appErr := s.setLLMSettingLocked(pid, setterID, in)
+	if view != nil {
+		view.Source = model.LLMSourcePersonal
+	}
+	return view, appErr
 }
 
 // SetPlatformLLMSetting 保存平台默认配置（幂等 upsert）。

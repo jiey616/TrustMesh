@@ -335,11 +335,12 @@ export function OrgSettingsPage() {
             <MembersCard org={current} />
           )}
 
-          {/* LLM 配置：平台默认层（仅平台管理员）+ 本租户覆盖层（org owner/admin) */}
-          {user?.is_admin && <LLMConfigCard />}
+          {/* LLM 配置：平台默认层（仅平台管理员）+ 本租户覆盖层（org owner/admin) + 个人空间层（所有用户） */}
+          {user?.is_admin && <LLMConfigCard scope="platform" />}
           {!isPersonal && (current.my_role === 'owner' || current.my_role === 'admin') && (
-            <LLMConfigCard orgId={current.id} />
+            <LLMConfigCard scope="org" orgId={current.id} />
           )}
+          {isPersonal && <LLMConfigCard scope="personal" />}
         </div>
       )}
 

@@ -97,6 +97,13 @@ func (s *Store) runOpsScanOnce(rt opsRuntime) {
 			continue
 		}
 
+		// 已归档项目不参与运维扫描：归档是用户主动的「不再活跃」声明，
+		// 其任务沉默属预期行为。已有活跃工单因本轮 hits 不再命中，
+		// 会被反向验证 + 观察期自动关闭（无需额外清理）。
+		if p, ok := s.projects[task.ProjectID]; ok && p.Status == "archived" {
+			continue
+		}
+
 		// 规则 1：todo_stalled —— todo 处于 in_progress 但长时间无任何上报。
 		for i := range task.Todos {
 			todo := &task.Todos[i]
