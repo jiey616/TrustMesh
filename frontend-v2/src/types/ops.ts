@@ -47,6 +47,10 @@ export interface OpsIncident {
   todo_id?: string
   agent_id?: string
   node_id?: string
+  /** 展示辅助字段：后端按 ID 反查填充，不入库 */
+  task_title?: string
+  project_name?: string
+  agent_name?: string
   guide_count: number
   active: boolean
   actions: OpsAction[]

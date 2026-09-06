@@ -19,6 +19,34 @@ func NewOpsHandler(s *store.Store) *OpsHandler {
 	return &OpsHandler{store: s}
 }
 
+// enrichOpsIncident 填充展示辅助字段（任务标题/项目名/Agent 名）。
+// 工单可见性已在 store 层裁决，关联资源与工单同租户，反查名称不会跨租户泄漏；
+// 名称反查全走内存 map（GetTaskInternal 等），miss 时留空——前端回退显示 ID。
+func (h *OpsHandler) enrichOpsIncident(sc store.Scope, inc *model.OpsIncident) {
+	if inc == nil {
+		return
+	}
+	if inc.TaskID != "" {
+		if t := h.store.GetTaskInternal(inc.TaskID); t != nil {
+			inc.TaskTitle = t.Title
+			// 工单未回填 project_id 时从任务补（老工单兼容）
+			if inc.ProjectID == "" {
+				inc.ProjectID = t.ProjectID
+			}
+		}
+	}
+	if inc.ProjectID != "" {
+		if p, err := h.store.GetProject(sc, inc.ProjectID); err == nil && p != nil {
+			inc.ProjectName = p.Name
+		}
+	}
+	if inc.AgentID != "" {
+		if a, err := h.store.GetAgent(sc, inc.AgentID); err == nil && a != nil {
+			inc.AgentName = a.Name
+		}
+	}
+}
+
 // List GET /ops/incidents?status=active|terminal|<具体状态>
 // 默认全量（updated_at 倒序，store 层保证）；status 过滤在 handler 层做，
 // 统计口径与列表口径一致：过滤不改变可见性裁决（裁决在 store 层）。
@@ -46,6 +74,9 @@ func (h *OpsHandler) List(c *gin.Context) {
 		}
 		items = filtered
 	}
+	for _, inc := range items {
+		h.enrichOpsIncident(sc, inc)
+	}
 	transport.WriteData(c, 200, gin.H{"incidents": items})
 }
 
@@ -57,6 +88,7 @@ func (h *OpsHandler) Get(c *gin.Context) {
 		transport.WriteError(c, transport.NotFound("ops incident not found"))
 		return
 	}
+	h.enrichOpsIncident(sc, inc)
 	transport.WriteData(c, 200, gin.H{"incident": inc})
 }
 

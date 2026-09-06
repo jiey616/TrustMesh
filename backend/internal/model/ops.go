@@ -85,6 +85,12 @@ type OpsIncident struct {
 	AgentID   string `json:"agent_id,omitempty" bson:"agent_id,omitempty"`
 	NodeID    string `json:"node_id,omitempty" bson:"node_id,omitempty"`
 
+	// 展示辅助字段：handler 层按 ID 反查名称填充，不入库（bson:"-" 防止
+	// 持久化镜像写坏）。前端用它显示可读名称并做跳转。
+	TaskTitle   string `json:"task_title,omitempty" bson:"-"`
+	ProjectName string `json:"project_name,omitempty" bson:"-"`
+	AgentName   string `json:"agent_name,omitempty" bson:"-"`
+
 	// 干预计数：达到 OpsGuideMaxPerTodo 后不再自动下发，转 escalated
 	GuideCount int `json:"guide_count" bson:"guide_count"`
 

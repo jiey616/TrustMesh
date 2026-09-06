@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Button,
   Drawer,
@@ -79,6 +80,7 @@ function relTime(iso: string): string {
 
 export function OpsIncidentsPage() {
   const { message } = App.useApp()
+  const navigate = useNavigate()
   const [filter, setFilter] = useState<FilterKey>('active')
   const [detailId, setDetailId] = useState<string | null>(null)
   const [actionModal, setActionModal] = useState<{
@@ -154,7 +156,7 @@ export function OpsIncidentsPage() {
           </div>
           <Text style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
             {RULE_LABEL[r.rule_id] ?? r.rule_id}
-            {r.task_id ? ` · 任务 ${r.task_id.slice(0, 8)}` : ''}
+            {r.task_id ? ` · 任务 ${r.task_title || r.task_id.slice(0, 8)}` : ''}
             {r.node_id ? ` · 节点 ${r.node_id.slice(0, 8)}` : ''}
           </Text>
         </div>
@@ -441,31 +443,84 @@ export function OpsIncidentsPage() {
               </div>
             )}
 
-            {/* 关联主体 */}
+            {/* 关联主体（名称 + 跳转；名称由后端反查填充，miss 回退显示 ID） */}
             <div>
               <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 6 }}>
                 关联主体
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {(
-                  [
-                    ['项目', detail.project_id],
-                    ['任务', detail.task_id],
-                    ['Todo', detail.todo_id],
-                    ['Agent', detail.agent_id],
-                    ['节点', detail.node_id],
-                  ] as const
-                )
-                  .filter(([, v]) => !!v)
-                  .map(([label, v]) => (
-                    <Text key={label} style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                      {label}：
-                      <Text code style={{ fontSize: 11 }}>
-                        {v}
-                      </Text>
-                    </Text>
+                {[
+                  {
+                    label: '项目',
+                    display: detail.project_name || detail.project_id,
+                    link: detail.project_id ? `/projects/${detail.project_id}` : null,
+                    id: detail.project_id,
+                  },
+                  {
+                    label: '任务',
+                    display: detail.task_title || detail.task_id,
+                    // 任务深链：项目详情页 ?task= 直达该任务工作区
+                    link:
+                      detail.task_id && detail.project_id
+                        ? `/projects/${detail.project_id}?task=${detail.task_id}`
+                        : null,
+                    id: detail.task_id,
+                  },
+                  {
+                    label: 'Todo',
+                    display: detail.todo_id,
+                    link: null,
+                    id: detail.todo_id,
+                  },
+                  {
+                    label: 'Agent',
+                    display: detail.agent_name || detail.agent_id,
+                    link: detail.agent_id ? `/agents/${detail.agent_id}` : null,
+                    id: detail.agent_id,
+                  },
+                  {
+                    label: '节点',
+                    display: detail.node_id,
+                    link: null,
+                    id: detail.node_id,
+                  },
+                ]
+                  .filter((r) => !!r.id)
+                  .map((r) => (
+                    <div
+                      key={r.label}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}
+                    >
+                      <span
+                        style={{ fontSize: 12, color: 'var(--text-secondary)', flexShrink: 0 }}
+                      >
+                        {r.label}：
+                      </span>
+                      {r.link ? (
+                        <a
+                          href={r.link}
+                          onClick={(e) => {
+                            e.preventDefault()
+                            navigate(r.link!)
+                          }}
+                          style={{ fontSize: 12, color: 'var(--signal)', cursor: 'pointer' }}
+                        >
+                          {r.display}
+                        </a>
+                      ) : (
+                        <span
+                          style={{
+                            fontSize: 12,
+                            color: 'var(--text-secondary)',
+                            wordBreak: 'break-all',
+                          }}
+                        >
+                          {r.display}
+                        </span>
+                      )}
+                    </div>
                   ))}
-                {!detail.task_id && !detail.node_id && (
+                {!detail.task_id && !detail.node_id && !detail.project_id && (
                   <Text style={{ fontSize: 12, color: 'var(--text-quaternary)' }}>（无）</Text>
                 )}
               </div>
