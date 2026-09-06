@@ -33,6 +33,7 @@ import { useExternalApps } from '@/hooks/useExternalApps'
 import { useOrganizations } from '@/hooks/useOrgs'
 import { useQueryClient } from '@tanstack/react-query'
 import { FloatingOrbs } from '@/components/FloatingOrbs'
+import { AssistantFab } from '@/components/assistant/AssistantFab'
 import { GradientText } from '@/components/GradientText'
 import { ThemeSwitch } from '@/components/ThemeSwitch'
 import { useTheme } from '@/theme/ThemeProvider'
@@ -488,6 +489,8 @@ export function MainLayout() {
             <Outlet />
           </motion.div>
         </Content>
+        {/* AI 助手悬浮入口（Ctrl+K） */}
+        <AssistantFab />
       </Layout>
     </Layout>
   )
