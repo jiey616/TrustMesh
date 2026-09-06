@@ -13,6 +13,9 @@ const { Text } = Typography
 // 岗位总量较大，分批渲染，避免一次性挂载上百张卡片
 const PAGE_SIZE = 48
 
+// 卡片定高：内容区（标题+部门标签+两行描述）高度不一致时，网格会参差不齐
+const CARD_HEIGHT = 148
+
 const DEPT_GRADIENTS = [
   'linear-gradient(135deg,var(--signal),var(--signal))',
   'linear-gradient(135deg,var(--info),var(--cyan))',
@@ -33,10 +36,17 @@ function RoleCard({ role, index }: { role: MarketRoleListItem; index: number }) 
       <Card
         hoverable
         onClick={() => navigate(`/market/roles/${role.id}`)}
-        styles={{ body: { padding: 16 } }}
-        style={{ height: '100%', cursor: 'pointer' }}
+        styles={{
+          body: {
+            padding: 16,
+            height: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+          },
+        }}
+        style={{ height: CARD_HEIGHT, cursor: 'pointer' }}
       >
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 8, minHeight: 50, flexShrink: 0 }}>
           <div
             style={{
               width: 40,
@@ -59,21 +69,35 @@ function RoleCard({ role, index }: { role: MarketRoleListItem; index: number }) 
             <Text strong style={{ fontSize: 15, display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {role.name}
             </Text>
-            <Tag style={{ marginTop: 4, fontSize: 11 }}>{role.dept_name}</Tag>
+            <Tag
+              style={{
+                marginTop: 4,
+                fontSize: 11,
+                maxWidth: '100%',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {role.dept_name}
+            </Tag>
           </div>
         </div>
-        <Text
-          type="secondary"
-          style={{
-            fontSize: 13,
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
-            overflow: 'hidden',
-          }}
-        >
-          {role.description || '暂无描述'}
-        </Text>
+        {/* 描述吃掉剩余空间并裁到两行，卡片总高由 CARD_HEIGHT 锁定 */}
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+          <Text
+            type="secondary"
+            style={{
+              fontSize: 13,
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+            }}
+          >
+            {role.description || '暂无描述'}
+          </Text>
+        </div>
       </Card>
     </motion.div>
   )
