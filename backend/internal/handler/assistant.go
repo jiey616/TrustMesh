@@ -32,7 +32,7 @@ func NewAssistantHandler(
 }
 
 func (h *AssistantHandler) Chat(c *gin.Context) {
-	userID, ok := currentUserID(c)
+	sc, ok := currentScope(c)
 	if !ok {
 		return
 	}
@@ -55,7 +55,7 @@ func (h *AssistantHandler) Chat(c *gin.Context) {
 	w := &ginSSEWriter{c: c}
 
 	// Run agent loop
-	if err := h.llm.RunAgentLoop(c.Request.Context(), messages, h.defs, h.tools, userID, w); err != nil {
+	if err := h.llm.RunAgentLoop(c.Request.Context(), messages, h.defs, h.tools, sc, w); err != nil {
 		h.log.Error("assistant agent loop failed", zap.Error(err))
 		w.WriteEvent("error", map[string]string{"message": err.Error()})
 	}

@@ -53,6 +53,11 @@ type Store struct {
 	userEvents         map[string][]*model.Event
 	agentEvents        map[string][]*model.Event
 	orgEvents          map[string][]*model.Event // 多租户：orgID → 该租户活动流（与 userEvents 共享事件指针）
+
+	// 运维工单（ops_incidents）：与其余资源一致，全内存状态机 + Mongo 持久化镜像
+	opsIncidents   map[string]*model.OpsIncident // 工单 ID → 工单
+	opsByDedupeKey map[string]string             // dedupeKey → 工单 ID（活跃工单去重）
+	opsByTask      map[string][]string           // taskID → 工单 ID 列表
 	processedMessages  map[string]processedMessage
 
 	taskArtifacts map[string][]model.TaskArtifact // taskID → []TaskArtifact
@@ -117,6 +122,7 @@ type Store struct {
 	mongoOrgMemberships *mongo.Collection
 	mongoProjectMembers *mongo.Collection
 	mongoWorkflowTemplates *mongo.Collection
+	mongoOpsIncidents      *mongo.Collection
 	mongoTimeout           time.Duration
 	log                    *zap.Logger
 
@@ -182,6 +188,9 @@ func New() *Store {
 		userEvents:         make(map[string][]*model.Event),
 		agentEvents:        make(map[string][]*model.Event),
 		orgEvents:          make(map[string][]*model.Event),
+		opsIncidents:       make(map[string]*model.OpsIncident),
+		opsByDedupeKey:     make(map[string]string),
+		opsByTask:          make(map[string][]string),
 		processedMessages:  make(map[string]processedMessage),
 		taskArtifacts:      make(map[string][]model.TaskArtifact),
 		taskComments:       make(map[string][]model.Comment),

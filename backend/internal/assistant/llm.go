@@ -6,6 +6,7 @@ import (
 	"io"
 
 	openai "github.com/sashabaranov/go-openai"
+	"trustmesh/backend/internal/store"
 )
 
 const maxToolRounds = 3
@@ -35,7 +36,7 @@ func (c *LLMClient) RunAgentLoop(
 	messages []openai.ChatCompletionMessage,
 	tools []openai.Tool,
 	executor *ToolExecutor,
-	userID string,
+	sc store.Scope,
 	w SSEWriter,
 ) error {
 	for round := 0; round < maxToolRounds; round++ {
@@ -64,7 +65,7 @@ func (c *LLMClient) RunAgentLoop(
 				Args: tc.Function.Arguments,
 			})
 
-			result, execErr := executor.Execute(ctx, userID, tc.Function.Name, tc.Function.Arguments)
+			result, execErr := executor.Execute(ctx, sc, tc.Function.Name, tc.Function.Arguments)
 			if execErr != nil {
 				result = map[string]any{"error": execErr.Error()}
 			}

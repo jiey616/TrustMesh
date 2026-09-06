@@ -66,6 +66,7 @@ func (s *Store) enableMongo(cfg config.Config, log *zap.Logger) error {
 	s.mongoOrganizations = db.Collection("organizations")
 	s.mongoOrgMemberships = db.Collection("org_memberships")
 	s.mongoProjectMembers = db.Collection("project_members")
+	s.mongoOpsIncidents = db.Collection("ops_incidents")
 	s.mongoTimeout = cfg.MongoTimeout
 	if log != nil {
 		s.log = log
@@ -122,6 +123,7 @@ func (s *Store) clearMongoCollections() {
 	s.mongoOrganizations = nil
 	s.mongoOrgMemberships = nil
 	s.mongoProjectMembers = nil
+	s.mongoOpsIncidents = nil
 }
 
 func (s *Store) mongoContext() (context.Context, context.CancelFunc) {
@@ -209,6 +211,18 @@ func (s *Store) ensureMongoIndexes() error {
 		},
 		s.mongoWorkflowTemplates: {
 			{Keys: bson.D{{Key: "user_id", Value: 1}}},
+		},
+		s.mongoOpsIncidents: {
+			// 去重硬保证：同一主体+规则在活跃期只允许一个工单。
+			// 只靠应用层判断会在并发巡检下漏判，必须用唯一索引兜底。
+			// 部分唯一索引：仅活跃工单（active=true）对 dedupe_key 唯一。
+			// 全局唯一会让终态历史工单挡住同类新工单（问题复发开不了单）。
+			{Keys: bson.D{{Key: "dedupe_key", Value: 1}},
+				Options: options.Index().SetUnique(true).
+					SetPartialFilterExpression(bson.M{"active": true})},
+			{Keys: bson.D{{Key: "org_id", Value: 1}, {Key: "status", Value: 1}, {Key: "created_at", Value: -1}}},
+			{Keys: bson.D{{Key: "task_id", Value: 1}, {Key: "status", Value: 1}}},
+			{Keys: bson.D{{Key: "rule_id", Value: 1}, {Key: "status", Value: 1}}},
 		},
 	}
 
@@ -313,6 +327,10 @@ func (s *Store) loadMongoState() error {
 	if err != nil {
 		return err
 	}
+	opsIncidents, opsByDedupeKey, opsByTask, err := s.loadOpsIncidents()
+	if err != nil {
+		return err
+	}
 	usersByMail := make(map[string]string, len(users))
 	for id, user := range users {
 		usersByMail[user.Email] = id
@@ -364,6 +382,9 @@ func (s *Store) loadMongoState() error {
 	s.orgMemberIndex = orgMemberIndex
 	s.userOrgIndex = userOrgIndex
 	s.projectMembers = projectMembers
+	s.opsIncidents = opsIncidents
+	s.opsByDedupeKey = opsByDedupeKey
+	s.opsByTask = opsByTask
 	// 多租户：事件索引按资源归属重建（含存量事件归属校正），幂等。
 	// 必须在 tasks/projects/agents 全部赋值之后执行。
 	s.reindexEventOrgsUnsafe()
@@ -623,6 +644,58 @@ func (s *Store) loadProcessedMessages() (map[string]processedMessage, error) {
 		}
 	}
 	return items, nil
+}
+
+// loadOpsIncidents 载入运维工单并建立三个内存索引。
+// dedupe 索引只收活跃工单（终态历史不参与去重）；
+// task 反查索引收全量（历史工单也要能按任务追溯）。
+// 🔴 load 函数在锁外执行，只允许返回值，不允许直接写 s 字段。
+func (s *Store) loadOpsIncidents() (map[string]*model.OpsIncident, map[string]string, map[string][]string, error) {
+	items := make(map[string]*model.OpsIncident)
+	byDedupe := make(map[string]string)
+	byTask := make(map[string][]string)
+	if s.mongoOpsIncidents == nil {
+		return items, byDedupe, byTask, nil
+	}
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+	cursor, err := s.mongoOpsIncidents.Find(ctx, bson.D{}, options.Find().SetSort(bson.D{{Key: "created_at", Value: 1}}))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var docs []model.OpsIncident
+	if err := cursor.All(ctx, &docs); err != nil {
+		return nil, nil, nil, err
+	}
+	for i := range docs {
+		doc := &docs[i]
+		items[doc.ID] = doc
+		if doc.IsActive() {
+			// 理论上活跃 dedupe_key 唯一（部分唯一索引兜底）；
+			// 若存量数据冲突，保留最新一条，避免启动失败。
+			if prev, ok := byDedupe[doc.DedupeKey]; !ok || items[prev].CreatedAt.Before(doc.CreatedAt) {
+				byDedupe[doc.DedupeKey] = doc.ID
+			}
+		}
+		if doc.TaskID != "" {
+			byTask[doc.TaskID] = append(byTask[doc.TaskID], doc.ID)
+		}
+	}
+	return items, byDedupe, byTask, nil
+}
+
+// persistOpsIncidentUnsafe 持久化单条运维工单（全量替换，含 actions 数组）。
+// 🔴 仅能在持锁的 *Unsafe 路径内调用。
+func (s *Store) persistOpsIncidentUnsafe(inc *model.OpsIncident) error {
+	if !s.mongoEnabled || s.mongoOpsIncidents == nil || inc == nil {
+		return nil
+	}
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+	_, err := s.mongoOpsIncidents.ReplaceOne(ctx, bson.M{"_id": inc.ID}, *inc, options.Replace().SetUpsert(true))
+	return err
 }
 
 func (s *Store) persistUserUnsafe(user *model.User) error {

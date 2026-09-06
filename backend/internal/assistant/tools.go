@@ -196,7 +196,7 @@ func ToolDefinitions(hasKnowledge bool) []openai.Tool {
 }
 
 // Execute runs a tool by name with the given JSON arguments.
-func (e *ToolExecutor) Execute(ctx context.Context, userID, toolName, argsJSON string) (any, error) {
+func (e *ToolExecutor) Execute(ctx context.Context, sc store.Scope, toolName, argsJSON string) (any, error) {
 	var args map[string]any
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return nil, fmt.Errorf("invalid tool args: %w", err)
@@ -204,15 +204,15 @@ func (e *ToolExecutor) Execute(ctx context.Context, userID, toolName, argsJSON s
 
 	switch toolName {
 	case "search_knowledge":
-		return e.searchKnowledge(ctx, userID, args)
+		return e.searchKnowledge(ctx, sc, args)
 	case "search_tasks":
-		return e.searchTasks(userID, args)
+		return e.searchTasks(sc, args)
 	case "get_task_detail":
-		return e.getTaskDetail(userID, args)
+		return e.getTaskDetail(sc, args)
 	case "get_dashboard_stats":
-		return e.getDashboardStats(userID)
+		return e.getDashboardStats(sc)
 	case "list_projects":
-		return e.listProjects(userID)
+		return e.listProjects(sc)
 	case "navigate":
 		return e.navigate(args)
 	default:
@@ -220,7 +220,7 @@ func (e *ToolExecutor) Execute(ctx context.Context, userID, toolName, argsJSON s
 	}
 }
 
-func (e *ToolExecutor) searchKnowledge(ctx context.Context, userID string, args map[string]any) (any, error) {
+func (e *ToolExecutor) searchKnowledge(ctx context.Context, sc store.Scope, args map[string]any) (any, error) {
 	query, _ := args["query"].(string)
 	projectID, _ := args["project_id"].(string)
 	topK := intArg(args, "top_k", 5)
@@ -231,7 +231,8 @@ func (e *ToolExecutor) searchKnowledge(ctx context.Context, userID string, args 
 		if projectID != "" {
 			pid = &projectID
 		}
-		chunks, err := e.store.SearchKnowledgeChunks(ctx, store.Scope{UserID: userID}, pid, query, topK)
+		// 直接透传 sc：无租户头退回 user 维度；带头时由 store 内部做 org 裁决
+		chunks, err := e.store.SearchKnowledgeChunks(ctx, sc, pid, query, topK)
 		if err != nil {
 			return nil, err
 		}
@@ -257,7 +258,9 @@ func (e *ToolExecutor) searchKnowledge(ctx context.Context, userID string, args 
 	}
 
 	mustConds := []knowledge.QdrantCondition{
-		{Key: "user_id", Match: map[string]any{"value": userID}},
+// ⚠️ Qdrant 向量过滤保持 user 维度（宁可漏不可泄）：org 维度检索
+	// 需在 chunk 落库时写入 org_id payload，属二期改造。
+		{Key: "user_id", Match: map[string]any{"value": sc.UserID}},
 	}
 	filter := &knowledge.QdrantFilter{Must: mustConds}
 	if projectID != "" {
@@ -293,14 +296,14 @@ func (e *ToolExecutor) searchKnowledge(ctx context.Context, userID string, args 
 	return map[string]any{"results": results, "count": len(results)}, nil
 }
 
-func (e *ToolExecutor) searchTasks(userID string, args map[string]any) (any, error) {
+func (e *ToolExecutor) searchTasks(sc store.Scope, args map[string]any) (any, error) {
 	query, _ := args["query"].(string)
 	status, _ := args["status"].(string)
 	projectID, _ := args["project_id"].(string)
 
 	// If project_id is specified, search within that project
 	if projectID != "" {
-		tasks, appErr := e.store.ListTasks(store.Scope{UserID: userID}, projectID, status)
+		tasks, appErr := e.store.ListTasks(sc, projectID, status)
 		if appErr != nil {
 			return nil, fmt.Errorf("%s", appErr.Message)
 		}
@@ -309,10 +312,10 @@ func (e *ToolExecutor) searchTasks(userID string, args map[string]any) (any, err
 	}
 
 	// Otherwise search across all projects
-	projects := e.store.ListProjects(store.Scope{UserID: userID})
+	projects := e.store.ListProjects(sc)
 	var allTasks []model.TaskListItem
 	for _, p := range projects {
-		tasks, appErr := e.store.ListTasks(store.Scope{UserID: userID}, p.ID, status)
+		tasks, appErr := e.store.ListTasks(sc, p.ID, status)
 		if appErr != nil {
 			continue
 		}
@@ -324,25 +327,25 @@ func (e *ToolExecutor) searchTasks(userID string, args map[string]any) (any, err
 	return map[string]any{"tasks": allTasks, "count": len(allTasks)}, nil
 }
 
-func (e *ToolExecutor) getTaskDetail(userID string, args map[string]any) (any, error) {
+func (e *ToolExecutor) getTaskDetail(sc store.Scope, args map[string]any) (any, error) {
 	taskID, _ := args["task_id"].(string)
 	if taskID == "" {
 		return nil, fmt.Errorf("task_id is required")
 	}
-	task, appErr := e.store.GetTask(store.Scope{UserID: userID}, taskID)
+	task, appErr := e.store.GetTask(sc, taskID)
 	if appErr != nil {
 		return nil, fmt.Errorf("%s", appErr.Message)
 	}
 	return task, nil
 }
 
-func (e *ToolExecutor) getDashboardStats(userID string) (any, error) {
-	stats := e.store.GetDashboardStats(store.Scope{UserID: userID})
+func (e *ToolExecutor) getDashboardStats(sc store.Scope) (any, error) {
+	stats := e.store.GetDashboardStats(sc)
 	return stats, nil
 }
 
-func (e *ToolExecutor) listProjects(userID string) (any, error) {
-	projects := e.store.ListProjects(store.Scope{UserID: userID})
+func (e *ToolExecutor) listProjects(sc store.Scope) (any, error) {
+	projects := e.store.ListProjects(sc)
 	items := make([]map[string]any, 0, len(projects))
 	for _, p := range projects {
 		items = append(items, map[string]any{

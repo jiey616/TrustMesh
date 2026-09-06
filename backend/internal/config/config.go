@@ -39,6 +39,17 @@ type Config struct {
 	AssistantAPIKey string
 	AssistantModel  string
 
+	// Ops agent (运维智能体)
+	// OpsEnabled 独立于 AssistantAPIKey：未配 LLM 时规则引擎与模板指引仍可工作，
+	// 只是没有归因（attr_source=none），不会静默失效。
+	OpsEnabled         bool
+	OpsScanInterval    time.Duration
+	OpsSilentThreshold time.Duration
+	OpsGuideMaxPerTodo int
+	OpsGuideCooldown   time.Duration
+	OpsResolveObserve  time.Duration
+	OpsModel           string // 归因模型，空则回落 AssistantModel
+
 	// Project files
 	FilesStoragePath string
 
@@ -102,6 +113,16 @@ func Load() Config {
 		AssistantAPIURL: getEnv("ASSISTANT_API_URL", "https://api.openai.com/v1"),
 		AssistantAPIKey: getEnv("ASSISTANT_API_KEY", ""),
 		AssistantModel:  getEnv("ASSISTANT_MODEL", "gpt-4o-mini"),
+
+		// 运维智能体：默认关闭，需显式 OPS_ENABLED=true 才启用巡检。
+		// 归因模型留空则回落 AssistantModel。
+		OpsEnabled:         getEnvBool("OPS_ENABLED", false),
+		OpsScanInterval:    getEnvDuration("OPS_SCAN_INTERVAL", 5*time.Minute),
+		OpsSilentThreshold: getEnvDuration("OPS_SILENT_THRESHOLD", 30*time.Minute),
+		OpsGuideMaxPerTodo: getEnvInt("OPS_GUIDE_MAX_PER_TODO", 3),
+		OpsGuideCooldown:   getEnvDuration("OPS_GUIDE_COOLDOWN", 15*time.Minute),
+		OpsResolveObserve:  getEnvDuration("OPS_RESOLVE_OBSERVE", 10*time.Minute),
+		OpsModel:           getEnv("OPS_MODEL", ""),
 
 		MarketDataPath: getEnv("MARKET_DATA_PATH", "data/roles_index.json"),
 
