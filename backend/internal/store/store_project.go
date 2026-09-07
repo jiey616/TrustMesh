@@ -168,6 +168,11 @@ func (s *Store) UpdateProject(sc Scope, projectID string, in UpdateProjectInput)
 		cloned := make([]model.Workflow, 0, len(in.Workflows))
 		for _, wf := range in.Workflows {
 			if c := wf.Clone(); c != nil {
+				// 输入引用校验：拦截悬空的 source.step（指向不存在的步骤），
+				// 避免派发时上游交付物解析失败（2026-09-07 资产制作事故）。
+				if err := workflowStepsInputErr(c.Name, c.Steps); err != nil {
+					return nil, err
+				}
 				if c.ID == "" {
 					c.ID = "wf_" + newID() // 存量迁移：老工作流没有 ID，保存时补上
 				}

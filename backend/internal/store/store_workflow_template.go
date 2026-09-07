@@ -16,6 +16,9 @@ func (s *Store) CreateWorkflowTemplate(sc Scope, name, description string, steps
 	if name == "" {
 		return nil, transport.Validation("invalid workflow template", map[string]any{"name": "required"})
 	}
+	if err := workflowStepsInputErr(name, steps); err != nil {
+		return nil, err
+	}
 	now := time.Now().UTC()
 	doc := &model.WorkflowTemplate{
 		ID:          "wt_" + newID(),
@@ -109,6 +112,9 @@ func (s *Store) UpdateWorkflowTemplate(sc Scope, templateID string, name, descri
 		t.Description = strings.TrimSpace(*description)
 	}
 	if steps != nil {
+		if err := workflowStepsInputErr(t.Name, steps); err != nil {
+			return nil, err
+		}
 		t.Steps = cloneSteps(steps)
 	}
 	t.Version++
@@ -189,6 +195,9 @@ func (s *Store) InheritWorkflowTemplate(sc Scope, projectID, templateID string) 
 	}
 
 	steps := cloneSteps(t.Steps)
+	if err := workflowStepsInputErr(t.Name, steps); err != nil {
+		return nil, err
+	}
 	wf := model.Workflow{
 		ID:                "wf_" + newID(),
 		ParentTemplateID:  t.ID,
@@ -325,6 +334,9 @@ func (s *Store) ApplyWorkflowSync(sc Scope, projectID, workflowID string, remove
 		result = append(result, *th.Clone())
 	}
 
+	if err := workflowStepsInputErr(wf.Name, result); err != nil {
+		return nil, err
+	}
 	wf.Steps = result
 	wf.TemplateSnapshot = cloneSteps(t.Steps)
 	wf.TemplateVersion = t.Version
