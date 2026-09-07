@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Badge, Button, Tag, Typography, Space, App, Empty, Drawer, Select, Skeleton, Popover } from 'antd'
+import { Badge, Button, Tag, Typography, Space, App, Empty, Drawer, Select, Skeleton, Popover, Modal } from 'antd'
 import {
   CloseOutlined,
   PlusOutlined,
@@ -176,8 +176,16 @@ function DraftTaskWorkspace({
   const [workflowName, setWorkflowName] = useState<string | undefined>(undefined)
   const [toolsOpen, setToolsOpen] = useState(false)
   const [stepRange, setStepRange] = useState<{ from: number; to: number } | null>(null)
+  // 项目总流程未选择时的创建前确认卡
+  const [workflowPromptOpen, setWorkflowPromptOpen] = useState(false)
+  const [pendingSubmitInput, setPendingSubmitInput] = useState<TaskCommentSubmitInput | null>(null)
+  const skipWorkflowPromptRef = useRef(false)
 
   const workflows = project?.workflows ?? []
+  const primaryWorkflow =
+    project && project.primary_workflow_index >= 0 && Array.isArray(project.workflows)
+      ? project.workflows[project.primary_workflow_index]
+      : undefined
   const selectedWorkflow = workflows.find((w) => w.name === workflowName)
   // 选中的工作流是否为项目总流程（决定是否展示"负责步骤段"选择）
   const isPrimaryWorkflow =
@@ -195,32 +203,90 @@ function DraftTaskWorkspace({
     .filter((t) => t.status !== 'canceled')
     .slice(0, 5)
 
-  const handleSubmit = async ({ content: text, mentionAgentIds }: TaskCommentSubmitInput) => {
+  const finishSubmit = async (
+    input: TaskCommentSubmitInput,
+    override?: { workflowName?: string; stepRange?: { from: number; to: number } | null },
+  ) => {
+    const text = input.content
     if (!text.trim()) {
       message.error('请描述任务需求')
       return false
     }
+    const wfName = override?.workflowName !== undefined ? override.workflowName : workflowName
+    const selected = workflows.find((w) => w.name === wfName)
+    const isPrimary =
+      project && project.primary_workflow_index >= 0 && Array.isArray(project.workflows)
+        ? project.workflows[project.primary_workflow_index]?.name === wfName
+        : false
+    const range = override?.stepRange !== undefined ? override.stepRange : stepRange
+    const rv = range ?? { from: 0, to: Math.max(0, (selected?.steps?.length ?? 1) - 1) }
     try {
       const res = await createFromText.mutateAsync({
         projectId,
         content: text.trim(),
-        agent_id: mentionAgentIds[0],
+        agent_id: input.mentionAgentIds[0],
         file_ids: fileIds.length > 0 ? fileIds : undefined,
-        workflow: selectedWorkflow,
-        workflow_index: isPrimaryWorkflow && project ? project.primary_workflow_index : undefined,
-        step_from: isPrimaryWorkflow ? rangeValue.from : undefined,
-        step_to: isPrimaryWorkflow ? rangeValue.to : undefined,
+        workflow: selected,
+        workflow_index: isPrimary && project ? project.primary_workflow_index : undefined,
+        step_from: isPrimary ? rv.from : undefined,
+        step_to: isPrimary ? rv.to : undefined,
       })
       message.success('任务已创建')
       onTaskCreated?.((res.data as { id: string }).id)
       setFileIds([])
       setWorkflowName(undefined)
       setStepRange(null)
+      skipWorkflowPromptRef.current = false
       return true
     } catch (err) {
       message.error(err instanceof Error ? err.message : '创建任务失败')
       return false
     }
+  }
+
+  const handleSubmit = async (input: TaskCommentSubmitInput) => {
+    if (!input.content.trim()) {
+      message.error('请描述任务需求')
+      return false
+    }
+    // 项目配置了总流程但本次未选择工作流时，先弹确认卡（本次会话内选过"不使用"则不再提示）
+    if (!selectedWorkflow && primaryWorkflow && (primaryWorkflow.steps?.length ?? 0) > 0 && !skipWorkflowPromptRef.current) {
+      setPendingSubmitInput(input)
+      setWorkflowPromptOpen(true)
+      return false
+    }
+    return finishSubmit(input)
+  }
+
+  // 确认卡：使用总流程全部步骤
+  const handleUsePrimaryAll = () => {
+    if (!primaryWorkflow) return
+    setWorkflowName(primaryWorkflow.name)
+    setStepRange({ from: 0, to: Math.max(0, (primaryWorkflow.steps?.length ?? 1) - 1) })
+    setWorkflowPromptOpen(false)
+    const input = pendingSubmitInput
+    setPendingSubmitInput(null)
+    if (input) void finishSubmit(input, { workflowName: primaryWorkflow.name, stepRange: { from: 0, to: Math.max(0, (primaryWorkflow.steps?.length ?? 1) - 1) } })
+  }
+
+  // 确认卡：自选步骤段（预选总流程，打开工具面板让用户挑步骤区间）
+  const handleUsePrimaryPickRange = () => {
+    if (!primaryWorkflow) return
+    setWorkflowName(primaryWorkflow.name)
+    setStepRange(null)
+    setWorkflowPromptOpen(false)
+    setPendingSubmitInput(null)
+    setToolsOpen(true)
+    message.info('已在附加选项中预选总流程，请选择「负责总流程步骤」区间后发送')
+  }
+
+  // 确认卡：不使用工作流（本次新任务会话内不再提示）
+  const handleSkipWorkflow = () => {
+    skipWorkflowPromptRef.current = true
+    setWorkflowPromptOpen(false)
+    const input = pendingSubmitInput
+    setPendingSubmitInput(null)
+    if (input) void finishSubmit(input)
   }
 
   const toolsContent = (
@@ -443,6 +509,32 @@ function DraftTaskWorkspace({
           </div>
         )}
       </div>
+
+      {/* 项目总流程确认卡：未选择工作流时创建任务前提示 */}
+      <Modal
+        title="是否使用项目总流程？"
+        open={workflowPromptOpen}
+        onCancel={() => {
+          setWorkflowPromptOpen(false)
+          setPendingSubmitInput(null)
+        }}
+        footer={null}
+        width={460}
+        destroyOnClose
+      >
+        <Text style={{ color: 'var(--text-secondary)', fontSize: 14 }}>
+          项目已配置总流程{primaryWorkflow ? `《${primaryWorkflow.name}》` : ''}（{primaryWorkflow?.steps?.length ?? 0} 步），本次任务未选择工作流：
+        </Text>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
+          <Button type="primary" onClick={handleUsePrimaryAll}>
+            使用全部步骤
+          </Button>
+          <Button onClick={handleUsePrimaryPickRange}>自选步骤段</Button>
+          <Button type="text" onClick={handleSkipWorkflow}>
+            不使用，PM 自由规划
+          </Button>
+        </div>
+      </Modal>
     </div>
   )
 }
