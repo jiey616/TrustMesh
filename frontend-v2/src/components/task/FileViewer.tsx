@@ -95,15 +95,15 @@ export function FileViewer({ open, onOpenChange, blob, fileName, onDownload }: F
     <Modal
       open={open}
       onCancel={() => onOpenChange(false)}
-      width="80vw"
-      style={{ top: 24 }}
+      width="100vw"
+      style={{ top: 0, paddingBottom: 0, maxWidth: '100vw' }}
       footer={
         onDownload ? (
           <Button icon={<DownloadOutlined />} onClick={onDownload}>下载</Button>
         ) : null
       }
       title={<span style={{ color: 'var(--text-primary)' }}>{fileName}</span>}
-      styles={{ body: { maxHeight: '70vh', overflow: 'auto' } }}
+      styles={{ body: { height: 'calc(100vh - 110px)', overflow: 'auto', maxHeight: 'none' } }}
     >
       {loading ? (
         <div style={{ textAlign: 'center', padding: 48 }}>

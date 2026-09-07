@@ -47,7 +47,7 @@ export function OpenFileViewer({ blob, fileName }: OpenFileViewerProps) {
       fileName={fileName}
       mimeType={blob.type || undefined}
       width="100%"
-      height="62vh"
+      height="100%"
       fit="contain"
       toolbar
       theme={theme === 'dark' ? 'dark' : 'light'}
