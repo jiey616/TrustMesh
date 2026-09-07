@@ -38,7 +38,7 @@ export function RecentTasksList({ tasks, loading }: Props) {
         return (
           <Link
             key={task.id}
-            to={`/projects/${task.project_id}`}
+            to={`/projects/${task.project_id}?task=${task.id}`}
             style={{
               display: 'flex',
               alignItems: 'flex-start',

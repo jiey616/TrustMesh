@@ -73,11 +73,9 @@ export function EventTimeline({ events, loading, showActorName = true, emptyText
         const fromStatus = ev.metadata?.from_status as string | undefined
         const toStatus = ev.metadata?.to_status as string | undefined
 
-        return {
-          dot: <span style={{ color: cfg.color, fontSize: 16 }}>{cfg.icon}</span>,
-          color: cfg.color,
-          children: (
-            <div>
+        // 整行可点：有项目归属时直达该项目；有任务归属时用 ?task= 打开任务工作台
+        const body = (
+          <div>
               <Space size={6} wrap>
                 <Text style={{ color: 'var(--text-primary)', fontSize: 13 }}>{cfg.label}</Text>
                 {showActorName && ev.actor_name && (
@@ -103,9 +101,7 @@ export function EventTimeline({ events, loading, showActorName = true, emptyText
                 <div style={{ marginTop: 4, fontSize: 12 }}>
                   <PaperClipOutlined style={{ color: 'var(--text-quaternary)', marginRight: 4 }} />
                   {ev.project_id ? (
-                    <Link to={`/projects/${ev.project_id}`} style={{ color: 'var(--cyan)' }}>
-                      {taskTitle}
-                    </Link>
+                    <span style={{ color: 'var(--cyan)' }}>{taskTitle}</span>
                   ) : (
                     <span style={{ color: 'var(--text-secondary)' }}>{taskTitle}</span>
                   )}
@@ -117,7 +113,20 @@ export function EventTimeline({ events, loading, showActorName = true, emptyText
                   )}
                 </div>
               )}
-            </div>
+          </div>
+        )
+        return {
+          dot: <span style={{ color: cfg.color, fontSize: 16 }}>{cfg.icon}</span>,
+          color: cfg.color,
+          children: ev.project_id ? (
+            <Link
+              to={`/projects/${ev.project_id}${ev.task_id ? `?task=${ev.task_id}` : ''}`}
+              style={{ display: 'block', textDecoration: 'none', color: 'inherit' }}
+            >
+              {body}
+            </Link>
+          ) : (
+            body
           ),
         }
       })}
