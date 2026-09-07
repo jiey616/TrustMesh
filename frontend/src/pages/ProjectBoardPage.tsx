@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { MessageSquarePlus, MoreHorizontal, Pencil, Archive, Loader2, FolderOpen, Video, ListChecks, Workflow as WorkflowIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
@@ -35,6 +35,9 @@ type ProjectTab = 'tasks' | 'files' | 'meetings' | 'todos' | 'workflows'
 export function ProjectBoardPage() {
   const navigate = useNavigate()
   const { projectId } = useParams<{ projectId: string }>()
+  // ?task=<id> 直达某个任务（仪表盘/最近活动跳转过来）
+  const [searchParams, setSearchParams] = useSearchParams()
+  const urlTaskId = searchParams.get('task')
   const { data: project } = useProject(projectId)
   const { data: tasks, isLoading } = useTasks(projectId)
   const [workspace, setWorkspace] = useState<WorkspaceState>(null)
@@ -69,6 +72,22 @@ export function ProjectBoardPage() {
   }
 
   const activeSelectedTaskId = taskSelectionState.autoSelectedTaskId ?? (workspace?.kind === 'task' ? workspace.taskId : null)
+
+  // ?task= 深链：进入页面/页内导航到带 ?task= 的地址时打开对应任务工作台，
+  // 随后清掉参数（刷新回到默认视图）。显式打开优先于任务列表的自动选中。
+  useEffect(() => {
+    if (!urlTaskId) return
+    setTaskSelectionState((prev) =>
+      prev.autoSelectedTaskId ? { ...prev, autoSelectedTaskId: null } : prev,
+    )
+    setWorkspace({ kind: 'task', taskId: urlTaskId })
+    if (activeTab !== 'tasks') setActiveTab('tasks')
+    const next = new URLSearchParams(searchParams)
+    next.delete('task')
+    setSearchParams(next, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlTaskId])
+
   const hasWorkspace = !!workspace || !!taskSelectionState.autoSelectedTaskId
 
   useEffect(() => {

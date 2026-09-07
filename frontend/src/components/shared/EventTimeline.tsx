@@ -150,8 +150,10 @@ function EventDetail({ event }: { event: Event }) {
 }
 
 function buildEventLink(event: Event): string | null {
-  if (event.project_id && event.task_id) {
-    return `/projects/${event.project_id}`
+  if (event.project_id) {
+    return event.task_id
+      ? `/projects/${event.project_id}?task=${event.task_id}`
+      : `/projects/${event.project_id}`
   }
   return null
 }

@@ -23,7 +23,7 @@ export function RecentTasksList({ tasks, loading }: RecentTasksListProps) {
       {tasks.map((task) => (
         <Link
           key={task.id}
-          to={`/projects/${task.project_id}`}
+          to={`/projects/${task.project_id}?task=${task.id}`}
           className="flex items-start gap-3 rounded-lg p-2 hover:bg-accent/50 transition-colors"
         >
           <TaskStatusBadge status={task.status} />
