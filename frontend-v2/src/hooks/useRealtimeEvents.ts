@@ -144,6 +144,11 @@ export function useRealtimeEvents() {
             }
           }
         }
+        // 服务端「干净关闭」（如 30 分钟 sseMaxDuration 到期后正常结束流）会走到
+        // 这里 —— done=true 退出循环，不抛错、不进 catch。此前没有重连，
+        // SSE 静默死亡，之后所有事件（todo_completed 等）都收不到，
+        // 表现为「办公室/任务状态不实时更新，只有刷新页面才能更新」。
+        if (!disposed) scheduleReconnect()
       } catch {
         if (disposed) return
         scheduleReconnect()
