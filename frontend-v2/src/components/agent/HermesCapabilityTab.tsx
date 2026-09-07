@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Modal, Button, Card, Tag, Input, App, Empty, Spin, Upload } from 'antd'
+import { Modal, Button, Card, Tag, Input, AutoComplete, Space, App, Empty, Spin, Upload } from 'antd'
 import type { UploadFile } from 'antd'
 import {
   PlusOutlined,
@@ -13,6 +13,7 @@ import {
   RedoOutlined,
   DeleteOutlined,
   WarningOutlined,
+  UnorderedListOutlined,
   WifiOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
@@ -22,6 +23,7 @@ import {
   useUploadSkillFile,
   useCronExecutions,
 } from '@/hooks/useAgents'
+import { fetchLLMModels, testLLMConfig } from '@/api/llmConfig'
 import type { CapabilityExecution, CapabilityJob, SetCapabilityResult } from '@/types'
 
 interface Props {
@@ -192,13 +194,83 @@ function HermesSkillsTab({ agentId }: Props) {
 
 /* ---------------- 模型 Tab ---------------- */
 
+function guessProviderName(url: string): string {
+  try {
+    const host = new URL(url).hostname.replace(/^api\./, '')
+    const base = host.split('.')[0]
+    return base || ''
+  } catch {
+    return ''
+  }
+}
+
 function ModelAddModal({ agentId, open, onClose }: { agentId: string; open: boolean; onClose: () => void }) {
   const { message } = App.useApp()
-  const [provider, setProvider] = useState('openai')
-  const [model, setModel] = useState('')
+  const [provider, setProvider] = useState('')
+  const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
+  const [model, setModel] = useState('')
+  const [modelOptions, setModelOptions] = useState<{ value: string }[]>([])
+  const [fetchingModels, setFetchingModels] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null)
+  const [providerTouched, setProviderTouched] = useState(false)
   const setCapabilities = useSetAgentCapabilities(agentId)
   const busy = setCapabilities.isPending
+
+  const handleBaseUrlChange = (v: string) => {
+    setBaseUrl(v)
+    setTestResult(null)
+    if (!providerTouched) {
+      const guessed = guessProviderName(v.trim())
+      if (guessed) setProvider(guessed)
+    }
+  }
+
+  const fetchModels = async () => {
+    setFetchingModels(true)
+    try {
+      const res = await fetchLLMModels({
+        scope: 'personal',
+        api_url: baseUrl.trim() || undefined,
+        api_key: apiKey.trim() || undefined,
+      })
+      const r = res.data?.models
+      if (r?.ok && r.items?.length) {
+        setModelOptions(r.items.map((m) => ({ value: m })))
+        message.success(`拉取到 ${r.items.length} 个模型`)
+      } else {
+        message.error(r?.error || '未获取到模型列表，请检查 API 地址是否含 /v1')
+      }
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '拉取模型列表失败')
+    } finally {
+      setFetchingModels(false)
+    }
+  }
+
+  const runTest = async () => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const res = await testLLMConfig({
+        scope: 'personal',
+        api_url: baseUrl.trim() || undefined,
+        api_key: apiKey.trim() || undefined,
+        model: model.trim() || undefined,
+      })
+      const t = res.data?.test
+      if (t?.ok) {
+        setTestResult({ ok: true, text: `连接成功（${t.model ?? model}，${t.latency_ms ?? '?'}ms）` })
+      } else {
+        setTestResult({ ok: false, text: t?.error || '连接失败' })
+      }
+    } catch (err) {
+      setTestResult({ ok: false, text: err instanceof Error ? err.message : '测试请求失败' })
+    } finally {
+      setTesting(false)
+    }
+  }
 
   const submit = async () => {
     if (!provider.trim() || !model.trim()) {
@@ -212,7 +284,9 @@ function ModelAddModal({ agentId, open, onClose }: { agentId: string; open: bool
         model: provider.trim(),
         provider: {
           name: provider.trim(),
+          base_url: baseUrl.trim() || undefined,
           model: model.trim(),
+          default_model: model.trim(),
           api_key: apiKey.trim() || undefined,
         },
       })
@@ -222,6 +296,7 @@ function ModelAddModal({ agentId, open, onClose }: { agentId: string; open: bool
       else message.error(r.text)
       setModel('')
       setApiKey('')
+      setTestResult(null)
       onClose()
     } catch (err) {
       message.error(err instanceof Error ? err.message : '添加模型失败')
@@ -238,20 +313,78 @@ function ModelAddModal({ agentId, open, onClose }: { agentId: string; open: bool
       okText="添加"
       cancelText="取消"
       destroyOnClose
+      width={520}
     >
-      <div className="flex flex-col gap-4 mt-4">
+      <div className="flex flex-col gap-3 mt-4">
         <div className="flex flex-col gap-1.5">
-          <span className="text-sm text-white/70">Provider</span>
-          <Input placeholder="如 openai" value={provider} onChange={(e) => setProvider(e.target.value)} />
+          <span className="text-sm text-white/70">API 地址（OpenAI 兼容，含 /v1）</span>
+          <Input
+            placeholder="https://api.deepseek.com/v1"
+            value={baseUrl}
+            onChange={(e) => handleBaseUrlChange(e.target.value)}
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <span className="text-sm text-white/70">API Key</span>
+          <Input.Password
+            placeholder="••••••••（留空则用你在个人/平台 LLM 配置里的 key）"
+            value={apiKey}
+            autoComplete="new-password"
+            onChange={(e) => {
+              setApiKey(e.target.value)
+              setTestResult(null)
+            }}
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <span className="text-sm text-white/70">Provider 名称（按 API 地址自动推断，可改）</span>
+          <Input
+            placeholder="如 deepseek / openai"
+            value={provider}
+            onChange={(e) => {
+              setProvider(e.target.value)
+              setProviderTouched(true)
+            }}
+          />
         </div>
         <div className="flex flex-col gap-1.5">
           <span className="text-sm text-white/70">模型名</span>
-          <Input placeholder="如 gpt-4o" value={model} onChange={(e) => setModel(e.target.value)} />
+          <Space.Compact style={{ width: '100%' }}>
+            <AutoComplete
+              options={modelOptions}
+              value={model}
+              onChange={(v) => {
+                setModel(v)
+                setTestResult(null)
+              }}
+              placeholder="手输或点右侧拉取列表选择"
+              filterOption={(input, option) =>
+                (option?.value ?? '').toLowerCase().includes(input.toLowerCase())
+              }
+              style={{ width: '100%' }}
+            />
+            <Button icon={<UnorderedListOutlined />} loading={fetchingModels} onClick={() => void fetchModels()}>
+              获取模型列表
+            </Button>
+          </Space.Compact>
         </div>
-        <div className="flex flex-col gap-1.5">
-          <span className="text-sm text-white/70">API Key（选填）</span>
-          <Input.Password placeholder="••••••••" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+        <div>
+          <Button size="small" icon={<ExperimentOutlined />} loading={testing} onClick={() => void runTest()}>
+            测试连接
+          </Button>
+          {testResult && (
+            <span
+              className="ml-2 text-xs"
+              style={{ color: testResult.ok ? 'var(--success)' : 'var(--error)' }}
+            >
+              {testResult.ok ? '✓ ' : '✗ '}
+              {testResult.text}
+            </span>
+          )}
         </div>
+        <p className="text-xs text-white/40">
+          提示：API 地址/Key 留空时，「拉取列表/测试」会用你在 个人空间/平台 LLM 配置 里保存的生效配置。
+        </p>
       </div>
     </Modal>
   )

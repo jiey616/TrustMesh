@@ -224,6 +224,7 @@ type capabilityResponse struct {
 // 注：hermes 适配器要求 model add 必须带 name（provider 标识）。
 type ProviderConfig struct {
 	Name         string `json:"name,omitempty"`
+	BaseURL      string `json:"base_url,omitempty"` // OpenAI 兼容 API 地址（如 https://api.deepseek.com/v1）
 	APIMode      string `json:"api_mode,omitempty"`
 	Transport    string `json:"transport,omitempty"`
 	Model        string `json:"model,omitempty"`

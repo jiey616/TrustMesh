@@ -381,6 +381,8 @@ export interface UpdateAgentRequest {
 
 export interface ProviderConfig {
   name?: string
+  /** OpenAI 兼容 API 地址（如 https://api.deepseek.com/v1），透传节点 custom_providers */
+  base_url?: string
   api_mode?: string
   transport?: string
   model?: string
