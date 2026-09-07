@@ -94,8 +94,10 @@ function AssistantPanel() {
         display: 'flex',
         flexDirection: 'column',
         borderRadius: 16,
-        border: '1px solid var(--line)',
-        background: 'var(--surface)',
+        border: '1px solid var(--line-strong, var(--line))',
+        // 悬浮层必须用不透明底：--surface 是 rgba(255,255,255,0.04) 的玻璃值，
+        // fixed 定位下页面内容会穿透。canvas-elevated 三主题均不透明。
+        background: 'var(--canvas-elevated)',
         boxShadow: '0 24px 64px rgba(0, 0, 0, 0.5)',
         overflow: 'hidden',
       }}
