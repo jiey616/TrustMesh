@@ -24,6 +24,12 @@ type Store struct {
 	// duplicate executions). Unlike dispatchHook it only nudges the agent.
 	remindHook func(ctx context.Context, taskID, todoID string)
 
+	// cancelNotifyHook is set by the app layer to notify assignee nodes that
+	// a task's todos were canceled while possibly in flight (adapter lifecycle
+	// cancel chain: node stops the active run). Invoked OUTSIDE the store lock
+	// with a plain snapshot of the canceled todos.
+	cancelNotifyHook func(taskID string, taskVersion int, notices []model.TodoCancelNotice)
+
 	streamMu sync.RWMutex
 
 	users       map[string]*model.User
@@ -173,6 +179,13 @@ func (s *Store) SetDispatchHook(hook func(ctx context.Context, taskID, todoID st
 // hook runs outside the store lock.
 func (s *Store) SetRemindHook(hook func(ctx context.Context, taskID, todoID string)) {
 	s.remindHook = hook
+}
+
+// SetCancelNotifyHook registers a callback used to notify assignee nodes about
+// canceled todos so their in-flight runs can be stopped. The hook runs outside
+// the store lock.
+func (s *Store) SetCancelNotifyHook(hook func(taskID string, taskVersion int, notices []model.TodoCancelNotice)) {
+	s.cancelNotifyHook = hook
 }
 
 // SetPlanningStallHook registers a callback used to nudge the PM when a task

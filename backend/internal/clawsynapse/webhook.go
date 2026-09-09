@@ -2417,6 +2417,31 @@ func (h *WebhookHandler) publish(ctx context.Context, targetNode, msgType string
 	}
 }
 
+// NotifyTaskCanceled publishes todo.status_changed(canceled) notices to the
+// assignee nodes of todos that were canceled while possibly in flight. The
+// node's handleTaskControl reacts by stopping the active run for the task via
+// the gateway /stop endpoint (adapter lifecycle cancel chain, spec §6). The
+// node replies with a silent ACK; late reports from the stopped run are
+// rejected by the regular TODO_CANCELED guards — no special suppression here.
+func (h *WebhookHandler) NotifyTaskCanceled(taskID string, taskVersion int, notices []model.TodoCancelNotice) {
+	for _, n := range notices {
+		if strings.TrimSpace(n.NodeID) == "" {
+			continue
+		}
+		h.publish(context.Background(), n.NodeID, "todo.status_changed", protocol.TodoStatusChangedPayload{
+			TaskID:  taskID,
+			TodoID:  n.TodoID,
+			Status:  "canceled",
+			Cause:   "user_cancel",
+			Reason:  n.Reason,
+			Version: taskVersion,
+		}, taskID)
+		if h.log != nil {
+			h.log.Info("cancel notice published", zap.String("task_id", taskID), zap.String("todo_id", n.TodoID), zap.String("node_id", n.NodeID))
+		}
+	}
+}
+
 func defaultExecBrief() *protocol.TodoExecBrief {
 	return &protocol.TodoExecBrief{
 		Objective:    "执行分派的 Todo 任务；及时回报进度；完成后提交结果，失败时说明原因。",

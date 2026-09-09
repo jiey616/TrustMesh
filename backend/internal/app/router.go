@@ -49,7 +49,7 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 		go s.StartOpsScanner(context.Background())
 	}
 	jwtManager := auth.NewJWTManager(cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
-	clawClient := clawsynapse.NewClient(cfg.ClawSynapseAPIURL, cfg.ClawSynapseTimeout)
+	clawClient := clawsynapse.NewClient(cfg.ClawSynapseAPIURL, cfg.ClawSynapseTimeout, cfg.ClawSynapseAPIToken)
 	webhookHandler := clawsynapse.NewWebhookHandler(s, clawClient, log)
 	// Timeout retries must actually re-dispatch the todo to its assignee.
 	s.SetDispatchHook(webhookHandler.RedispatchTodo)
@@ -63,6 +63,9 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	// Planning-stall nudges wake the PM via task.message when a task has been
 	// stuck in planning without a finalized plan.
 	s.SetPlanningStallHook(webhookHandler.NudgePlanningPM)
+	// Adapter lifecycle cancel chain: after CancelTask, notify each canceled
+	// todo's assignee node so it stops the in-flight run (spec §6).
+	s.SetCancelNotifyHook(webhookHandler.NotifyTaskCanceled)
 	// 统一干预编排器：运维修复指引的唯一下发出口（C.2）。
 	s.SetOpsPublishHook(webhookHandler.PublishOpsMention)
 	// LLM 配置（A1+B2+C1）：env 兜底注入 + 平台/租户两级 UI 配置，热生效。

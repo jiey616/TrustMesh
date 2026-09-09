@@ -23,6 +23,10 @@ type Config struct {
 	MongoTimeout        time.Duration
 	ClawSynapseAPIURL   string
 	ClawSynapseTimeout  time.Duration
+	// ClawSynapseAPIToken 是节点本地 API 的 Bearer token（clawsynapse
+	// v1.0.36+ 启用 requireBearer：首启生成 /var/lib/clawsynapse/api_token
+	// 并持久复用）。为空时不发送鉴权头（兼容旧版节点）。
+	ClawSynapseAPIToken string
 	ClawSynapsePeerSync time.Duration
 
 	// Knowledge base
@@ -92,6 +96,7 @@ func Load() Config {
 		MongoTimeout:        getEnvDuration("MONGO_TIMEOUT", 5*time.Second),
 		ClawSynapseAPIURL:   getEnv("CLAWSYNAPSE_API_URL", "http://127.0.0.1:18080"),
 		ClawSynapseTimeout:  getEnvDuration("CLAWSYNAPSE_TIMEOUT", 3*time.Second),
+		ClawSynapseAPIToken: getEnv("CLAWSYNAPSE_API_TOKEN", ""),
 		ClawSynapsePeerSync: getEnvDuration("CLAWSYNAPSE_PEER_SYNC_INTERVAL", 10*time.Second),
 
 		EmbeddingProvider:  getEnv("EMBEDDING_PROVIDER", "openai"),

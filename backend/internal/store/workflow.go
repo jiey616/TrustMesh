@@ -1244,20 +1244,23 @@ func (s *Store) CancelTask(sc Scope, in TaskCancelInput) (*model.TaskDetail, *tr
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	task, ok := s.tasks[in.TaskID]
 	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
+		s.mu.Unlock()
 		return nil, transport.NotFound("task not found")
 	}
 	if appErr := s.ensureTaskProjectActiveUnsafe(task); appErr != nil {
+		s.mu.Unlock()
 		return nil, appErr
 	}
 
 	switch task.Status {
 	case "canceled":
+		s.mu.Unlock()
 		return nil, transport.Conflict("TASK_ALREADY_CANCELED", "task already canceled")
 	case "done", "failed":
+		s.mu.Unlock()
 		return nil, transport.Conflict("TASK_ALREADY_TERMINAL", "task already finalized")
 	}
 
@@ -1267,18 +1270,31 @@ func (s *Store) CancelTask(sc Scope, in TaskCancelInput) (*model.TaskDetail, *tr
 		userName = u.Name
 	}
 
-	affectedAgents := s.cancelTaskUnsafe(task, "user", sc.UserID, userName, in.Reason, now)
+	affectedAgents, cancelNotices := s.cancelTaskUnsafe(task, "user", sc.UserID, userName, in.Reason, now)
+	taskVersion := task.Version
 	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
+		s.mu.Unlock()
 		return nil, mongoWriteError(err)
 	}
 	for agentID := range affectedAgents {
 		s.refreshAgentExecutionStatusUnsafe(agentID, now)
 		if err := s.persistAgentGraphUnsafe(agentID); err != nil {
+			s.mu.Unlock()
 			return nil, mongoWriteError(err)
 		}
 	}
 	s.publishTaskUnsafe(task.ID)
-	return s.copyTaskWithArtifactsUnsafe(task), nil
+	result := s.copyTaskWithArtifactsUnsafe(task)
+	s.mu.Unlock()
+
+	// 通知执行节点在锁外进行（hook 可能走 NATS 网络写，且节点回执链路会回读
+	// 平台；持锁调用会拖慢全部 store 操作）。见 dev-spec-adapter-lifecycle §6：
+	// 节点 handleTaskControl 收到 todo.status_changed(canceled) 后调 gateway
+	// /stop 停掉在途 run；迟到的上报由常规守卫按 TODO_CANCELED 拒收。
+	if s.cancelNotifyHook != nil && len(cancelNotices) > 0 {
+		s.cancelNotifyHook(task.ID, taskVersion, cancelNotices)
+	}
+	return result, nil
 }
 
 func (s *Store) AddTaskComment(sc Scope, taskID string, in TaskCommentInput) (*model.Comment, *transport.AppError) {
@@ -1615,8 +1631,9 @@ func ensureTodoAcceptingUpdates(todo *model.Todo) *transport.AppError {
 	return nil
 }
 
-func (s *Store) cancelTaskUnsafe(task *model.TaskDetail, actorType, actorID, actorName, reason string, now time.Time) map[string]struct{} {
+func (s *Store) cancelTaskUnsafe(task *model.TaskDetail, actorType, actorID, actorName, reason string, now time.Time) (map[string]struct{}, []model.TodoCancelNotice) {
 	affectedAgents := make(map[string]struct{})
+	var cancelNotices []model.TodoCancelNotice
 	prev := task.Status
 	reasonPtr := (*string)(nil)
 	if reason != "" {
@@ -1630,6 +1647,13 @@ func (s *Store) cancelTaskUnsafe(task *model.TaskDetail, actorType, actorID, act
 			s.cancelTodoUnsafe(todo, reason, now)
 			if todo.Assignee.AgentID != "" {
 				affectedAgents[todo.Assignee.AgentID] = struct{}{}
+			}
+			if todo.Assignee.NodeID != "" {
+				cancelNotices = append(cancelNotices, model.TodoCancelNotice{
+					TodoID: todo.ID,
+					NodeID: todo.Assignee.NodeID,
+					Reason: reason,
+				})
 			}
 		}
 	}
@@ -1656,7 +1680,7 @@ func (s *Store) cancelTaskUnsafe(task *model.TaskDetail, actorType, actorID, act
 		"reason":     reason,
 		"task_title": task.Title,
 	}, now)
-	return affectedAgents
+	return affectedAgents, cancelNotices
 }
 
 func (s *Store) cancelTodoUnsafe(todo *model.Todo, reason string, now time.Time) {

@@ -37,6 +37,15 @@ type TodoAssignee struct {
 	NodeID  string `json:"node_id" bson:"node_id"`
 }
 
+// TodoCancelNotice 描述一个被取消且可能在执行节点上仍有在途执行的 todo。
+// 应用层把这些通知转发给执行节点（adapter lifecycle 取消链路），节点据此
+// 调 gateway /stop 停掉在途 run。
+type TodoCancelNotice struct {
+	TodoID string `json:"todo_id"`
+	NodeID string `json:"node_id"`
+	Reason string `json:"reason"`
+}
+
 type TodoResult struct {
 	Summary  string         `json:"summary" bson:"summary"`
 	Output   string         `json:"output" bson:"output"`

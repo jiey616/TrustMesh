@@ -33,7 +33,10 @@ services:
       # 运维智能体巡检（默认开，可用 .env 覆盖关闭）
       OPS_ENABLED: ${OPS_ENABLED:-true}
       OPS_SCAN_INTERVAL: ${OPS_SCAN_INTERVAL:-5m}
-      CLAWSYNAPSE_API_URL: ${CLAWSYNAPSE_API_URL:-http://clawsynapse:18080}
+      CLAWSYNAPSE_API_URL: ${CLAWSYNAPSE_API_URL:-http://trustmesh-clawsynapse:18080}
+      # 节点本地 API Bearer token（clawsynapse v1.0.36+ requireBearer）。
+      # 取自转发节点 DataDir 的 api_token 文件，配置在仓库根 .env。
+      CLAWSYNAPSE_API_TOKEN: ${CLAWSYNAPSE_API_TOKEN:-}
       CLAWSYNAPSE_TIMEOUT: ${CLAWSYNAPSE_TIMEOUT:-3s}
       CLAWSYNAPSE_PEER_SYNC_INTERVAL: ${CLAWSYNAPSE_PEER_SYNC_INTERVAL:-10s}
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-openai}
@@ -72,9 +75,10 @@ services:
   clawsynapse:
     image: clawsynapse:local-rt4
     container_name: trustmesh-clawsynapse
-    # 指定 container_name 后，compose 不再把 service 名注册成 DNS 别名，
-    # 而 backend 的 CLAWSYNAPSE_API_URL 用的正是 service 名
-    # http://clawsynapse:18080 —— 缺这个别名会让 peer sync 每 10s 失败一次。
+    # 指定 container_name 后，compose 不再把 service 名注册成 DNS 别名。
+    # 2026-09-09 起 CLAWSYNAPSE_API_URL 默认直接引用 container_name
+    # （同网络下 Docker DNS 恒注册 container_name，不依赖别名）——
+    # 节点容器脱离本 compose 重建（如升级 v1.0.36）时不再丢别名断连。
     networks:
       default:
         aliases:

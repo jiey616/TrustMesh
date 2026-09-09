@@ -15,11 +15,34 @@ import (
 )
 
 type Client struct {
-	baseURL    string
-	httpClient *http.Client
+	baseURL string
+	// apiToken 是节点本地 API 的 Bearer token（clawsynapse v1.0.36+ 的
+	// requireBearer 中间件）。经 bearerTransport 统一注入，空串表示不鉴权
+	// （兼容未启用 token 的旧版节点）。
+	apiToken    string
+	httpClient  *http.Client
 	// writeClient 用于写回类请求：skill/model 写回会重启目标 gateway（契约语义），
 	// 超过默认的 3s 全局超时，需独立的长超时客户端。
 	writeClient *http.Client
+}
+
+// bearerTransport 为所有出站请求注入 Authorization: Bearer <token>（若调用方
+// 未显式设置该头）。节点侧 openPaths（/v1/health、/v1/auth/challenge）会忽略
+// 多余的头，无需按路径区分。
+type bearerTransport struct {
+	token string
+	base  http.RoundTripper
+}
+
+func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.token != "" && req.Header.Get("Authorization") == "" {
+		req.Header.Set("Authorization", "Bearer "+t.token)
+	}
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return base.RoundTrip(req)
 }
 
 type PublishResult struct {
@@ -264,7 +287,7 @@ type setCapabilityResponse struct {
 	TS      int64               `json:"ts"`
 }
 
-func NewClient(baseURL string, timeout time.Duration) *Client {
+func NewClient(baseURL string, timeout time.Duration, apiToken ...string) *Client {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
 		return nil
@@ -277,10 +300,16 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 		// skill/model 写回需重启 gateway（数秒窗口），默认 3s 不够
 		writeTimeout = 30 * time.Second
 	}
+	token := ""
+	if len(apiToken) > 0 {
+		token = strings.TrimSpace(apiToken[0])
+	}
+	tr := &bearerTransport{token: token}
 	return &Client{
 		baseURL:     baseURL,
-		httpClient:  &http.Client{Timeout: timeout},
-		writeClient: &http.Client{Timeout: writeTimeout},
+		apiToken:    token,
+		httpClient:  &http.Client{Timeout: timeout, Transport: tr},
+		writeClient: &http.Client{Timeout: writeTimeout, Transport: tr},
 	}
 }
 
