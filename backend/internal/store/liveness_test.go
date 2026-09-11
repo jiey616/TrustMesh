@@ -22,6 +22,17 @@ func TestIsErrorCommentClassification(t *testing.T) {
 		{"额度耗尽", "Billing or credits exhausted", true},
 		{"超时", "context deadline exceeded", true},
 		{"连接被拒", "dial tcp 10.0.0.1:443: connect: connection refused", true},
+		// ── T0.0 补齐：此前 17 个错误模式仅覆盖约 1/3，以下为生产真实串 ──
+		{"故障上报简写", "⚠️【故障上报】adapter 挂了", true},
+		{"adapter 错误", "adapter error: stream closed", true},
+		{"预扣额度失败", "pre-consumed quota failed", true},
+		{"上下文超长", "Context length exceeded: 200000 tokens", true},
+		{"运行被中断", "Operation interrupted", true},
+		{"运行被中断带前缀", "⚠️【执行侧故障上报】Operation interrupted", true},
+		{"401 未授权", "401 Unauthorized", true},
+		{"上下文被模型服务拒绝", "context 被模型服务拒绝", true},
+		{"任务上下文被拒绝", "任务上下文被模型服务拒绝", true},
+		{"网关预算截断", "Turn ended with pending tool result for tc_1. budget=60/60", true},
 		{"进展汇报", "已完成第 3 组打组，正在处理第 4 组", false},
 		{"普通进度", "进度：50%，预计还需 10 分钟", false},
 		{"空评论", "", false},
@@ -225,5 +236,74 @@ func TestHardDeadlineForThresholds(t *testing.T) {
 	t.Setenv("TODO_HARD_DEADLINE_HEAVY", "12h")
 	if got := hardDeadlineFor(heavy); got != 12*time.Hour {
 		t.Fatalf("heavy override = %v, want 12h", got)
+	}
+}
+
+// ────────────────────────────── T0.0 补覆盖 ──────────────────────────────
+//
+// 注：IsBudgetExhaustedComment 的分类测试已存在于
+// reopen_orphan_test.go:342（TestIsBudgetExhaustedCommentClassification），
+// 此处不重复。本文件只补两件此前缺失的事：
+//   1) TestIsErrorCommentClassification 的生产真实失败串（见上方表）；
+//   2) 「Operation interrupted 不续命」这条根因守卫（见下方）。
+
+// TestOperationInterruptedDoesNotRefreshLiveness 是生产「任务卡死在
+// interrupted」的直接根因守卫（liveness.go:23）。
+//
+// 故障链路：agent 因上下文裁剪/网关截断反复上报含 "Operation interrupted"
+// 的评论 → 若该模式漏判，评论被当成进展续命 → RemindCount 被清零、
+// LastProgressAt 被刷新 → todo 永不超时、永不失败 → 任务永久卡死。
+// 本测试锁定「中断上报不得续命」这条不变量。
+func TestOperationInterruptedDoesNotRefreshLiveness(t *testing.T) {
+	s, _, pm, developer, project := seedWorkflowState(t)
+	s.log = zap.NewNop()
+
+	task, appErr := s.CreateTaskByPMNode(pm.NodeID, TaskCreateInput{
+		ProjectID:   project.ID,
+		Title:       "interrupted 卡死守卫",
+		Description: "验证 Operation interrupted 不续命",
+		Todos: []TaskCreateTodoInput{
+			{Title: "阶段一", Description: "d", AssigneeNodeID: developer.NodeID},
+		},
+	})
+	if appErr != nil {
+		t.Fatalf("create task: %v", appErr)
+	}
+	todoID := task.Todos[0].ID
+	if _, appErr := s.UpdateTodoProgressByNode(developer.NodeID, TodoProgressInput{
+		TaskID: task.ID, TodoID: todoID, Message: "开始执行",
+	}); appErr != nil {
+		t.Fatalf("start todo: %v", appErr)
+	}
+
+	// 人为制造「已提醒 2 次、40 分钟无活动」的状态
+	old := time.Now().UTC().Add(-40 * time.Minute)
+	td := &s.tasks[task.ID].Todos[0]
+	if td.Status != "in_progress" {
+		t.Fatalf("todo should be in_progress, got %s", td.Status)
+	}
+	td.LastActivityAt = &old
+	td.LastProgressAt = &old
+	td.RemindCount = 2
+	td.RemindAt = &old
+
+	// 先确认该串确实被判定为故障（防止模式被误删后测试静默失去意义）
+	if !IsErrorComment("⚠️【执行侧故障上报】Operation interrupted") {
+		t.Fatal(`IsErrorComment("...Operation interrupted") = false, want true`)
+	}
+
+	// 生产真实中断上报：不得续命
+	if _, appErr := s.AddTaskCommentByNode(developer.NodeID, TaskCommentInput{
+		TaskID: task.ID, TodoID: todoID,
+		Content: "⚠️【执行侧故障上报】Operation interrupted",
+	}); appErr != nil {
+		t.Fatalf("add interrupted comment: %v", appErr)
+	}
+	td = &s.tasks[task.ID].Todos[0]
+	if td.RemindCount != 2 {
+		t.Fatalf("Operation interrupted must NOT reset RemindCount, got %d", td.RemindCount)
+	}
+	if td.LastProgressAt == nil || !td.LastProgressAt.Equal(old) {
+		t.Fatalf("Operation interrupted must NOT refresh LastProgressAt")
 	}
 }
