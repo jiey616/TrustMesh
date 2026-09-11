@@ -9,7 +9,7 @@ import { ThinkingIndicator } from '@/components/task-thread/ThinkingIndicator'
 import { UIResponsePanel } from '@/components/task-thread/UIResponsePanel'
 import { useAppendTaskMessage, useTask } from '@/hooks/useTasks'
 import { ApiRequestError } from '@/api/client'
-import type { TaskMessage, UIResponse } from '@/types'
+import type { ChatAttachment, TaskMessage, UIResponse } from '@/types'
 
 interface TaskThreadSheetProps {
   taskId: string
@@ -59,11 +59,11 @@ export function TaskThreadSheet({ taskId, open, onOpenChange }: TaskThreadSheetP
     })
   }, [open, isPlanning, isReview, messageList, pendingUIBlocks])
 
-  const handleSend = async (content: string, uiResponse?: UIResponse) => {
+  const handleSend = async (content: string, uiResponse?: UIResponse, attachments?: ChatAttachment[]) => {
     try {
       await appendTaskMessage.mutateAsync({
         taskId,
-        input: { content, ui_response: uiResponse },
+        input: { content, ui_response: uiResponse, attachments },
       })
     } catch (error) {
       const message = error instanceof ApiRequestError ? error.message : '发送消息失败'
@@ -119,7 +119,7 @@ export function TaskThreadSheet({ taskId, open, onOpenChange }: TaskThreadSheetP
                 />
               ) : (
                 <MessageInput
-                  onSend={handleSend}
+                  onSend={(content, attachments) => handleSend(content, undefined, attachments)}
                   disabled={appendTaskMessage.isPending}
                   placeholder="继续补充需求或回答 PM 的问题..."
                 />

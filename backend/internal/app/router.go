@@ -51,8 +51,20 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	jwtManager := auth.NewJWTManager(cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
 	clawClient := clawsynapse.NewClient(cfg.ClawSynapseAPIURL, cfg.ClawSynapseTimeout, cfg.ClawSynapseAPIToken)
 	webhookHandler := clawsynapse.NewWebhookHandler(s, clawClient, log)
-	// Timeout retries must actually re-dispatch the todo to its assignee.
-	s.SetDispatchHook(webhookHandler.RedispatchTodo)
+	// Redispatch hook: actually re-publish a todo to its assignee. Consumed by
+	// the dispatch reconciler below to heal pipelines broken by a silently
+	// failed dispatch (P-01). Kept as a hook because the store must not import
+	// the clawsynapse package.
+	s.SetDispatchHook(func(ctx context.Context, taskID, todoID string) {
+		if err := webhookHandler.RetryDispatch(ctx, taskID, todoID); err != nil {
+			log.Warn("dispatch reconcile failed",
+				zap.String("task_id", taskID), zap.String("todo_id", todoID), zap.Error(err))
+		}
+	})
+	// Dispatch reconciler: periodic safety net that re-dispatches pending todos
+	// which should have been dispatched but were not (transient publish failure,
+	// process restart, network partition). Runs outside the store lock.
+	go s.StartDispatchReconciler(context.Background())
 	// Timeout reminders nudge the assignee without re-dispatching the todo.
 	// C.2 统一干预编排：remind 先经编排器留痕（进运维工单时间线），再走
 	// 原有下发；计时与判死仍在 timeout_monitor，编排器不改变其语义。
@@ -95,7 +107,7 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	authHandler := handler.NewAuthHandler(s, jwtManager)
 	userHandler := handler.NewUserHandler(s)
 	agentHandler := handler.NewAgentHandler(s, clawClient)
-	agentChatHandler := handler.NewAgentChatHandler(s, clawClient, log)
+	agentChatHandler := handler.NewAgentChatHandler(s, clawClient, cfg.ExternalURL, []byte(cfg.JWTSecret), cfg.DownloadTokenTTL, log)
 	projectHandler := handler.NewProjectHandler(s)
 
 	taskHandler := handler.NewTaskHandler(s, clawClient, webhookHandler, cfg.ExternalURL, []byte(cfg.JWTSecret), cfg.DownloadTokenTTL, log)
@@ -193,6 +205,8 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	authed.GET("/projects", projectHandler.List)
 	authed.GET("/projects/:projectId", projectHandler.Get)
 	authed.GET("/projects/:projectId/workflow-progress", projectHandler.WorkflowProgress)
+	// 项目流程 · 手工绑定交付物：任意文件（含用户手工上传的）→ 任意步骤输出位。
+	authed.POST("/projects/:projectId/workflow/steps/:stepIndex/outputs/bind", projectHandler.BindStepOutput)
 	authed.PATCH("/projects/:projectId", projectHandler.Update)
 	authed.DELETE("/projects/:projectId", projectHandler.Archive)
 
@@ -222,6 +236,11 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	v1.GET("/files/agent/:fileId/token/:token", agentFileHandler.Download)
 	v1.GET("/files/agent/:fileId", agentFileHandler.Download)
 	v1.GET("/debug/gen-token/:fileId", agentFileHandler.DebugGenToken)
+
+	// Chat attachment upload/download (数字员工 + 任务对话共用).
+	chatAttachmentHandler := handler.NewChatAttachmentHandler(projectFileStorage, cfg.FilesStoragePath, jwtManager, []byte(cfg.JWTSecret), cfg.DownloadTokenTTL, cfg.ExternalURL, log)
+	authed.POST("/chats/attachments", chatAttachmentHandler.Upload)
+	v1.GET("/chats/attachments/:fileId/token/:token", chatAttachmentHandler.Download)
 
 	meetingHandler := handler.NewMeetingHandler(s, clawClient, projectFileStorage, cfg.ExternalURL, []byte(cfg.JWTSecret), cfg.DownloadTokenTTL)
 	webhookHandler.SetMeetingActivityNotifier(meetingHandler.OnMeetingActivity)
@@ -270,6 +289,7 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	authed.POST("/tasks/:id/todos/:todoId/dispatch", taskHandler.DispatchTodo)
 	authed.POST("/tasks/:id/todos/:todoId/outputs/bind", taskHandler.BindTodoOutput)
 	authed.POST("/tasks/:id/todos/:todoId/review", taskHandler.ReviewTodo)
+	authed.POST("/tasks/:id/todos/:todoId/reopen", taskHandler.ReopenTodo)
 	authed.POST("/tasks/:id/todos/:todoId/answer", taskHandler.AnswerTodo)
 	authed.GET("/tasks/:id/comments", taskHandler.ListComments)
 	authed.POST("/tasks/:id/comments", taskHandler.AddComment)

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -357,6 +359,65 @@ func (c *Client) Publish(ctx context.Context, targetNode, msgType string, payloa
 		return nil, fmt.Errorf("publish rejected: %s", out.Code)
 	}
 	return &out.Data, nil
+}
+
+// publishRetryConfig controls transient-failure retries for outbound delivery.
+// Only transport-level errors are retried: a request that never reached the
+// node cannot have been delivered, so retrying is safe. Node-side 4xx are
+// never retried (the node explicitly rejected them).
+const (
+	publishMaxAttempts = 3
+	publishBaseBackoff = 500 * time.Millisecond
+)
+
+// PublishWithRetry publishes with bounded exponential backoff on transport
+// errors. Kept separate from Publish so callers that must not retry (e.g.
+// fire-and-forget notifications) keep the original semantics.
+//
+// This exists because a single transient publish failure used to be swallowed
+// silently by dispatchNextTodo, stalling the whole sequential pipeline for
+// 56 minutes (2026-09-10).
+func (c *Client) PublishWithRetry(ctx context.Context, targetNode, msgType string, payload any, sessionKey string, metadata map[string]any) (*PublishResult, error) {
+	var lastErr error
+	for attempt := 1; attempt <= publishMaxAttempts; attempt++ {
+		res, err := c.Publish(ctx, targetNode, msgType, payload, sessionKey, metadata)
+		if err == nil {
+			return res, nil
+		}
+		lastErr = err
+		// 仅重试传输层错误（连接拒绝 / 超时 / TLS 握手）
+		if !isTransportError(err) {
+			return nil, err
+		}
+		if attempt == publishMaxAttempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(publishBaseBackoff * time.Duration(1<<(attempt-1))):
+		}
+	}
+	return nil, lastErr
+}
+
+// isTransportError reports whether err is a transport-level failure (the
+// request never got a definitive answer from the node), as opposed to the node
+// explicitly rejecting the request.
+func isTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	// net.Error covers dial/timeout; url.Error wraps anything from http.Client.Do.
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return true
+	}
+	return errors.Is(err, context.DeadlineExceeded)
 }
 
 func (c *Client) GetPeers(ctx context.Context) ([]Peer, error) {

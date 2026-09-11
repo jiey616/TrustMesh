@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button } from 'antd'
-import { SendOutlined } from '@ant-design/icons'
+import { App, Button } from 'antd'
+import { SendOutlined, PaperClipOutlined } from '@ant-design/icons'
+import { useChatAttachments } from '@/hooks/useChatAttachments'
+import { PendingAttachmentList } from '@/components/shared/PendingAttachmentList'
+import type { ChatAttachment } from '@/types'
 
 export interface TaskMentionCandidate {
   id: string
@@ -11,6 +14,7 @@ export interface TaskMentionCandidate {
 export interface TaskCommentSubmitInput {
   content: string
   mentionAgentIds: string[]
+  attachments?: ChatAttachment[]
 }
 
 interface MentionSearch {
@@ -42,7 +46,7 @@ function getMentionSearch(value: string, cursor: number): MentionSearch | null {
   }
 }
 
-/** 评论输入框，支持 @ 提及任务参与数字员工 */
+/** 评论输入框，支持 @ 提及任务参与数字员工与本地附件（粘贴/拖拽/选择器） */
 export function TaskCommentComposer({
   candidates,
   disabled,
@@ -52,6 +56,7 @@ export function TaskCommentComposer({
   onValueChange,
   leadingAccessory,
 }: TaskCommentComposerProps) {
+  const { message } = App.useApp()
   const [value, setValue] = useState('')
   const effectiveValue = controlledValue ?? value
   const isComposingRef = useRef(false)
@@ -59,6 +64,8 @@ export function TaskCommentComposer({
   const [activeIndex, setActiveIndex] = useState(0)
   const [selectedMentions, setSelectedMentions] = useState<Record<string, string>>({})
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const { pendingFiles, uploading, addFiles, removeFile, clearPending, uploadPending } = useChatAttachments()
 
   const setBoth = (nextValue: string) => {
     setValue(nextValue)
@@ -108,16 +115,27 @@ export function TaskCommentComposer({
 
   const handleSubmit = async () => {
     const trimmed = effectiveValue.trim()
-    if (!trimmed || disabled) return
+    if ((!trimmed && pendingFiles.length === 0) || disabled || uploading) return
+
+    const { attachments, failedCount } = await uploadPending()
+    if (failedCount > 0) {
+      message.warning(`${failedCount} 个附件上传失败：${failedCount === pendingFiles.length ? '请重试' : '已忽略失败项，其余正常发送'}`)
+    }
+    if (!trimmed && attachments.length === 0) {
+      // 只有附件且全部上传失败 → 保留内容与待发附件
+      return
+    }
+
     const mentionAgentIds = Object.entries(selectedMentions)
       .filter(([, name]) => trimmed.includes(`@${name}`))
       .map(([agentId]) => agentId)
-    const ok = await onSubmit({ content: trimmed, mentionAgentIds })
+    const ok = await onSubmit({ content: trimmed, mentionAgentIds, attachments })
     if (!ok) return
     setBoth('')
     setSelectedMentions({})
     setMentionSearch(null)
     setActiveIndex(0)
+    clearPending()
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
   }
 
@@ -213,6 +231,8 @@ export function TaskCommentComposer({
         </div>
       )}
 
+      <PendingAttachmentList files={pendingFiles} onRemove={removeFile} />
+
       <div
         style={{
           display: 'flex',
@@ -224,8 +244,31 @@ export function TaskCommentComposer({
           padding: '8px 8px 8px 12px',
           transition: 'border-color 0.2s',
         }}
+        onDragOver={(e) => { e.preventDefault() }}
+        onDrop={(e) => {
+          e.preventDefault()
+          if (e.dataTransfer?.files) addFiles(e.dataTransfer.files)
+        }}
       >
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            addFiles(e.target.files)
+            e.target.value = ''
+          }}
+        />
         {leadingAccessory}
+        <Button
+          shape="circle"
+          size="small"
+          icon={<PaperClipOutlined />}
+          title="添加本地文件 / 图片（也可直接粘贴或拖拽）"
+          disabled={disabled}
+          onClick={() => fileInputRef.current?.click()}
+        />
         <textarea
           ref={textareaRef}
           style={{
@@ -258,12 +301,18 @@ export function TaskCommentComposer({
             isComposingRef.current = false
             updateMentionSearch(event.currentTarget.value, event.currentTarget.selectionStart)
           }}
+          onPaste={(e) => {
+            if (e.clipboardData?.files && e.clipboardData.files.length > 0) {
+              addFiles(e.clipboardData.files)
+            }
+          }}
         />
         <Button
           type="primary"
           shape="circle"
           icon={<SendOutlined />}
-          disabled={disabled || !effectiveValue.trim()}
+          disabled={disabled || uploading || (!effectiveValue.trim() && pendingFiles.length === 0)}
+          loading={uploading}
           onClick={() => void handleSubmit()}
         />
       </div>

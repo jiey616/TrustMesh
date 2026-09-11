@@ -51,7 +51,6 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		return
 	}
 
-
 	var body struct {
 		Title           string          `json:"title"`
 		Description     string          `json:"description"`
@@ -85,7 +84,7 @@ func (h *TaskHandler) Create(c *gin.Context) {
 		return
 	}
 
-	task = h.autoDispatchFirstTodo(c.Request.Context(), sc, task)
+	task = h.autoDispatchFirstTodo(c.Request.Context(), sc, task, nil)
 	transport.WriteData(c, http.StatusCreated, task)
 }
 
@@ -98,15 +97,15 @@ func (h *TaskHandler) CreateFromText(c *gin.Context) {
 		return
 	}
 
-
 	var body struct {
-		Content       string          `json:"content"`
-		AgentID       string          `json:"agent_id"`
-		FileIDs       []string        `json:"file_ids"`
-		Workflow      *model.Workflow `json:"workflow,omitempty"`
-		WorkflowIndex *int            `json:"workflow_index"`
-		StepFrom      int             `json:"step_from"`
-		StepTo        int             `json:"step_to"`
+		Content       string                 `json:"content"`
+		AgentID       string                 `json:"agent_id"`
+		FileIDs       []string               `json:"file_ids"`
+		Workflow      *model.Workflow        `json:"workflow,omitempty"`
+		WorkflowIndex *int                   `json:"workflow_index"`
+		StepFrom      int                    `json:"step_from"`
+		StepTo        int                    `json:"step_to"`
+		Attachments   []model.ChatAttachment `json:"attachments"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Content) == "" {
 		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "content is required"))
@@ -132,12 +131,13 @@ func (h *TaskHandler) CreateFromText(c *gin.Context) {
 			transport.WriteError(c, appErr)
 			return
 		}
-		task = h.autoDispatchFirstTodo(c.Request.Context(), sc, task)
+		task = h.autoDispatchFirstTodo(c.Request.Context(), sc, task, body.Attachments)
+		h.enrichTaskMessageURLs(task)
 		transport.WriteData(c, http.StatusCreated, task)
 		return
 	}
 
-	h.createPlanningTask(c, sc, projectID, body.Content, body.FileIDs, body.Workflow, body.WorkflowIndex, body.StepFrom, body.StepTo)
+	h.createPlanningTask(c, sc, projectID, body.Content, body.FileIDs, body.Workflow, body.WorkflowIndex, body.StepFrom, body.StepTo, body.Attachments)
 }
 
 // deriveTitle extracts a short title from free-form content.
@@ -173,19 +173,20 @@ func truncateTitle(s string, max int) string {
 }
 
 // createPlanningTask creates a planning-mode task and notifies the PM agent.
-func (h *TaskHandler) createPlanningTask(c *gin.Context, sc store.Scope, projectID, content string, fileIDs []string, workflow *model.Workflow, workflowIndex *int, stepFrom, stepTo int) {
-	task, appErr := h.store.CreateTaskPlanningWithFiles(sc, projectID, content, fileIDs, workflow, workflowIndex, stepFrom, stepTo)
+func (h *TaskHandler) createPlanningTask(c *gin.Context, sc store.Scope, projectID, content string, fileIDs []string, workflow *model.Workflow, workflowIndex *int, stepFrom, stepTo int, attachments []model.ChatAttachment) {
+	task, appErr := h.store.CreateTaskPlanningWithFiles(sc, projectID, content, fileIDs, workflow, workflowIndex, stepFrom, stepTo, attachments)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}
-	h.notifyPMTaskMessage(c, sc, projectID, task.ID, content, true, nil)
+	h.notifyPMTaskMessage(c, sc, projectID, task.ID, content, true, nil, attachments)
+	h.enrichTaskMessageURLs(task)
 	transport.WriteData(c, http.StatusCreated, task)
 }
 
 // autoDispatchFirstTodo publishes a todo.assigned event for the first todo and records the dispatch.
 // It returns the updated task if dispatch succeeds, or the original task if it fails (non-fatal).
-func (h *TaskHandler) autoDispatchFirstTodo(ctx context.Context, sc store.Scope, task *model.TaskDetail) *model.TaskDetail {
+func (h *TaskHandler) autoDispatchFirstTodo(ctx context.Context, sc store.Scope, task *model.TaskDetail, extraAttachments []model.ChatAttachment) *model.TaskDetail {
 	if h.publisher == nil || len(task.Todos) == 0 {
 		return task
 	}
@@ -200,7 +201,7 @@ func (h *TaskHandler) autoDispatchFirstTodo(ctx context.Context, sc store.Scope,
 			Objective:    "执行分派的 Todo 任务；及时回报进度；完成后提交结果，失败时说明原因。",
 			MustUseSkill: "tm-task-exec",
 		},
-		AttachedFiles: h.enrichAttachedFiles(task.AttachedFiles),
+		AttachedFiles: append(h.enrichAttachedFiles(task.AttachedFiles), h.chatAttachedFileRefs(extraAttachments)...),
 		Inputs:        h.webhookHandler.BuildTodoInputs(task, todo),
 		Outputs:       h.webhookHandler.BuildTodoOutputs(task, todo),
 	}
@@ -244,6 +245,7 @@ func (h *TaskHandler) Get(c *gin.Context) {
 		transport.WriteError(c, appErr)
 		return
 	}
+	h.enrichTaskMessageURLs(task)
 	transport.WriteData(c, http.StatusOK, task)
 }
 
@@ -257,6 +259,7 @@ func (h *TaskHandler) ListEvents(c *gin.Context) {
 		transport.WriteError(c, appErr)
 		return
 	}
+	h.enrichCommentEventAttachmentURLs(events)
 	transport.WriteList(c, events, len(events))
 }
 
@@ -265,7 +268,6 @@ func (h *TaskHandler) DispatchTodo(c *gin.Context) {
 	if !ok {
 		return
 	}
-
 
 	task, appErr := h.store.GetTask(sc, c.Param("id"))
 	if appErr != nil {
@@ -387,6 +389,30 @@ func (h *TaskHandler) ReviewTodo(c *gin.Context) {
 			// reset and must be re-dispatched to its assignee immediately.
 			h.publishReworkDispatch(c.Request.Context(), sc, task, reworked, body.Reason)
 		}
+	}
+	transport.WriteData(c, http.StatusOK, task)
+}
+
+// ReopenTodo brings a finished todo back to in_progress. Used when an agent
+// actually delivered after its todo had already been failed (late artifact,
+// slow retry, ...) - before this the platform had no way back from a terminal
+// state and the work was recorded as a contradiction.
+func (h *TaskHandler) ReopenTodo(c *gin.Context) {
+	sc, ok := currentScope(c)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	// Body is optional: reason is purely descriptive.
+	_ = c.ShouldBindJSON(&body)
+
+	task, _, appErr := h.store.ReopenTodo(sc, c.Param("id"), c.Param("todoId"), body.Reason)
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
 	}
 	transport.WriteData(c, http.StatusOK, task)
 }
@@ -538,6 +564,7 @@ func (h *TaskHandler) AddComment(c *gin.Context) {
 		Mentions []struct {
 			AgentID string `json:"agent_id"`
 		} `json:"mentions"`
+		Attachments []model.ChatAttachment `json:"attachments"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid request body"))
@@ -550,15 +577,18 @@ func (h *TaskHandler) AddComment(c *gin.Context) {
 	}
 
 	comment, appErr := h.store.AddTaskComment(sc, c.Param("id"), store.TaskCommentInput{
-		TaskID:   c.Param("id"),
-		TodoID:   body.TodoID,
-		Content:  body.Content,
-		Mentions: mentions,
+		TaskID:      c.Param("id"),
+		TodoID:      body.TodoID,
+		Content:     body.Content,
+		Mentions:    mentions,
+		Attachments: body.Attachments,
 	})
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}
+
+	enrichChatAttachmentURLs(comment.Attachments, h.externalURL, h.jwtSecret, h.downloadTTL)
 
 	task, appErr := h.store.GetTask(sc, c.Param("id"))
 	if appErr != nil {
@@ -609,6 +639,12 @@ func (h *TaskHandler) ListComments(c *gin.Context) {
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
+	}
+	for i := range comments {
+		if len(comments[i].Attachments) == 0 {
+			continue
+		}
+		enrichChatAttachmentURLs(comments[i].Attachments, h.externalURL, h.jwtSecret, h.downloadTTL)
 	}
 	transport.WriteList(c, comments, len(comments))
 }
@@ -691,6 +727,7 @@ func (h *TaskHandler) buildTaskMentionPayload(task *model.TaskDetail, comment *m
 			mention.AgentName,
 			task.ID,
 		),
+		AttachedFiles: h.chatAttachedFileRefs(comment.Attachments),
 	}
 
 	if todo := findTaskTodo(task, comment.TodoID); todo != nil {
@@ -726,7 +763,6 @@ func (h *TaskHandler) RejectPlan(c *gin.Context) {
 		return
 	}
 
-
 	var body struct {
 		Feedback string `json:"feedback"`
 	}
@@ -742,7 +778,7 @@ func (h *TaskHandler) RejectPlan(c *gin.Context) {
 		return
 	}
 
-	h.notifyPMTaskMessage(c, sc, task.ProjectID, task.ID, body.Feedback, false, nil)
+	h.notifyPMTaskMessage(c, sc, task.ProjectID, task.ID, body.Feedback, false, nil, nil)
 	transport.WriteData(c, http.StatusOK, task)
 }
 
@@ -751,7 +787,6 @@ func (h *TaskHandler) CreatePlanning(c *gin.Context) {
 	if !ok {
 		return
 	}
-
 
 	var body struct {
 		Content       string          `json:"content"`
@@ -767,13 +802,13 @@ func (h *TaskHandler) CreatePlanning(c *gin.Context) {
 	}
 
 	projectID := c.Param("projectId")
-	task, appErr := h.store.CreateTaskPlanningWithFiles(sc, projectID, body.Content, body.FileIDs, body.Workflow, body.WorkflowIndex, body.StepFrom, body.StepTo)
+	task, appErr := h.store.CreateTaskPlanningWithFiles(sc, projectID, body.Content, body.FileIDs, body.Workflow, body.WorkflowIndex, body.StepFrom, body.StepTo, nil)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}
 
-	h.notifyPMTaskMessage(c, sc, projectID, task.ID, body.Content, true, nil)
+	h.notifyPMTaskMessage(c, sc, projectID, task.ID, body.Content, true, nil, nil)
 	transport.WriteData(c, http.StatusCreated, task)
 }
 
@@ -783,10 +818,10 @@ func (h *TaskHandler) AppendTaskMessage(c *gin.Context) {
 		return
 	}
 
-
 	var body struct {
-		Content    string            `json:"content"`
-		UIResponse *model.UIResponse `json:"ui_response,omitempty"`
+		Content     string                 `json:"content"`
+		UIResponse  *model.UIResponse      `json:"ui_response,omitempty"`
+		Attachments []model.ChatAttachment `json:"attachments,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid request body"))
@@ -794,17 +829,20 @@ func (h *TaskHandler) AppendTaskMessage(c *gin.Context) {
 	}
 
 	taskID := c.Param("id")
-	task, appErr := h.store.AppendTaskMessage(sc, taskID, body.Content, body.UIResponse)
+	task, appErr := h.store.AppendTaskMessage(sc, taskID, body.Content, body.UIResponse, body.Attachments)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}
 
-	h.notifyPMTaskMessage(c, sc, task.ProjectID, task.ID, body.Content, false, body.UIResponse)
+	h.notifyPMTaskMessage(c, sc, task.ProjectID, task.ID, body.Content, false, body.UIResponse, body.Attachments)
+
+	// Enrich attachment download URLs on the returned task so the UI can render them.
+	h.enrichTaskMessageURLs(task)
 	transport.WriteData(c, http.StatusOK, task)
 }
 
-func (h *TaskHandler) notifyPMTaskMessage(c *gin.Context, sc store.Scope, projectID, taskID, content string, initial bool, uiResponse *model.UIResponse) {
+func (h *TaskHandler) notifyPMTaskMessage(c *gin.Context, sc store.Scope, projectID, taskID, content string, initial bool, uiResponse *model.UIResponse, msgAttachments []model.ChatAttachment) {
 	if h.publisher == nil {
 		return
 	}
@@ -815,7 +853,7 @@ func (h *TaskHandler) notifyPMTaskMessage(c *gin.Context, sc store.Scope, projec
 		}
 		return
 	}
-	payload := h.buildPMTaskMessage(sc, projectID, taskID, content, initial, uiResponse)
+	payload := h.buildPMTaskMessage(sc, projectID, taskID, content, initial, uiResponse, msgAttachments)
 	if _, err := h.publisher.Publish(c.Request.Context(), pmNodeID, "task.message", payload, taskID, nil); err != nil {
 		if h.log != nil {
 			h.log.Warn("notify task.message failed", zap.String("task_id", taskID), zap.Error(err))
@@ -823,7 +861,7 @@ func (h *TaskHandler) notifyPMTaskMessage(c *gin.Context, sc store.Scope, projec
 	}
 }
 
-func (h *TaskHandler) buildPMTaskMessage(sc store.Scope, projectID, taskID, userContent string, initial bool, uiResponse *model.UIResponse) protocol.PMTaskMessage {
+func (h *TaskHandler) buildPMTaskMessage(sc store.Scope, projectID, taskID, userContent string, initial bool, uiResponse *model.UIResponse, msgAttachments []model.ChatAttachment) protocol.PMTaskMessage {
 	payload := protocol.PMTaskMessage{
 		SchemaVersion:  "1.0",
 		TaskID:         taskID,
@@ -849,6 +887,22 @@ func (h *TaskHandler) buildPMTaskMessage(sc store.Scope, projectID, taskID, user
 				zap.String("first_download_url", payload.AttachedFiles[0].DownloadUrl),
 			)
 		}
+	}
+
+	// Append message-level user attachments (uploaded via the chat composer) as
+	// download-URL-bearing refs so the PM agent can read them.
+	for _, a := range msgAttachments {
+		ref := protocol.TaskAttachedFileRef{
+			ID:       a.ID,
+			FileName: a.FileName,
+			FileSize: a.FileSize,
+			MimeType: a.MimeType,
+			Source:   "user_upload",
+		}
+		if token, terr := agentfile.GenerateDownloadToken(h.jwtSecret, a.ID, h.downloadTTL); terr == nil {
+			ref.DownloadUrl = buildChatDownloadURL(h.externalURL, a.ID, token)
+		}
+		payload.AttachedFiles = append(payload.AttachedFiles, ref)
 	}
 
 	if initial {
@@ -919,6 +973,112 @@ func agentStatusRank(status string) int {
 // enrichAttachedFiles converts model attached files to protocol refs with download URLs.
 func (h *TaskHandler) enrichAttachedFiles(files []model.TaskAttachedFile) []protocol.TaskAttachedFileRef {
 	return agentfile.EnrichWithDownloadURLs(files, h.externalURL, h.jwtSecret, h.downloadTTL)
+}
+
+// chatAttachedFileRefs converts chat attachments (user-uploaded, chat-attachment
+// domain) to protocol refs with freshly signed download URLs. Used when
+// attachments ride along a comment mention or a directly-dispatched todo so the
+// receiving agent can fetch them.
+func (h *TaskHandler) chatAttachedFileRefs(atts []model.ChatAttachment) []protocol.TaskAttachedFileRef {
+	if len(atts) == 0 {
+		return nil
+	}
+	refs := make([]protocol.TaskAttachedFileRef, 0, len(atts))
+	// copy so URL enrichment never mutates the store-owned comment/task object
+	owned := append([]model.ChatAttachment(nil), atts...)
+	enrichChatAttachmentURLs(owned, h.externalURL, h.jwtSecret, h.downloadTTL)
+	for _, att := range owned {
+		refs = append(refs, protocol.TaskAttachedFileRef{
+			ID:          att.ID,
+			FileName:    att.FileName,
+			FileSize:    att.FileSize,
+			MimeType:    att.MimeType,
+			Source:      "user_upload",
+			DownloadUrl: att.URL,
+		})
+	}
+	return refs
+}
+
+// enrichTaskMessageURLs signs attachment download URLs on every message so the
+// frontend can render them. ChatAttachment.URL is bson:"-" (never persisted), so
+// it must be rebuilt on each read using the deterministic {fileID}_* file layout.
+func (h *TaskHandler) enrichTaskMessageURLs(task *model.TaskDetail) {
+	if task == nil {
+		return
+	}
+	for i := range task.Messages {
+		if len(task.Messages[i].Attachments) == 0 {
+			continue
+		}
+		enrichChatAttachmentURLs(task.Messages[i].Attachments, h.externalURL, h.jwtSecret, h.downloadTTL)
+	}
+}
+
+// enrichCommentEventAttachmentURLs signs attachment URLs on task_comment events,
+// which carry a snapshot of the comment's files in Metadata["attachments"].
+// The metadata value can be a typed []model.ChatAttachment (in-memory store) or
+// a generic decoded []any (after a MongoDB round-trip), so both shapes are
+// normalized before signing.
+func (h *TaskHandler) enrichCommentEventAttachmentURLs(events []model.Event) {
+	for i := range events {
+		if events[i].EventType != "task_comment" {
+			continue
+		}
+		raw, ok := events[i].Metadata["attachments"]
+		if !ok {
+			continue
+		}
+		atts := normalizeChatAttachments(raw)
+		if len(atts) == 0 {
+			continue
+		}
+		enrichChatAttachmentURLs(atts, h.externalURL, h.jwtSecret, h.downloadTTL)
+		events[i].Metadata["attachments"] = atts
+	}
+}
+
+// normalizeChatAttachments converts Metadata["attachments"] into a typed slice,
+// tolerating both typed model values and generic decoded maps.
+func normalizeChatAttachments(raw any) []model.ChatAttachment {
+	var items []any
+	switch v := raw.(type) {
+	case []model.ChatAttachment:
+		return append([]model.ChatAttachment(nil), v...)
+	case []any:
+		items = v
+	case nil:
+		return nil
+	default:
+		return nil
+	}
+
+	out := make([]model.ChatAttachment, 0, len(items))
+	for _, item := range items {
+		switch v := item.(type) {
+		case model.ChatAttachment:
+			out = append(out, v)
+		case map[string]any:
+			att := model.ChatAttachment{}
+			if id, ok := v["id"].(string); ok {
+				att.ID = id
+			}
+			if name, ok := v["file_name"].(string); ok {
+				att.FileName = name
+			}
+			if size, ok := v["file_size"].(float64); ok {
+				att.FileSize = int64(size)
+			}
+			if mime, ok := v["mime_type"].(string); ok {
+				att.MimeType = mime
+			}
+			if url, ok := v["url"].(string); ok {
+				att.URL = url
+			}
+			out = append(out, att)
+		}
+	}
+	return out
 }
 
 // AddTodo creates a new TODO at the end of a task's todo list.

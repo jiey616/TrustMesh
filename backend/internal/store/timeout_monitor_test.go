@@ -54,8 +54,14 @@ func TestCheckTodoTimeoutsRemindsThenFails(t *testing.T) {
 
 	// ---- simulate no response: push RemindAt back so interval elapses ----
 	// then 2nd reminder
-	past := now.Add(-defaultRemindInterval - time.Minute)
-	task.Todos[0].RemindAt = &past
+	// P-08: the remind cadence now escalates (15m / 30m / 1h / 2h) instead of
+	// a flat defaultRemindInterval, so the elapsed window must be derived
+	// from the current RemindCount rather than a fixed interval.
+	elapseRemindBackoff := func() {
+		past := now.Add(-remindBackoff(task.Todos[0].RemindCount) - time.Minute)
+		task.Todos[0].RemindAt = &past
+	}
+	elapseRemindBackoff()
 	store.checkTodoTimeouts()
 	if len(reminds) != 2 {
 		t.Fatalf("expected 2 reminders, got %d", len(reminds))
@@ -68,7 +74,7 @@ func TestCheckTodoTimeoutsRemindsThenFails(t *testing.T) {
 	}
 
 	// ---- 3rd reminder ----
-	task.Todos[0].RemindAt = &past
+	elapseRemindBackoff()
 	store.checkTodoTimeouts()
 	if len(reminds) != 3 {
 		t.Fatalf("expected 3 reminders, got %d", len(reminds))
@@ -81,7 +87,7 @@ func TestCheckTodoTimeoutsRemindsThenFails(t *testing.T) {
 	}
 
 	// ---- after 3 reminders + one more interval with no response: fail ----
-	task.Todos[0].RemindAt = &past
+	elapseRemindBackoff()
 	store.checkTodoTimeouts()
 	if task.Todos[0].Status != "failed" {
 		t.Fatalf("expected todo to be failed after 3 unanswered reminders, got %s", task.Todos[0].Status)

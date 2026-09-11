@@ -7,9 +7,10 @@ type AgentChatMessage struct {
 	SenderType      string    `json:"sender_type" bson:"sender_type"`
 	Direction       string    `json:"direction" bson:"direction"`
 	Content         string    `json:"content" bson:"content"`
-	Status          string    `json:"status" bson:"status"`
-	RemoteMessageID string    `json:"remote_message_id,omitempty" bson:"remote_message_id,omitempty"`
-	CreatedAt       time.Time `json:"created_at" bson:"created_at"`
+	Status          string           `json:"status" bson:"status"`
+	RemoteMessageID string           `json:"remote_message_id,omitempty" bson:"remote_message_id,omitempty"`
+	Attachments     []ChatAttachment `json:"attachments,omitempty" bson:"attachments,omitempty"`
+	CreatedAt       time.Time        `json:"created_at" bson:"created_at"`
 }
 
 type AgentChatDetail struct {

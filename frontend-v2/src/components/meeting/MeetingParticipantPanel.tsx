@@ -13,7 +13,7 @@ export function MeetingParticipantPanel({ meeting }: Props) {
   const { data: agents } = useQuery({
     queryKey: ['agents'],
     queryFn: async () => {
-      const res = await apiClient.get('/api/v1/agents').json<ApiListResponse<AgentType>>()
+      const res = await apiClient.get('agents').json<ApiListResponse<AgentType>>()
       return res.data.items
     },
   })

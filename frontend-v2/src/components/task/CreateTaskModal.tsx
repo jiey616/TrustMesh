@@ -125,7 +125,7 @@ export function CreateTaskModal({ open, onClose, projectId: fixedProjectId, defa
         )}
 
         <Form.Item name="title" label="任务标题" rules={[{ required: true, message: '请输入任务标题' }]}>
-          <Input placeholder="例如：实现用户登录功能" />
+          <Input placeholder="例如：把剧本拆解成分镜脚本" />
         </Form.Item>
 
         <Form.Item name="description" label="任务描述" rules={[{ required: true, message: '请输入任务描述' }]}>
@@ -151,7 +151,7 @@ export function CreateTaskModal({ open, onClose, projectId: fixedProjectId, defa
           </Form.Item>
         ) : (
           <Form.Item label="执行数字员工">
-            <div className="rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white/70">
+            <div className="rounded-md border border-[color:var(--line-strong)] bg-[color:var(--surface)] px-3 py-2 text-sm text-[color:var(--text-secondary)]">
               {agents?.find((a) => a.id === defaultAgentId)?.name ?? defaultAgentId}
             </div>
           </Form.Item>

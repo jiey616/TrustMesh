@@ -144,12 +144,21 @@ export interface UIResponse {
   blocks: Record<string, UIBlockResponse>
 }
 
+export interface ChatAttachment {
+  id: string
+  file_name: string
+  file_size: number
+  mime_type: string
+  url?: string
+}
+
 export interface TaskMessage {
   id: string
   role: 'user' | 'pm_agent' | 'agent'
   content: string
   ui_blocks?: UIBlock[]
   ui_response?: UIResponse
+  attachments?: ChatAttachment[]
   created_at: string
 }
 
@@ -204,6 +213,7 @@ export interface AgentChatMessage {
   content: string
   status: 'pending' | 'sent' | 'failed'
   remote_message_id?: string
+  attachments?: ChatAttachment[]
   created_at: string
 }
 
@@ -787,6 +797,7 @@ export interface CreatePlanningTaskRequest {
 export interface AppendTaskMessageRequest {
   content: string
   ui_response?: UIResponse
+  attachments?: ChatAttachment[]
 }
 
 export interface RejectPlanRequest {
@@ -795,6 +806,7 @@ export interface RejectPlanRequest {
 
 export interface SendAgentChatMessageRequest {
   content: string
+  attachments?: ChatAttachment[]
 }
 
 export interface ListProjectTasksQuery {

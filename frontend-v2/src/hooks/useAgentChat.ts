@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import * as agentChatApi from '@/api/agentChat'
-import type { AgentChatDetail, AgentChatSessionSummary } from '@/types'
+import type { AgentChatDetail, AgentChatSessionSummary, ChatAttachment } from '@/types'
 
 function normalizeChat(chat: AgentChatDetail | null): AgentChatDetail | null {
   if (!chat) return null
@@ -53,8 +53,8 @@ export function useAgentChatSession(
 export function useSendAgentChatMessage() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ agentId, content }: { agentId: string; content: string }) =>
-      agentChatApi.sendAgentChatMessage(agentId, content),
+    mutationFn: ({ agentId, content, attachments }: { agentId: string; content: string; attachments?: ChatAttachment[] }) =>
+      agentChatApi.sendAgentChatMessage(agentId, content, attachments),
     onSuccess: (data, variables) => {
       qc.setQueryData(['agents', variables.agentId, 'chat'], normalizeChat(data.data))
       qc.invalidateQueries({ queryKey: ['agents', variables.agentId, 'chat', 'sessions'] })

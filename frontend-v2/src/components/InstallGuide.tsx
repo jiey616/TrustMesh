@@ -12,7 +12,7 @@ interface Props {
 
 function buildDownloadUrl(roleId: string) {
   const origin = window.location.origin.replace(/\/$/, '')
-  return `${origin}/api/v1/market/roles/${roleId}/download`
+  return `${origin}market/roles/${roleId}/download`
 }
 
 function buildOpenClawPrompt(role: MarketRoleDetail) {

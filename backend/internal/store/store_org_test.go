@@ -740,7 +740,7 @@ func TestAgentChatIsUserScoped(t *testing.T) {
 	}
 
 	// 会话本身按 user 分区：u2 开了会话，u1 看不到它
-	if _, _, err := s.AppendAgentChatUserMessage(Scope{UserID: "u2", OrgID: orgA.ID}, "aA", "hello"); err != nil {
+	if _, _, err := s.AppendAgentChatUserMessage(Scope{UserID: "u2", OrgID: orgA.ID}, "aA", "hello", nil); err != nil {
 		t.Fatalf("append chat message: %v", err)
 	}
 	detail, err := s.GetActiveAgentChat(Scope{UserID: "u2", OrgID: orgA.ID}, "aA")

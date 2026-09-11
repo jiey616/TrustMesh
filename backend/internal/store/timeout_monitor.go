@@ -3,6 +3,8 @@ package store
 import (
 	"fmt"
 	"context"
+	"os"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -22,6 +24,98 @@ const (
 	planningStallTimeout = 15 * time.Minute // planning 无进展（PM 欠回复）判定
 	planningMaxReminders = 2                // planning 停滞最多自动催 PM 次数
 )
+
+// Hard-deadline gate (P-03). The reminder-counter path can be bypassed by
+// various liveness semantics; this gate is a wall-clock backstop that fails a
+// todo which has made NO productive progress for too long regardless of how
+// much activity it reported in between.
+//
+// 🔴 Threshold is per-kind (v2): a fixed 4h would kill long video-generation
+// steps (measured >4h in production). Normal steps get 4h, heavy steps 8h.
+// Overridable via TODO_HARD_DEADLINE (normal) / TODO_HARD_DEADLINE_HEAVY
+// (heavy). Must stay above the node-side adapter timeout (40m) and the longest
+// real step, otherwise healthy tasks get killed.
+const (
+	defaultHardDeadline      = 4 * time.Hour
+	defaultHardDeadlineHeavy = 8 * time.Hour
+)
+
+// defaultHeavyKeywords marks long-running steps when no explicit kind field
+// exists on Todo. Matched case-insensitively against title+description.
+// Override the whole list with TODO_HEAVY_KEYWORDS (comma-separated).
+var defaultHeavyKeywords = []string{"视频", "video", "渲染", "render", "成片", "合成", "视频生成"}
+
+func isHeavyTodo(todo *model.Todo) bool {
+	if todo == nil {
+		return false
+	}
+	hay := strings.ToLower(todo.Title + " " + todo.Description)
+	if kws := strings.TrimSpace(os.Getenv("TODO_HEAVY_KEYWORDS")); kws != "" {
+		for _, k := range strings.Split(kws, ",") {
+			k = strings.ToLower(strings.TrimSpace(k))
+			if k != "" && strings.Contains(hay, k) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, k := range defaultHeavyKeywords {
+		if strings.Contains(hay, strings.ToLower(k)) {
+			return true
+		}
+	}
+	return false
+}
+
+// hardDeadlineFor returns the "no productive progress" wall-clock limit for a
+// todo. Heavy steps are evaluated first so a global TODO_HARD_DEADLINE cannot
+// accidentally kill a long video step (the whole point of the per-kind split).
+func hardDeadlineFor(todo *model.Todo) time.Duration {
+	if isHeavyTodo(todo) {
+		if v := strings.TrimSpace(os.Getenv("TODO_HARD_DEADLINE_HEAVY")); v != "" {
+			if d, err := time.ParseDuration(v); err == nil && d > 0 {
+				return d
+			}
+		}
+		return defaultHardDeadlineHeavy
+	}
+	if v := strings.TrimSpace(os.Getenv("TODO_HARD_DEADLINE")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultHardDeadline
+}
+
+
+// remindBackoff returns how long to wait after `count` reminders have already
+// been sent before sending the next one.
+//
+// Why escalating instead of the old flat defaultRemindInterval: a fixed
+// 10-minute cadence bombarded a stalled agent 13 times across 8 hours
+// (2026-09-10 TD_05) without ever escalating anywhere. It neither gave the
+// agent time to finish a genuinely long step, nor surfaced the stall to a
+// human. Escalating keeps the first nudge urgent while later ones stop
+// spamming.
+//
+// The 2h cap is deliberate: cumulative wait (0 + 15m + 30m + 1h = 1h45m to
+// reach the failure verdict) must stay well INSIDE hardDeadlineFor (4h
+// normal / 8h heavy). If the backoff overshot the hard gate, the hard gate
+// would fail the todo first and the reminder path would never escalate.
+func remindBackoff(count int) time.Duration {
+	switch {
+	case count <= 0:
+		return 0 // nothing sent yet: nudge as soon as the timeout elapses
+	case count == 1:
+		return 15 * time.Minute
+	case count == 2:
+		return 30 * time.Minute
+	case count == 3:
+		return 1 * time.Hour
+	default:
+		return 2 * time.Hour
+	}
+}
 
 // StartTimeoutMonitor runs a background goroutine that periodically scans for
 // in_progress todos that have exceeded the timeout threshold. Timed-out todos
@@ -60,6 +154,7 @@ func (s *Store) checkTodoTimeouts() {
 	timedOutCount := 0
 	remindedCount := 0
 	failedCount := 0
+	hardFailedCount := 0
 	type pendingRemind struct {
 		taskID string
 		todoID string
@@ -75,6 +170,47 @@ func (s *Store) checkTodoTimeouts() {
 			todo := &task.Todos[i]
 			if todo.Status != "in_progress" {
 				continue
+			}
+
+			// ── 硬闸（P-03）：长时间「有活动但无有效进展」直接判失败 ──
+			// 计数器路径（RemindCount >= max）可能被各种续命语义绕过；
+			// 这里用挂钟兜底：只要超过 hardDeadline 没有任何有效进展
+			// （无 todo.progress、无产物、无有效评论），无论期间有多少
+			// 活动一律判失败。放在最前面以真正独立于计数器。
+			progressAt := todo.LastProgressAt
+			if progressAt == nil {
+				progressAt = todo.StartedAt
+			}
+			if progressAt != nil {
+				if limit := hardDeadlineFor(todo); now.Sub(*progressAt) >= limit {
+					failedAt := now
+					todo.FailedAt = &failedAt
+					todo.Status = "failed"
+					errMsg := fmt.Sprintf("执行超过 %s 无任何有效进展（无进度上报、无产物），判定失败", limit)
+					todo.Error = &errMsg
+					failedCount++
+					hardFailedCount++
+
+					if s.log != nil {
+						s.log.Warn("todo exceeded hard deadline without progress, marking failed",
+							zap.String("task_id", task.ID),
+							zap.String("todo_id", todo.ID),
+							zap.Duration("since_progress", now.Sub(*progressAt)),
+							zap.Duration("hard_deadline", limit),
+						)
+					}
+					s.addEventUnsafe(
+						task.UserID, task.ProjectID, task.ID, todo.ID,
+						"system", "timeout-monitor", "超时监控",
+						"todo_hard_deadline_failed", &errMsg,
+						map[string]any{
+							"since_progress": now.Sub(*progressAt).String(),
+							"hard_deadline":  limit.String(),
+							"todo_title":     todo.Title,
+						}, now,
+					)
+					continue
+				}
 			}
 
 			// Timeout is measured from the LAST activity (any todo.progress /
@@ -102,7 +238,7 @@ func (s *Store) checkTodoTimeouts() {
 			// least one remind-interval ago without any response: fail.
 			if todo.RemindCount >= maxReminders {
 				lastRemind := todo.RemindAt
-				if lastRemind == nil || !lastRemind.Add(defaultRemindInterval).After(now) {
+				if lastRemind == nil || !lastRemind.Add(remindBackoff(todo.RemindCount)).After(now) {
 					failedAt := now
 					todo.FailedAt = &failedAt
 					todo.Status = "failed"
@@ -125,6 +261,22 @@ func (s *Store) checkTodoTimeouts() {
 							"max_reminders": maxReminders,
 						}, now,
 					)
+				// P-08: the reminder budget is spent. Escalate to a human-facing
+				// alert instead of letting the todo sit in a remind loop: at this
+				// point the agent has been nudged repeatedly with zero response,
+				// which in practice means a silently wedged run (budget exhausted,
+				// quota dead, or the process is gone) rather than a slow step.
+				escalateMsg := "多次提醒无响应，疑似执行智能体静默卡死（run 预算耗尽 / 额度不足 / 进程异常），已停止提醒并判定失败，请人工介入"
+				s.addEventUnsafe(
+					task.UserID, task.ProjectID, task.ID, todo.ID,
+					"system", "timeout-monitor", "超时监控",
+					"todo_remind_escalated", &escalateMsg,
+					map[string]any{
+						"remind_count":  todo.RemindCount,
+						"max_reminders": maxReminders,
+						"todo_title":    todo.Title,
+					}, now,
+				)
 					continue
 				}
 				// RemindAt is still inside the interval window: wait for the
@@ -135,7 +287,7 @@ func (s *Store) checkTodoTimeouts() {
 			// Otherwise: send a reminder if enough time has passed since the
 			// previous one.
 			lastRemind := todo.RemindAt
-			if lastRemind != nil && lastRemind.Add(defaultRemindInterval).After(now) {
+			if lastRemind != nil && lastRemind.Add(remindBackoff(todo.RemindCount)).After(now) {
 				continue // reminder interval not yet elapsed
 			}
 
@@ -164,7 +316,7 @@ func (s *Store) checkTodoTimeouts() {
 		}
 
 		// Re-aggregate task status after timeout handling
-		if timedOutCount > 0 {
+		if timedOutCount > 0 || hardFailedCount > 0 {
 			newStatus := aggregateTaskStatus(*task)
 			if newStatus != task.Status {
 				task.Status = newStatus
@@ -175,9 +327,10 @@ func (s *Store) checkTodoTimeouts() {
 
 	s.mu.Unlock()
 
-	if timedOutCount > 0 {
+	if timedOutCount > 0 || hardFailedCount > 0 {
 		s.log.Info("timeout monitor check completed",
 			zap.Int("timed_out", timedOutCount),
+			zap.Int("hard_deadline_failed", hardFailedCount),
 			zap.Int("reminded", remindedCount),
 			zap.Int("failed", failedCount),
 		)

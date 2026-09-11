@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as tasksApi from '@/api/tasks'
 import type { CreateTaskInput, AddTodoInput, UpdateTodoInput } from '@/api/tasks'
-import type { UIResponse, Workflow } from '@/types'
+import type { UIResponse, Workflow, ChatAttachment } from '@/types'
 
 export function useTasks(projectId: string | undefined, status?: string) {
   return useQuery({
@@ -71,8 +71,8 @@ export function useTaskComments(id: string | undefined) {
 export function useAppendTaskMessage() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ taskId, content, uiResponse }: { taskId: string; content: string; uiResponse?: UIResponse }) =>
-      tasksApi.appendTaskMessage(taskId, { content, ui_response: uiResponse }),
+    mutationFn: ({ taskId, content, uiResponse, attachments }: { taskId: string; content: string; uiResponse?: UIResponse; attachments?: ChatAttachment[] }) =>
+      tasksApi.appendTaskMessage(taskId, { content, ui_response: uiResponse, attachments }),
     onSuccess: (_res, { taskId }) => {
       invalidateTask(qc, taskId)
     },
@@ -82,8 +82,8 @@ export function useAppendTaskMessage() {
 export function useAddTaskComment() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ taskId, content, mentions }: { taskId: string; content: string; mentions?: Array<{ agent_id: string }> }) =>
-      tasksApi.addTaskComment(taskId, { content, mentions }),
+    mutationFn: ({ taskId, content, mentions, attachments }: { taskId: string; content: string; mentions?: Array<{ agent_id: string }>; attachments?: ChatAttachment[] }) =>
+      tasksApi.addTaskComment(taskId, { content, mentions, attachments }),
     onSuccess: (_res, { taskId }) => {
       invalidateTask(qc, taskId)
     },
@@ -106,7 +106,7 @@ export function useCreateTask() {
 export function useCreateTaskFromText() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: { projectId: string; content: string; agent_id?: string; file_ids?: string[]; workflow?: Workflow; workflow_index?: number; step_from?: number; step_to?: number }) =>
+    mutationFn: (input: { projectId: string; content: string; agent_id?: string; file_ids?: string[]; workflow?: Workflow; workflow_index?: number; step_from?: number; step_to?: number; attachments?: ChatAttachment[] }) =>
       tasksApi.createTaskFromText(input.projectId, {
         content: input.content,
         agent_id: input.agent_id,
@@ -115,6 +115,7 @@ export function useCreateTaskFromText() {
         workflow_index: input.workflow_index,
         step_from: input.step_from,
         step_to: input.step_to,
+        attachments: input.attachments,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tasks'] })

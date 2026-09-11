@@ -45,7 +45,7 @@ export function ProjectListPage() {
   const { data: projects, isLoading } = useQuery({
     queryKey: ['projects'],
     queryFn: async () => {
-      const res = await apiClient.get('/api/v1/projects').json<ApiListResponse<Project>>()
+      const res = await apiClient.get('projects').json<ApiListResponse<Project>>()
       return res.data.items
     },
   })
@@ -56,7 +56,7 @@ export function ProjectListPage() {
 
   const createMutation = useMutation({
     mutationFn: (data: { name: string; description: string; pm_agent_id: string; template_id?: string }) =>
-      apiClient.post('/api/v1/projects', { json: data }).json<{ data: Project }>(),
+      apiClient.post('projects', { json: data }).json<{ data: Project }>(),
     onSuccess: () => {
       message.success('项目创建成功')
       queryClient.invalidateQueries({ queryKey: ['projects'] })

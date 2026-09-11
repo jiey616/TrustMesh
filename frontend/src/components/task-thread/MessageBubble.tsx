@@ -2,6 +2,7 @@ import { cn } from '@/lib/utils'
 import type { TaskMessage } from '@/types'
 import { formatRelativeTime } from '@/lib/utils'
 import { ChatBubbleContent } from '@/components/shared/ChatBubbleContent'
+import { ChatAttachmentList } from '@/components/shared/ChatAttachmentList'
 import { UIBlockRenderer } from './UIBlockRenderer'
 
 interface MessageBubbleProps {
@@ -28,6 +29,9 @@ export function MessageBubble({ message, nextUserResponse, hideUIBlocks }: Messa
           )}
         >
           <ChatBubbleContent content={message.content} markdown={!isUser} />
+          {message.attachments && message.attachments.length > 0 && (
+            <ChatAttachmentList attachments={message.attachments} compact />
+          )}
           {hasUIBlocks && (
             <UIBlockRenderer
               blocks={message.ui_blocks!}

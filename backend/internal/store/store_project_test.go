@@ -184,7 +184,7 @@ func TestArchiveProjectBlocksAppendingPlanningMessages(t *testing.T) {
 		t.Fatalf("archive project: %v", appErr)
 	}
 
-	_, appErr = s.AppendTaskMessage(Scope{UserID: userID}, planningTask.ID, "还想补充一个需求", nil)
+	_, appErr = s.AppendTaskMessage(Scope{UserID: userID}, planningTask.ID, "还想补充一个需求", nil, nil)
 	if appErr == nil {
 		t.Fatal("expected append message to fail for archived project")
 	}

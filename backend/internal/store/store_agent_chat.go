@@ -110,9 +110,9 @@ func (s *Store) ResetAgentChat(sc Scope, agentID string) *transport.AppError {
 	return nil
 }
 
-func (s *Store) AppendAgentChatUserMessage(sc Scope, agentID, content string) (*model.AgentChatDetail, *model.AgentChatMessage, *transport.AppError) {
+func (s *Store) AppendAgentChatUserMessage(sc Scope, agentID, content string, attachments []model.ChatAttachment) (*model.AgentChatDetail, *model.AgentChatMessage, *transport.AppError) {
 	content = strings.TrimSpace(content)
-	if content == "" {
+	if content == "" && len(attachments) == 0 {
 		return nil, nil, transport.Validation("invalid content", map[string]any{"content": "required"})
 	}
 
@@ -130,12 +130,13 @@ func (s *Store) AppendAgentChatUserMessage(sc Scope, agentID, content string) (*
 	chat := s.getOrCreateActiveAgentChatUnsafe(sc.UserID, agent)
 	now := time.Now().UTC()
 	msg := model.AgentChatMessage{
-		ID:         newID(),
-		SenderType: "user",
-		Direction:  "outbound",
-		Content:    content,
-		Status:     "pending",
-		CreatedAt:  now,
+		ID:          newID(),
+		SenderType:  "user",
+		Direction:   "outbound",
+		Content:     content,
+		Status:      "pending",
+		Attachments: attachments,
+		CreatedAt:   now,
 	}
 	chat.Messages = append(chat.Messages, msg)
 	chat.UpdatedAt = now

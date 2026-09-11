@@ -53,7 +53,7 @@ func TestSendMessagePublishesChatMessageType(t *testing.T) {
 	}))
 	defer server.Close()
 
-	h := NewAgentChatHandler(st, clawsynapse.NewClient(server.URL, 0), nil)
+	h := NewAgentChatHandler(st, clawsynapse.NewClient(server.URL, 0), "", []byte("jwtsecret"), 0, nil)
 
 	body, _ := json.Marshal(map[string]any{"content": "hello"})
 	req := httptest.NewRequest(http.MethodPost, "/agents/"+agent.ID+"/chat/messages", bytes.NewReader(body))
@@ -99,7 +99,7 @@ func TestSendMessageReturnsSuccessWhenRemoteDeliverySucceededButLocalStatusUpdat
 	}))
 	defer server.Close()
 
-	h := NewAgentChatHandler(st, clawsynapse.NewClient(server.URL, 0), nil)
+	h := NewAgentChatHandler(st, clawsynapse.NewClient(server.URL, 0), "", []byte("jwtsecret"), 0, nil)
 
 	body, _ := json.Marshal(map[string]any{"content": "hello"})
 	req := httptest.NewRequest(http.MethodPost, "/agents/"+agent.ID+"/chat/messages", bytes.NewReader(body))
@@ -138,18 +138,18 @@ func TestListSessionsReturnsChatHistory(t *testing.T) {
 	now := time.Now().UTC()
 	st.SyncAgentPresence([]store.AgentPresence{{NodeID: agent.NodeID, LastSeenAt: now}}, now)
 
-	if _, _, appErr := st.AppendAgentChatUserMessage(store.Scope{UserID: user.ID}, agent.ID, "older"); appErr != nil {
+	if _, _, appErr := st.AppendAgentChatUserMessage(store.Scope{UserID: user.ID}, agent.ID, "older", nil); appErr != nil {
 		t.Fatalf("append first message: %v", appErr)
 	}
 	if appErr := st.ResetAgentChat(store.Scope{UserID: user.ID}, agent.ID); appErr != nil {
 		t.Fatalf("reset second chat: %v", appErr)
 	}
-	second, _, appErr := st.AppendAgentChatUserMessage(store.Scope{UserID: user.ID}, agent.ID, "newer")
+	second, _, appErr := st.AppendAgentChatUserMessage(store.Scope{UserID: user.ID}, agent.ID, "newer", nil)
 	if appErr != nil {
 		t.Fatalf("append second message: %v", appErr)
 	}
 
-	h := NewAgentChatHandler(st, nil, nil)
+	h := NewAgentChatHandler(st, nil, "", []byte("jwtsecret"), 0, nil)
 	req := httptest.NewRequest(http.MethodGet, "/agents/"+agent.ID+"/chat/sessions", nil)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -185,11 +185,11 @@ func TestResetReturnsNullDraftState(t *testing.T) {
 	now := time.Now().UTC()
 	st.SyncAgentPresence([]store.AgentPresence{{NodeID: agent.NodeID, LastSeenAt: now}}, now)
 
-	if _, _, appErr := st.AppendAgentChatUserMessage(store.Scope{UserID: user.ID}, agent.ID, "hello"); appErr != nil {
+	if _, _, appErr := st.AppendAgentChatUserMessage(store.Scope{UserID: user.ID}, agent.ID, "hello", nil); appErr != nil {
 		t.Fatalf("append first message: %v", appErr)
 	}
 
-	h := NewAgentChatHandler(st, nil, nil)
+	h := NewAgentChatHandler(st, nil, "", []byte("jwtsecret"), 0, nil)
 	req := httptest.NewRequest(http.MethodPost, "/agents/"+agent.ID+"/chat/reset", nil)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)

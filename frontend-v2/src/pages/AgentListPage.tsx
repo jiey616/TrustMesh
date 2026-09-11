@@ -32,7 +32,7 @@ export function AgentListPage() {
   const { data: agents, isLoading } = useQuery({
     queryKey: ['agents'],
     queryFn: async () => {
-      const res = await apiClient.get('/api/v1/agents').json<ApiListResponse<Agent>>()
+      const res = await apiClient.get('agents').json<ApiListResponse<Agent>>()
       return res.data.items
     },
   })

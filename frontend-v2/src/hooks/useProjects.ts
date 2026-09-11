@@ -61,3 +61,24 @@ export function useArchiveProject() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
   })
 }
+export type BindStepOutputInput = {
+  file_id?: string
+  artifact_id?: string
+  output_name: string
+  replace?: boolean
+}
+
+// useBindStepOutput 手工把任意文件绑定为某个步骤的交付物（项目流程 · 手工绑定）。
+export function useBindStepOutput(projectId: string | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ stepIndex, input }: { stepIndex: number; input: BindStepOutputInput }) =>
+      projectsApi.bindStepOutput(projectId!, stepIndex, input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['workflow-progress', projectId] })
+      qc.invalidateQueries({ queryKey: ['project-files', projectId] })
+      qc.invalidateQueries({ queryKey: ['project-files-browse', projectId] })
+      qc.invalidateQueries({ queryKey: ['projects', projectId] })
+    },
+  })
+}

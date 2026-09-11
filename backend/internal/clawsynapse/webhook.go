@@ -1498,10 +1498,11 @@ func (h *WebhookHandler) RedispatchTodo(ctx context.Context, taskID, todoID stri
 	}
 	payload := h.buildTodoAssignedPayload(task, todo)
 	payload.Content = "该 Todo 执行超时，系统已自动重试。请重新执行并按要求回报进度和结果。"
-	if _, err := h.client.Publish(ctx, todo.Assignee.NodeID, "todo.assigned", payload, task.ID, map[string]any{"source": "timeout_retry"}); err != nil {
+	if _, err := h.client.PublishWithRetry(ctx, todo.Assignee.NodeID, "todo.assigned", payload, task.ID, map[string]any{"source": "timeout_retry"}); err != nil {
 		if h.log != nil {
 			h.log.Warn("timeout retry dispatch failed", zap.String("task_id", task.ID), zap.String("todo_id", todo.ID), zap.String("target_node", todo.Assignee.NodeID), zap.Error(err))
 		}
+		h.recordDispatchFailureFor(todo, task, "超时重试派发失败："+err.Error())
 		return
 	}
 	if _, appErr := h.store.RecordSequentialTodoDispatch(task.ID, todo.ID); appErr != nil {
@@ -1788,6 +1789,7 @@ func (h *WebhookHandler) DispatchNextTodo(ctx context.Context, task *model.TaskD
 
 func (h *WebhookHandler) dispatchNextTodo(ctx context.Context, task *model.TaskDetail) *model.TaskDetail {
 	if h == nil || task == nil || h.client == nil {
+		h.recordDispatchFailure(task, "clawsynapse client 未就绪（NATS/转发节点未连接）")
 		return task
 	}
 	if task.Status == "canceled" {
@@ -1799,6 +1801,8 @@ func (h *WebhookHandler) dispatchNextTodo(ctx context.Context, task *model.TaskD
 		return task
 	}
 	if appErr := h.store.CheckTaskProjectActive(task.ID); appErr != nil {
+		// 项目归档时跳过派发是预期行为，不是故障：只记日志，不落失败事件
+		// （否则每个归档项目的 pending todo 都会给用户推一条「派发失败」）。
 		if h.log != nil {
 			h.log.Warn("skip sequential todo dispatch for archived task project", zap.String("task_id", task.ID), zap.Error(appErr))
 		}
@@ -1806,21 +1810,89 @@ func (h *WebhookHandler) dispatchNextTodo(ctx context.Context, task *model.TaskD
 	}
 
 	payload := h.buildTodoAssignedPayload(task, todo)
-	if _, err := h.client.Publish(ctx, todo.Assignee.NodeID, "todo.assigned", payload, task.ID, nil); err != nil {
+	if _, err := h.client.PublishWithRetry(ctx, todo.Assignee.NodeID, "todo.assigned", payload, task.ID, nil); err != nil {
 		if h.log != nil {
-			h.log.Warn("sequential todo dispatch failed", zap.String("task_id", task.ID), zap.String("todo_id", todo.ID), zap.String("target_node", todo.Assignee.NodeID), zap.Error(err))
+			h.log.Error("sequential todo dispatch failed after retries",
+				zap.String("task_id", task.ID), zap.String("todo_id", todo.ID),
+				zap.String("target_node", todo.Assignee.NodeID), zap.Error(err))
 		}
+		h.recordDispatchFailureFor(todo, task, err.Error())
 		return task
 	}
 
 	updatedTask, appErr := h.store.RecordSequentialTodoDispatch(task.ID, todo.ID)
 	if appErr != nil {
 		if h.log != nil {
-			h.log.Warn("failed to persist sequential todo dispatch", zap.String("task_id", task.ID), zap.String("todo_id", todo.ID), zap.Error(appErr))
+			h.log.Error("failed to persist sequential todo dispatch",
+				zap.String("task_id", task.ID), zap.String("todo_id", todo.ID), zap.Error(appErr))
 		}
+		h.recordDispatchFailureFor(todo, task, "派发已送达但落库失败："+appErr.Message)
 		return task
 	}
 	return updatedTask
+}
+
+// recordDispatchFailureFor records a dispatch failure for a specific todo so the
+// stall becomes visible (event + notification) and the reconciler can retry it.
+// Nil-safe so the handler stays usable in tests without a store.
+func (h *WebhookHandler) recordDispatchFailureFor(todo *model.Todo, task *model.TaskDetail, reason string) {
+	if h == nil || h.store == nil || todo == nil || task == nil {
+		return
+	}
+	if appErr := h.store.RecordSequentialDispatchFailure(task.ID, todo.ID, reason); appErr != nil && h.log != nil {
+		h.log.Warn("record dispatch failure failed",
+			zap.String("task_id", task.ID), zap.String("todo_id", todo.ID), zap.Error(appErr))
+	}
+}
+
+// recordDispatchFailure is the fallback for paths that cannot resolve the todo.
+func (h *WebhookHandler) recordDispatchFailure(task *model.TaskDetail, reason string) {
+	if task == nil {
+		return
+	}
+	if todo := task.NextDispatchableTodo(); todo != nil {
+		h.recordDispatchFailureFor(todo, task, reason)
+	}
+}
+
+// RetryDispatch re-publishes a specific todo to its assignee. Used by the
+// background dispatch reconciler (store.StartDispatchReconciler) to heal
+// pipelines broken by a silently failed dispatch. It deliberately does NOT go
+// through dispatchNextTodo (no recursion), and relies on the store for
+// idempotency: RecordSequentialTodoDispatch rejects non-pending todos.
+func (h *WebhookHandler) RetryDispatch(ctx context.Context, taskID, todoID string) error {
+	if h == nil || h.client == nil || h.store == nil {
+		return fmt.Errorf("dispatch dependencies not ready")
+	}
+	task := h.store.GetTaskInternal(taskID)
+	if task == nil {
+		return fmt.Errorf("task not found: %s", taskID)
+	}
+	// 归档项目的 pending todo 不应被补派（与 dispatchNextTodo 语义一致）。
+	if appErr := h.store.CheckTaskProjectActive(taskID); appErr != nil {
+		return nil
+	}
+	todo := findTodo(task, todoID)
+	if todo == nil {
+		return fmt.Errorf("todo not found: %s", todoID)
+	}
+	if todo.Status != "pending" {
+		return nil // already dispatched/started elsewhere: nothing to heal
+	}
+	payload := h.buildTodoAssignedPayload(task, todo)
+	payload.Content = "系统检测到该 Todo 未被派发或派发中断，现已自动补派。请执行并按要求回报进度和结果。"
+	if _, err := h.client.PublishWithRetry(ctx, todo.Assignee.NodeID, "todo.assigned", payload, task.ID, map[string]any{"source": "dispatch_reconcile"}); err != nil {
+		h.recordDispatchFailureFor(todo, task, "对账补派失败："+err.Error())
+		return err
+	}
+	if _, appErr := h.store.RecordSequentialTodoDispatch(task.ID, todo.ID); appErr != nil {
+		// TODO_NOT_PENDING is benign: another path got there first.
+		if appErr.Code != "TODO_NOT_PENDING" {
+			h.recordDispatchFailureFor(todo, task, "对账补派落库失败："+appErr.Message)
+			return fmt.Errorf("%s", appErr.Message)
+		}
+	}
+	return nil
 }
 
 func (h *WebhookHandler) buildTodoAssignedPayload(task *model.TaskDetail, todo *model.Todo) protocol.TodoAssignedPayload {

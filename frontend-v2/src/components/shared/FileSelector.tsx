@@ -39,7 +39,7 @@ export function FileSelector({
     <div className="flex flex-col gap-2">
       <button
         type="button"
-        className="flex items-center gap-1.5 text-sm font-medium text-white/70 hover:text-white transition-colors"
+        className="flex items-center gap-1.5 text-sm font-medium text-[color:var(--text-secondary)] hover:text-[color:var(--text-primary)] transition-colors"
         onClick={() => setExpanded(!expanded)}
       >
         <PaperClipOutlined />
@@ -48,7 +48,7 @@ export function FileSelector({
       </button>
 
       {expanded && (
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-2">
+        <div className="rounded-lg border border-[color:var(--line-strong)] bg-[color:var(--surface)] p-2">
           {isLoading ? (
             <div className="py-4 text-center">
               <Spin size="small" />
@@ -60,17 +60,17 @@ export function FileSelector({
               {fileList.map((file: ProjectFile) => (
                 <label
                   key={file.id}
-                  className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-white/5"
+                  className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-[color:var(--surface-sunken)]"
                 >
                   <Checkbox
                     checked={selectedIds.includes(file.id)}
                     onChange={() => onToggle(file.id)}
                   />
-                  <span className="flex-1 truncate text-white/80">{file.file_name}</span>
+                  <span className="flex-1 truncate text-[color:var(--text-primary)]">{file.file_name}</span>
                   <Tag className="!text-[10px]" color="default">
                     {sourceLabel[file.source] ?? file.source}
                   </Tag>
-                  <span className="shrink-0 text-xs text-white/40">{formatFileSize(file.file_size)}</span>
+                  <span className="shrink-0 text-xs text-[color:var(--text-quaternary)]">{formatFileSize(file.file_size)}</span>
                 </label>
               ))}
             </div>

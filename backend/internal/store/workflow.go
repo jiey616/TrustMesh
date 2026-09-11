@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 	"trustmesh/backend/internal/model"
 	"trustmesh/backend/internal/transport"
 )
@@ -85,10 +86,11 @@ type TaskCancelInput struct {
 }
 
 type TaskCommentInput struct {
-	TaskID   string
-	TodoID   string
-	Content  string
-	Mentions []TaskCommentMentionInput
+	TaskID      string
+	TodoID      string
+	Content     string
+	Mentions    []TaskCommentMentionInput
+	Attachments []model.ChatAttachment
 }
 
 type TaskCommentMentionInput struct {
@@ -198,6 +200,11 @@ func (s *Store) RecordSequentialTodoDispatch(taskID, todoID string) (*model.Task
 	}
 
 	now := time.Now().UTC()
+	// P-01: record a successful dispatch so a later stall is distinguishable
+	// from "never dispatched", and clear any previous failure trace.
+	todo.DispatchAttempts++
+	todo.LastDispatchAt = &now
+	todo.LastDispatchErr = nil
 	message := fmt.Sprintf("按顺序派发给 %s", todo.Assignee.Name)
 	s.recordTodoDispatchUnsafe(task, todo, "system", "system", "System", &message, map[string]any{
 		"todo_id":           todo.ID,
@@ -543,6 +550,60 @@ func (s *Store) recordTodoDispatchUnsafe(task *model.TaskDetail, todo *model.Tod
 	task.Version++
 }
 
+// RecordSequentialDispatchFailure records a failed sequential dispatch so the
+// pipeline stall becomes observable (event + user notification) and the
+// background reconciler can retry it later. Before this, dispatchNextTodo's
+// four silent `return task` paths left the todo sitting in pending with no
+// trace whatsoever (2026-09-10: TD_04 stalled 56min).
+//
+// Caller must NOT hold s.mu (this method locks).
+func (s *Store) RecordSequentialDispatchFailure(taskID, todoID, errMsg string) *transport.AppError {
+	taskID = strings.TrimSpace(taskID)
+	todoID = strings.TrimSpace(todoID)
+	if taskID == "" || todoID == "" {
+		return transport.Validation("invalid dispatch failure payload", map[string]any{"task_id": "required", "todo_id": "required"})
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	task, ok := s.tasks[taskID]
+	if !ok {
+		return transport.NotFound("task not found")
+	}
+	idx := findTodoIndex(task, todoID)
+	if idx < 0 {
+		return transport.NotFound("todo not found")
+	}
+	todo := &task.Todos[idx]
+
+	now := time.Now().UTC()
+	todo.DispatchAttempts++
+	todo.LastDispatchAt = &now
+	msg := errMsg
+	todo.LastDispatchErr = &msg
+
+	// 通知节流：后台对账每 2 分钟补派一次，若持续失败会无限推通知。
+	// 只在前 3 次尝试落事件 + 通知，之后静默记录（字段仍在更新，便于观测）。
+	if todo.DispatchAttempts <= 3 {
+		content := fmt.Sprintf("自动派发失败：%s（第 %d 次，将由后台对账自动重试）", todo.Title, todo.DispatchAttempts)
+		s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID,
+			"system", "dispatcher", "派发器", "todo_dispatch_failed", &content,
+			map[string]any{
+				"todo_id":       todo.ID,
+				"todo_title":    todo.Title,
+				"attempts":      todo.DispatchAttempts,
+				"error":         errMsg,
+				"assignee_name": todo.Assignee.Name,
+			}, now)
+	}
+	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
+		return mongoWriteError(err)
+	}
+	s.publishTaskUnsafe(task.ID)
+	return nil
+}
+
 func normalizeTaskCreateTodos(in []TaskCreateTodoInput) ([]TaskCreateTodoInput, *transport.AppError) {
 	out := make([]TaskCreateTodoInput, len(in))
 	copy(out, in)
@@ -661,8 +722,10 @@ func (s *Store) UpdateTodoProgressByNode(nodeID string, in TodoProgressInput) (*
 	}
 	// Any progress report keeps the todo alive: the timeout monitor uses
 	// LastActivityAt so long-running tasks that keep reporting are not
-	// spuriously reset/retried.
+	// spuriously reset/retried. It is also a PRODUCTIVE-progress signal for the
+	// hard-deadline gate (P-03).
 	todo.LastActivityAt = &now
+	todo.LastProgressAt = &now
 	todo.RemindCount = 0
 	todo.RemindAt = nil
 	progress := in.Message
@@ -741,6 +804,7 @@ func (s *Store) CompleteTodoByNodeWithMessageID(nodeID, messageID string, in Tod
 	todo.Status = "done"
 	todo.CompletedAt = &now
 	todo.LastActivityAt = &now
+	todo.LastProgressAt = &now // P-03
 	todo.RemindCount = 0
 	todo.RemindAt = nil
 	todo.FailedAt = nil
@@ -1183,20 +1247,53 @@ func (s *Store) AddTaskCommentByNode(nodeID string, in TaskCommentInput) (*model
 
 	now := time.Now().UTC()
 	s.markAgentSeenUnsafe(agent.ID, now)
-	comment := s.addCommentUnsafe(task, in.TodoID, "agent", agent.ID, agent.Name, in.Content, mentions, now)
-	// 执行者的任何评论上报都是活跃信号：重置其名下 in_progress todo 的
-	// 超时催办计数（LastActivityAt/RemindCount/RemindAt）。
-	// 否则 persona 型执行者（不走 todo.progress 而用 task.comment 汇报）
-	// 会在持续正常工作的同时被超时监控累计 3 次提醒误判为失败。
-	// 与 UpdateTodoProgress 的保活语义对齐（见该函数内注释）。
-	for i := range task.Todos {
-		td := &task.Todos[i]
-		if td.Status != "in_progress" || td.Assignee.AgentID != agent.ID {
-			continue
+	comment := s.addCommentUnsafe(task, in.TodoID, "agent", agent.ID, agent.Name, in.Content, mentions, in.Attachments, now)
+	// 执行者的评论上报默认是活跃信号：重置其名下 in_progress todo 的超时
+	// 催办计数（LastActivityAt/RemindCount/RemindAt）。否则 persona 型执行者
+	// （不走 todo.progress 而用 task.comment 汇报进度）会在持续正常工作的
+	// 同时被超时监控累计 3 次提醒误判为失败。与 UpdateTodoProgress 的保活
+	// 语义对齐（见该函数内注释）。
+	//
+	// 例外（P-02）：明确匹配错误特征的「故障上报」类评论不参与续命。崩溃中的
+	// agent 会周期性上报故障，若照旧续命，超时判失败将永远无法触发
+	// （2026-09-10：TD_05 靠 14 次错误上报续命空转 8 小时）。
+	// 无法归类的模糊评论按续命处理（保守优先，宁可漏判不可误杀）。
+	if IsErrorComment(in.Content) {
+		if s.log != nil {
+			s.log.Info("agent comment classified as error report; not refreshing todo liveness",
+				zap.String("task_id", task.ID), zap.String("agent_id", agent.ID))
 		}
-		td.LastActivityAt = &now
-		td.RemindCount = 0
-		td.RemindAt = nil
+		// P-08: a run that hit its tool-call budget is silently truncated
+		// before it can send todo.complete, so the todo merely looks slow and
+		// gets reminded for hours. Make it an explicit, visible signal instead
+		// of letting it pass as generic "no progress".
+		if IsBudgetExhaustedComment(in.Content) {
+			budgetMsg := "执行侧 run 预算耗尽，执行被静默截断（未发出 todo.complete）"
+			excerpt := in.Content
+			runes := []rune(excerpt)
+			if len(runes) > 200 {
+				excerpt = string(runes[:200])
+			}
+			s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, in.TodoID,
+				"system", "timeout-monitor", "平台", "todo_run_budget_exhausted", &budgetMsg,
+				map[string]any{
+					"todo_id":    in.TodoID,
+					"agent_id":   agent.ID,
+					"agent_name": agent.Name,
+					"excerpt":    excerpt,
+				}, now)
+		}
+	} else {
+		for i := range task.Todos {
+			td := &task.Todos[i]
+			if td.Status != "in_progress" || td.Assignee.AgentID != agent.ID {
+				continue
+			}
+			td.LastActivityAt = &now
+			td.RemindCount = 0
+			td.RemindAt = nil
+			td.LastProgressAt = &now // P-03: 有效进展时间戳
+		}
 	}
 	if err := s.persistCommentUnsafe(comment); err != nil {
 		return nil, mongoWriteError(err)
@@ -1227,7 +1324,7 @@ func (s *Store) AppendSystemTaskComment(taskID, content string) (*model.Comment,
 	}
 
 	now := time.Now().UTC()
-	comment := s.addCommentUnsafe(task, "", "system", "system", "系统", content, nil, now)
+	comment := s.addCommentUnsafe(task, "", "system", "system", "系统", content, nil, nil, now)
 	if err := s.persistCommentUnsafe(comment); err != nil {
 		return nil, mongoWriteError(err)
 	}
@@ -1327,7 +1424,7 @@ func (s *Store) AddTaskComment(sc Scope, taskID string, in TaskCommentInput) (*m
 	if u, ok := s.users[sc.UserID]; ok {
 		userName = u.Name
 	}
-	comment := s.addCommentUnsafe(task, in.TodoID, "user", sc.UserID, userName, in.Content, mentions, now)
+	comment := s.addCommentUnsafe(task, in.TodoID, "user", sc.UserID, userName, in.Content, mentions, in.Attachments, now)
 	if err := s.persistCommentUnsafe(comment); err != nil {
 		return nil, mongoWriteError(err)
 	}
@@ -1355,22 +1452,23 @@ func (s *Store) ListTaskComments(sc Scope, taskID string) ([]model.Comment, *tra
 	return out, nil
 }
 
-func (s *Store) addCommentUnsafe(task *model.TaskDetail, todoID, actorType, actorID, actorName, content string, mentions []model.CommentMention, at time.Time) *model.Comment {
+func (s *Store) addCommentUnsafe(task *model.TaskDetail, todoID, actorType, actorID, actorName, content string, mentions []model.CommentMention, attachments []model.ChatAttachment, at time.Time) *model.Comment {
 	comment := &model.Comment{
 		ID:     newID(),
 		UserID: task.UserID,
 		// 阶段 1 双写漏网：原本从作者个人租户派生，企业租户下评论会挂到
 		// 个人租户、与所属任务的 org 不一致。评论是任务的附属资源，
 		// 归属必须跟随任务。
-		OrgID:  task.OrgID,
-		TaskID: task.ID,
-		TodoID:    todoID,
-		ActorType: actorType,
-		ActorID:   actorID,
-		ActorName: actorName,
-		Content:   content,
-		Mentions:  append([]model.CommentMention(nil), mentions...),
-		CreatedAt: at,
+		OrgID:       task.OrgID,
+		TaskID:      task.ID,
+		TodoID:      todoID,
+		ActorType:   actorType,
+		ActorID:     actorID,
+		ActorName:   actorName,
+		Content:     content,
+		Mentions:    append([]model.CommentMention(nil), mentions...),
+		Attachments: append([]model.ChatAttachment(nil), attachments...),
+		CreatedAt:   at,
 	}
 	s.taskComments[task.ID] = append(s.taskComments[task.ID], *comment)
 	s.publishUserEventUnsafe(task.UserID, "task.comment.created", map[string]any{
@@ -1391,6 +1489,10 @@ func (s *Store) addCommentUnsafe(task *model.TaskDetail, todoID, actorType, acto
 	}
 	if len(comment.Mentions) > 0 {
 		metadata["mentions"] = comment.Mentions
+	}
+	if len(comment.Attachments) > 0 {
+		// 附件元数据随事件持久化（URL 是 bson:"-" 不落库，读取时由 handler 补签名链接）
+		metadata["attachments"] = comment.Attachments
 	}
 	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todoID, actorType, actorID, actorName, "task_comment", &content, metadata, at)
 
@@ -2139,6 +2241,98 @@ func (s *Store) ReviewTodo(sc Scope, nodeID, taskID, todoID, action, reason stri
 	return s.copyTaskWithArtifactsUnsafe(task), reworked, nil
 }
 
+// maxReopens caps how many times one todo may be brought back from a terminal
+// state. See ReopenTodo.
+const maxReopens = 3
+
+// ReopenTodo brings a terminal todo (failed / canceled / done) back to
+// in_progress so work that actually finished AFTER the todo was failed can
+// still be recorded instead of being silently dropped.
+//
+// Why this exists: until now the platform had no path back from a terminal
+// state. On 2026-09-10 TD_06 was failed at 23:08 while its agent was in fact
+// still running; the agent went on to produce 4/6 videos and upload a
+// manifest at 00:08 which bound to the todo's output slot - leaving a failed
+// todo carrying a done deliverable, with no way to reconcile either side.
+//
+// Deliberately does NOT re-dispatch: reopening only re-opens the door so the
+// in-flight agent (or an explicit manual retry) can report. Auto-dispatching
+// would risk a second concurrent execution of a step that is still running.
+func (s *Store) ReopenTodo(sc Scope, taskID, todoID, reason string) (*model.TaskDetail, *model.Todo, *transport.AppError) {
+	taskID = strings.TrimSpace(taskID)
+	todoID = strings.TrimSpace(todoID)
+	reason = strings.TrimSpace(reason)
+	if taskID == "" || todoID == "" {
+		return nil, nil, transport.Validation("invalid reopen payload", map[string]any{"task_id": "required", "todo_id": "required"})
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	task, ok := s.tasks[taskID]
+	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
+		return nil, nil, transport.NotFound("task not found")
+	}
+	if appErr := s.ensureTaskProjectActiveUnsafe(task); appErr != nil {
+		return nil, nil, appErr
+	}
+	idx := findTodoIndex(task, todoID)
+	if idx < 0 {
+		return nil, nil, transport.NotFound("todo not found")
+	}
+	todo := &task.Todos[idx]
+	switch todo.Status {
+	case "failed", "canceled", "done":
+	default:
+		return nil, nil, transport.Conflict("TODO_NOT_TERMINAL", "only a finished todo can be reopened")
+	}
+	if todo.ReopenCount >= maxReopens {
+		return nil, nil, transport.Conflict("TODO_REOPEN_LIMIT",
+			fmt.Sprintf("todo already reopened %d times (limit %d)", todo.ReopenCount, maxReopens))
+	}
+
+	now := time.Now().UTC()
+	todo.Status = "in_progress"
+	todo.CompletedAt = nil
+	todo.FailedAt = nil
+	todo.CanceledAt = nil
+	todo.Error = nil
+	todo.CancelReason = nil
+	// Reset the liveness counters: a reopened todo starts a fresh timeout
+	// budget, otherwise it would be failed again by reminders accumulated
+	// while it sat in the terminal state.
+	todo.RemindCount = 0
+	todo.RemindAt = nil
+	todo.LastProgressAt = &now
+	todo.LastActivityAt = &now
+	todo.ReopenCount++
+
+	userName := ""
+	if u, ok := s.users[sc.UserID]; ok {
+		userName = u.Name
+	}
+	msg := fmt.Sprintf("todo reopened: %s", todo.Title)
+	if reason != "" {
+		msg = fmt.Sprintf("todo reopened (%s): %s", reason, todo.Title)
+	}
+	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "user", sc.UserID, userName,
+		"todo_reopened", &msg, map[string]any{
+			"todo_id":      todo.ID,
+			"task_title":   task.Title,
+			"todo_title":   todo.Title,
+			"reason":       reason,
+			"reopen_count": todo.ReopenCount,
+		}, now)
+
+	s.updateTaskStatusUnsafe(task, now)
+	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
+		return nil, nil, mongoWriteError(err)
+	}
+	_ = s.persistTaskEventsUnsafe(task.ID)
+	s.publishTaskUnsafe(task.ID)
+	return s.copyTaskWithArtifactsUnsafe(task), todo, nil
+}
+
 // triggerReworkUnsafe cascades a rework request starting at the audited todo
 // auditedIdx. The audited todo and every todo from that point onward (for
 // agent reviews this includes the reviewer itself) are reset to pending,
@@ -2704,6 +2898,8 @@ func (s *Store) GetProjectWorkflowProgress(sc Scope, projectID string) (*model.W
 			Role:    step.Role,
 			AgentID: step.AgentID,
 			Status:  "unassigned",
+			// 声明输出位透出给前端：手工绑定交付物时据此限定可选范围。
+			DeclaredOutputs: declaredOutputNames(step),
 		}
 		if task, todos, ok := s.taskForPrimaryStepUnsafe(projectID, pw.Name, i); ok {
 			ps.TaskID = task.ID
@@ -2932,4 +3128,385 @@ func workflowStepStatus(todo *model.Todo) string {
 	default:
 		return "pending"
 	}
+}
+
+// ─── 项目流程 · 手工绑定交付物（任意文件 → 任意步骤） ───
+
+// BindStepOutputRequest is the payload for manually binding an arbitrary
+// project file to one of the primary workflow's step output slots.
+// Exactly one of FileID / ArtifactID must be set.
+type BindStepOutputRequest struct {
+	// FileID targets a ProjectFile (project file tree entry). This is what
+	// makes hand-uploaded files bindable — they have no TaskArtifact yet.
+	FileID string `json:"file_id"`
+	// ArtifactID targets an existing agent artifact by its transfer ID.
+	ArtifactID string `json:"artifact_id"`
+	// OutputName is the declared slot on the target step to bind to.
+	OutputName string `json:"output_name"`
+	// Replace allows overwriting a slot that is already bound.
+	Replace bool `json:"replace"`
+}
+
+// BindStepOutput promotes any file the caller can see to a pipeline step's
+// final deliverable, addressed by project + step index instead of task + todo.
+//
+// Why this is separate from BindArtifactOutput: that one only reaches artifacts
+// already filed under the same task and its UI forces the target todo to be the
+// artifact's own todo, so users could neither attach a file produced by another
+// task nor a file they uploaded by hand into the project file tree. Here the
+// backend resolves step → owning task → owning todo by itself and materialises
+// a TaskArtifact when the source is a plain project file.
+//
+// Policy (confirmed with the user 2026-09-11):
+//   - a step that declares output slots accepts only those names; a step with
+//     no declared slots keeps the legacy free-form behaviour;
+//   - a step with no dispatched task/todo is rejected (409 STEP_NOT_STARTED)
+//     instead of stashing a half-written binding nothing would reconcile.
+func (s *Store) BindStepOutput(sc Scope, projectID string, stepIndex int, req BindStepOutputRequest) (*model.TaskArtifact, *transport.AppError) {
+	projectID = strings.TrimSpace(projectID)
+	fileID := strings.TrimSpace(req.FileID)
+	artifactID := strings.TrimSpace(req.ArtifactID)
+	outputName := strings.TrimSpace(req.OutputName)
+
+	if projectID == "" {
+		return nil, transport.Validation("invalid bind payload", map[string]any{"project_id": "required"})
+	}
+	if fileID == "" && artifactID == "" {
+		return nil, transport.Validation("invalid bind payload", map[string]any{
+			"file_id":     "file_id or artifact_id is required",
+			"artifact_id": "file_id or artifact_id is required",
+		})
+	}
+	if outputName == "" {
+		return nil, transport.Validation("invalid bind payload", map[string]any{"output_name": "required"})
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	project, ok := s.projects[projectID]
+	if !ok || !visibleToScope(sc, project.OrgID, project.UserID) {
+		return nil, transport.NotFound("project not found")
+	}
+	if !hasPrimaryWorkflow(project) {
+		return nil, transport.BadRequest("PROJECT_HAS_NO_WORKFLOW", "项目尚未配置总流程，无法绑定交付物")
+	}
+	pw := primaryWorkflowUnsafe(project)
+	if stepIndex < 0 || stepIndex >= len(pw.Steps) {
+		return nil, transport.Validation("step index out of range", map[string]any{
+			"step_index": fmt.Sprintf("must be within [0,%d)", len(pw.Steps)),
+		})
+	}
+	step := pw.Steps[stepIndex]
+
+	// 输出位约束：步骤声明了输出位就只认已声明的名字，避免拼出下游步骤取不到的名字。
+	if declared := declaredOutputNames(step); len(declared) > 0 && !stringIn(declared, outputName) {
+		return nil, transport.BadRequest("OUTPUT_SLOT_NOT_DECLARED",
+			fmt.Sprintf("步骤「%s」声明的输出位为 %s，不接受「%s」", step.Name, strings.Join(declared, "、"), outputName))
+	}
+
+	// 解析承载任务与 todo：步骤必须已经派发，否则没有可落库的载体。
+	task, todos, found := s.taskForPrimaryStepUnsafe(projectID, pw.Name, stepIndex)
+	if !found || task == nil || len(todos) == 0 {
+		return nil, transport.Conflict("STEP_NOT_STARTED",
+			fmt.Sprintf("步骤「%s」尚未派发任务，无法绑定交付物", step.Name))
+	}
+	target := s.tasks[task.ID]
+	if target == nil {
+		return nil, transport.NotFound("task not found")
+	}
+
+	// 定位源文件：ProjectFile 优先（覆盖手工上传的文件），其次已有 artifact。
+	var pf *model.ProjectFile
+	var src *model.TaskArtifact
+	if fileID != "" {
+		pf = s.projectFiles[fileID]
+		if pf == nil {
+			return nil, transport.NotFound("project file not found")
+		}
+		if pf.ProjectID != projectID {
+			return nil, transport.BadRequest("FILE_NOT_IN_PROJECT", "该文件不属于当前项目")
+		}
+		if pf.TransferID != "" {
+			src = s.artifactByTransferIDUnsafe(pf.TransferID)
+		}
+	} else {
+		src = s.artifactByTransferIDUnsafe(artifactID)
+		if src == nil {
+			return nil, transport.NotFound("artifact not found")
+		}
+		if st, ok := s.tasks[src.TaskID]; !ok || st.ProjectID != projectID {
+			return nil, transport.BadRequest("ARTIFACT_NOT_IN_PROJECT", "该产物不属于当前项目")
+		}
+		if src.ProjectFileID != "" {
+			pf = s.projectFiles[src.ProjectFileID]
+		}
+	}
+	if pf == nil && src == nil {
+		return nil, transport.NotFound("file not found")
+	}
+
+	// 目标 todo：优先复用已占用该输出位的 todo（覆盖语义），否则用该步骤对齐出的主 todo。
+	ownerIdx := -1
+	for i := range target.Todos {
+		for _, o := range target.Todos[i].Outputs {
+			if o.OutputName == outputName {
+				ownerIdx = i
+				break
+			}
+		}
+		if ownerIdx >= 0 {
+			break
+		}
+	}
+	if ownerIdx >= 0 && !req.Replace {
+		return nil, transport.Conflict("OUTPUT_SLOT_OCCUPIED",
+			fmt.Sprintf("输出位「%s」已被占用，如需改写请传 replace=true", outputName))
+	}
+	if ownerIdx < 0 {
+		ownerIdx = todoIndexByID(target, todos[0].ID)
+		if ownerIdx < 0 {
+			return nil, transport.NotFound("todo not found in task")
+		}
+	}
+	owner := &target.Todos[ownerIdx]
+
+	// 在目标任务下找到（或物化）指向同一物理文件的 artifact。
+	arts := s.taskArtifacts[target.ID]
+	artIdx := -1
+	for i := range arts {
+		if pf != nil && pf.ID != "" && arts[i].ProjectFileID == pf.ID {
+			artIdx = i
+			break
+		}
+		if src != nil && arts[i].TransferID == src.TransferID {
+			artIdx = i
+			break
+		}
+	}
+	if artIdx < 0 {
+		// 物化：源是手工上传的 project file，或来自别的任务。
+		fresh := model.TaskArtifact{
+			TransferID: newID(),
+			OrgID:      target.OrgID,
+			TaskID:     target.ID,
+			CreatedAt:  time.Now().UTC(),
+			Kind:       model.ArtifactKindDeliverable,
+		}
+		if pf != nil {
+			fresh.FileName = pf.FileName
+			fresh.FileSize = pf.FileSize
+			fresh.LocalPath = pf.LocalPath
+			fresh.MimeType = pf.MimeType
+			fresh.ProjectFileID = pf.ID
+			fresh.FromAgentID = pf.AgentID
+			fresh.FromAgentName = pf.AgentName
+		} else if src != nil {
+			fresh.FileName = src.FileName
+			fresh.FileSize = src.FileSize
+			fresh.LocalPath = src.LocalPath
+			fresh.MimeType = src.MimeType
+			fresh.ProjectFileID = src.ProjectFileID
+			fresh.FromNodeID = src.FromNodeID
+			fresh.FromAgentID = src.FromAgentID
+			fresh.FromAgentName = src.FromAgentName
+		}
+		arts = append(arts, fresh)
+		artIdx = len(arts) - 1
+	}
+
+	now := time.Now().UTC()
+	fileRef := arts[artIdx].ProjectFileID
+	if fileRef == "" && pf != nil {
+		fileRef = pf.ID
+	}
+	arts[artIdx].TodoID = owner.ID
+	arts[artIdx].Kind = model.ArtifactKindDeliverable
+	arts[artIdx].OutputName = outputName
+	// 手工绑定是显式意图，绝不算「终态后迟到」。
+	arts[artIdx].Orphan = false
+	s.taskArtifacts[target.ID] = arts
+
+	// 同一个输出位在别的 todo 上先清掉，避免一个位挂两份产物。
+	for i := range target.Todos {
+		if i == ownerIdx {
+			continue
+		}
+		kept := target.Todos[i].Outputs[:0]
+		for _, o := range target.Todos[i].Outputs {
+			if o.OutputName != outputName {
+				kept = append(kept, o)
+			}
+		}
+		target.Todos[i].Outputs = kept
+	}
+	bound := model.TodoOutput{OutputName: outputName, ArtifactID: arts[artIdx].TransferID, FileRef: fileRef}
+	// 覆盖旧绑定时记住被顶掉的产物：它若不再被任何输出位引用，就得降级成过程文件，
+	// 否则 stepOutputsUnsafe 的兜底分支（按 TodoID 收 deliverable）会继续把它列出来，
+	// pipeline 上同一位置就会同时出现新旧两份交付物。
+	displaced := ""
+	replaced := false
+	for i := range owner.Outputs {
+		if owner.Outputs[i].OutputName == outputName {
+			displaced = owner.Outputs[i].ArtifactID
+			owner.Outputs[i] = bound
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		owner.Outputs = append(owner.Outputs, bound)
+	}
+	if displaced != "" && displaced != arts[artIdx].TransferID {
+		// 被顶掉的那个产物，以及同一 todo 下指向同一文件的重复副本，全都要降级。
+		// agent 重复上传会留下多条指向同一文件的冗余 artifact，只降级
+		// todo.Outputs 里记录的那一条不够 —— 兜底分支还会把副本列出来，
+		// pipeline 上新旧两份并存（2026-09-11 实测 TD_06 即如此）。
+		displacedFile := ""
+		for i := range arts {
+			if arts[i].TransferID == displaced {
+				displacedFile = arts[i].ProjectFileID
+				break
+			}
+		}
+		for i := range arts {
+			if arts[i].TransferID == arts[artIdx].TransferID || arts[i].Kind != model.ArtifactKindDeliverable {
+				continue
+			}
+			if arts[i].TodoID != owner.ID {
+				continue
+			}
+			sameFile := displacedFile != "" && arts[i].ProjectFileID == displacedFile
+			if !sameFile && arts[i].TransferID != displaced {
+				continue
+			}
+			// 还被别的输出位引用的产物不能动。
+			if outputArtifactReferenced(target, arts[i].TransferID) {
+				continue
+			}
+			arts[i].Kind = model.ArtifactKindProcess
+			arts[i].OutputName = ""
+			if err := s.persistArtifactUnsafe(&arts[i]); err != nil && s.log != nil {
+				s.log.Warn("failed to demote displaced artifact",
+					zap.String("transfer_id", arts[i].TransferID), zap.Error(err))
+			}
+		}
+	}
+	// P-03: 手工绑定是正向进展（与 BindArtifactOutput 同款语义）。
+	owner.LastActivityAt = &now
+	owner.LastProgressAt = &now
+
+	// 项目文件树上也标成交付物，文件区才能显示「交付」标签。
+	if pf == nil && fileRef != "" {
+		pf = s.projectFiles[fileRef]
+	}
+	if pf != nil && (pf.Kind != model.ArtifactKindDeliverable || pf.OutputName != outputName) {
+		pf.Kind = model.ArtifactKindDeliverable
+		pf.OutputName = outputName
+		if err := s.persistProjectFileUnsafe(pf); err != nil && s.log != nil {
+			s.log.Warn("failed to persist project file kind",
+				zap.String("file_id", pf.ID), zap.Error(err))
+		}
+	}
+
+	source := "artifact"
+	if pf != nil && (src == nil || src.TaskID != target.ID) {
+		source = "project_file"
+	}
+
+	userName := ""
+	if u, ok := s.users[sc.UserID]; ok {
+		userName = u.Name
+	}
+	msg := fmt.Sprintf("交付物已手工绑定：%s → 步骤「%s」", arts[artIdx].FileName, step.Name)
+	s.addEventUnsafe(target.UserID, target.ProjectID, target.ID, owner.ID, "user", sc.UserID, userName,
+		"todo_output_bound_manually", &msg, map[string]any{
+			"todo_id":     owner.ID,
+			"task_title":  target.Title,
+			"step_index":  stepIndex,
+			"step_name":   step.Name,
+			"output_name": outputName,
+			"file_name":   arts[artIdx].FileName,
+			"source":      source,
+			"replace":     req.Replace,
+		}, now)
+
+	if err := s.persistArtifactUnsafe(&arts[artIdx]); err != nil && s.log != nil {
+		s.log.Warn("failed to persist bound artifact",
+			zap.String("transfer_id", arts[artIdx].TransferID), zap.Error(err))
+	}
+	if err := s.persistTaskBundleUnsafe(target.ID); err != nil {
+		return nil, mongoWriteError(err)
+	}
+	_ = s.persistTaskEventsUnsafe(target.ID)
+	s.publishTaskUnsafe(target.ID)
+
+	// 绑定成功 = deliverable_unbound 规则不再满足 → 进入观察期。
+	s.markOpsIncidentClearedUnsafe(model.RuleDeliverableUnbound, target.ID, owner.ID, now)
+
+	clone := arts[artIdx]
+	return &clone, nil
+}
+
+// declaredOutputNames returns the non-empty output slot names declared by a step.
+func declaredOutputNames(step model.WorkflowStep) []string {
+	out := make([]string, 0, len(step.Outputs))
+	for _, o := range step.Outputs {
+		if name := strings.TrimSpace(o.Name); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+func stringIn(xs []string, v string) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// outputArtifactReferenced reports whether any todo of the task still binds the
+// artifact through a declared output slot.
+func outputArtifactReferenced(task *model.TaskDetail, transferID string) bool {
+	if transferID == "" {
+		return false
+	}
+	for i := range task.Todos {
+		for _, o := range task.Todos[i].Outputs {
+			if o.ArtifactID == transferID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// todoIndexByID returns the index of the todo with the given ID, or -1.
+func todoIndexByID(task *model.TaskDetail, todoID string) int {
+	for i := range task.Todos {
+		if task.Todos[i].ID == todoID {
+			return i
+		}
+	}
+	return -1
+}
+
+// artifactByTransferIDUnsafe scans every task's artifact slice for a transfer ID.
+// Caller must hold at least s.mu.RLock.
+func (s *Store) artifactByTransferIDUnsafe(transferID string) *model.TaskArtifact {
+	if transferID == "" {
+		return nil
+	}
+	for taskID := range s.taskArtifacts {
+		arts := s.taskArtifacts[taskID]
+		for i := range arts {
+			if arts[i].TransferID == transferID {
+				return &arts[i]
+			}
+		}
+	}
+	return nil
 }

@@ -3,7 +3,6 @@ import { Badge, Button, Tag, Typography, Space, App, Empty, Drawer, Select, Skel
 import {
   CloseOutlined,
   PlusOutlined,
-  SendOutlined,
   StopOutlined,
   LoadingOutlined,
   CheckCircleOutlined,
@@ -50,7 +49,9 @@ import { ThinkingIndicator } from '@/components/task/ThinkingIndicator'
 import { TaskCommentComposer, type TaskMentionCandidate, type TaskCommentSubmitInput } from '@/components/task/TaskCommentComposer'
 import { FileViewer } from '@/components/task/FileViewer'
 import { AgentAvatar } from '@/components/shared/AgentAvatar'
-import type { TaskMessage, Workflow, WorkflowStepProgress, Event, EventType, TaskDetail, UIResponse } from '@/types'
+import { ChatComposer } from '@/components/shared/ChatComposer'
+import { ChatAttachmentList } from '@/components/shared/ChatAttachmentList'
+import type { TaskMessage, Workflow, WorkflowStepProgress, Event, EventType, TaskDetail, ChatAttachment } from '@/types'
 
 const { Title, Text } = Typography
 
@@ -148,9 +149,10 @@ function deriveTitlePreview(content: string): string {
 }
 
 const EXAMPLE_TEMPLATES = [
-  '实现用户登录功能，支持邮箱注册、密码找回；登录后展示项目列表。',
-  '审查项目现有代码，修复发现的缺陷并输出修改说明。',
-  '分析需求文档，输出技术方案与分步实施计划。',
+  '把这一集剧本拆解成分镜脚本，标注景别、运镜与单镜时长。',
+  '提取角色、场景与道具资产清单，输出设定图生成提示词。',
+  '为微短剧设计前 15 秒开场钩子与分镜节奏。',
+  '为角色生成设定图：三视图 + 表情集，统一画风与色彩基调。',
 ]
 
 function DraftTaskWorkspace({
@@ -226,6 +228,7 @@ function DraftTaskWorkspace({
         content: text.trim(),
         agent_id: input.mentionAgentIds[0],
         file_ids: fileIds.length > 0 ? fileIds : undefined,
+        attachments: input.attachments,
         workflow: selected,
         workflow_index: isPrimary && project ? project.primary_workflow_index : undefined,
         step_from: isPrimary ? rv.from : undefined,
@@ -604,6 +607,9 @@ function MessageBubble({ message, pmName, pmSeed, nextUserResponse, hideUIBlocks
           ) : (
             '…'
           )}
+          {!!message.attachments?.length && (
+            <ChatAttachmentList attachments={message.attachments} align={isUser ? 'end' : 'start'} />
+          )}
           {hasUIBlocks && message.ui_blocks && (
             <UIBlockRenderer blocks={message.ui_blocks} responses={nextUserResponse?.ui_response?.blocks} />
           )}
@@ -832,6 +838,10 @@ function ExecutionEventItem({ event, showHeader = true }: { event: Event; showHe
           </div>
         )}
 
+        {isTaskComment && (
+          <CommentEventAttachments event={event} />
+        )}
+
         {!isTaskComment && !isPlanningReply && !isTodoAsk && typeof event.content === 'string' && event.content && (
           <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 3, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
             {stripReplyPrefix(event.content)}
@@ -871,6 +881,32 @@ function ExecutionEventItem({ event, showHeader = true }: { event: Event; showHe
       </div>
     </div>
   )
+}
+
+/* ============================================================
+ *  Comment event attachments
+ * ============================================================ */
+
+// task_comment 事件在 metadata["attachments"] 携带评论附件快照
+// （后端已在读取时补过签名 URL）。收听用户评论是否带附件。
+function CommentEventAttachments({ event }: { event: Event }) {
+  const raw = event.metadata?.attachments
+  if (!Array.isArray(raw) || raw.length === 0) return null
+  const attachments = raw
+    .map((item) => {
+      if (typeof item !== 'object' || item === null) return null
+      const record = item as Record<string, unknown>
+      const id = typeof record.id === 'string' ? record.id : ''
+      const file_name = typeof record.file_name === 'string' ? record.file_name : ''
+      const mime_type = typeof record.mime_type === 'string' ? record.mime_type : ''
+      const url = typeof record.url === 'string' ? record.url : undefined
+      const file_size = typeof record.file_size === 'number' ? record.file_size : 0
+      if (!id || !file_name) return null
+      return { id, file_name, file_size, mime_type, url } as ChatAttachment
+    })
+    .filter((item): item is ChatAttachment => item !== null)
+  if (attachments.length === 0) return null
+  return <ChatAttachmentList attachments={attachments} compact />
 }
 
 /* ============================================================
@@ -1061,7 +1097,6 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
   const cancelTask = useCancelTask()
   const appendMessage = useAppendTaskMessage()
   const addComment = useAddTaskComment()
-  const [input, setInput] = useState('')
   const [showCancel, setShowCancel] = useState(false)
   const [resultOpen, setResultOpen] = useState(false)
   const [todoOpen, setTodoOpen] = useState(false)
@@ -1087,22 +1122,26 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
     feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: 'smooth' })
   }, [task?.messages?.length, task?.todos?.length, events?.length, pendingUIBlocks])
 
-  const handleSendPlanning = async (content: string, uiResponse?: UIResponse) => {
-    if (!taskId || !content.trim()) return
+  const handleSendPlanning = async (content: string, attachments?: ChatAttachment[]): Promise<boolean> => {
+    if (!taskId) return false
+    if (!content.trim() && (!attachments || attachments.length === 0)) return false
     try {
-      await appendMessage.mutateAsync({ taskId, content: content.trim(), uiResponse })
+      await appendMessage.mutateAsync({ taskId, content: content.trim(), attachments })
+      return true
     } catch {
       message.error('发送失败，请稍后重试')
+      return false
     }
   }
 
-  const handleSubmitComment = async ({ content, mentionAgentIds }: TaskCommentSubmitInput): Promise<boolean> => {
+  const handleSubmitComment = async ({ content, mentionAgentIds, attachments }: TaskCommentSubmitInput): Promise<boolean> => {
     if (!taskId) return false
     try {
       const res = await addComment.mutateAsync({
         taskId,
         content,
         mentions: mentionAgentIds.length > 0 ? mentionAgentIds.map((agent_id) => ({ agent_id })) : undefined,
+        attachments,
       })
       const data = res.data as { mention_deliveries?: Array<{ agent_name: string; status: string }> }
       const failedDeliveries = data.mention_deliveries?.filter((item) => item.status !== 'sent') ?? []
@@ -1294,48 +1333,11 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
               <PendingHint text="PM 有澄清问题等你回答" onOpen={() => setPendingOpen(true)} />
             </div>
           ) : (
-            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="继续补充需求或回答 PM 的问题… (Enter 发送)"
-                rows={1}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    if (input.trim()) {
-                      handleSendPlanning(input)
-                      setInput('')
-                    }
-                  }
-                }}
-                style={{
-                  flex: 1,
-                  background: 'var(--surface-inset)',
-                  border: '1px solid var(--line-strong)',
-                  borderRadius: 'var(--radius-control)',
-                  padding: '8px 12px',
-                  color: 'var(--text-primary)',
-                  fontSize: 14,
-                  lineHeight: 1.6,
-                  resize: 'none',
-                  outline: 'none',
-                  maxHeight: 120,
-                  fontFamily: 'inherit',
-                }}
-              />
-              <Button
-                type="primary"
-                shape="circle"
-                icon={<SendOutlined />}
-                disabled={!input.trim()}
-                loading={appendMessage.isPending}
-                onClick={() => {
-                  handleSendPlanning(input)
-                  setInput('')
-                }}
-              />
-            </div>
+            <ChatComposer
+              placeholder="继续补充需求或回答 PM 的问题，可粘贴/选择图片或文件… (Enter 发送)"
+              pending={appendMessage.isPending}
+              onSubmit={handleSendPlanning}
+            />
           )
         ) : (
           <TaskCommentComposer

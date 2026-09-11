@@ -3,26 +3,39 @@ package handler
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"trustmesh/backend/internal/clawsynapse"
+	"trustmesh/backend/internal/model"
 	"trustmesh/backend/internal/store"
 	"trustmesh/backend/internal/transport"
 )
 
 type AgentChatHandler struct {
-	store     *store.Store
-	publisher *clawsynapse.Client
-	log       *zap.Logger
+	store       *store.Store
+	publisher   *clawsynapse.Client
+	externalURL string
+	jwtSecret   []byte
+	downloadTTL time.Duration
+	log         *zap.Logger
 }
 
-func NewAgentChatHandler(s *store.Store, publisher *clawsynapse.Client, log *zap.Logger) *AgentChatHandler {
-	return &AgentChatHandler{store: s, publisher: publisher, log: log}
+func NewAgentChatHandler(s *store.Store, publisher *clawsynapse.Client, externalURL string, jwtSecret []byte, downloadTTL time.Duration, log *zap.Logger) *AgentChatHandler {
+	return &AgentChatHandler{
+		store:       s,
+		publisher:   publisher,
+		externalURL: externalURL,
+		jwtSecret:   jwtSecret,
+		downloadTTL: downloadTTL,
+		log:         log,
+	}
 }
 
 type sendAgentChatMessageRequest struct {
-	Content string `json:"content"`
+	Content     string                 `json:"content"`
+	Attachments []model.ChatAttachment `json:"attachments,omitempty"`
 }
 
 func (h *AgentChatHandler) Get(c *gin.Context) {
@@ -36,6 +49,7 @@ func (h *AgentChatHandler) Get(c *gin.Context) {
 		transport.WriteError(c, appErr)
 		return
 	}
+	EnrichAgentChatDetailURLs(detail, h.externalURL, h.jwtSecret, h.downloadTTL)
 	transport.WriteData(c, http.StatusOK, detail)
 }
 
@@ -65,7 +79,7 @@ func (h *AgentChatHandler) GetSession(c *gin.Context) {
 		transport.WriteError(c, appErr)
 		return
 	}
-
+	EnrichAgentChatDetailURLs(detail, h.externalURL, h.jwtSecret, h.downloadTTL)
 	transport.WriteData(c, http.StatusOK, detail)
 }
 
@@ -80,11 +94,13 @@ func (h *AgentChatHandler) SendMessage(c *gin.Context) {
 		return
 	}
 
-	detail, msg, appErr := h.store.AppendAgentChatUserMessage(sc, c.Param("id"), req.Content)
+	detail, msg, appErr := h.store.AppendAgentChatUserMessage(sc, c.Param("id"), req.Content, req.Attachments)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}
+	// Enrich attachment download URLs so the UI can render them immediately.
+	EnrichAgentChatDetailURLs(detail, h.externalURL, h.jwtSecret, h.downloadTTL)
 	if h.publisher == nil {
 		updated, markErr := h.store.UpdateAgentChatMessageStatus(sc, detail.ID, msg.ID, "failed", "")
 		if markErr == nil {
@@ -95,10 +111,16 @@ func (h *AgentChatHandler) SendMessage(c *gin.Context) {
 	}
 
 	payloadContent := "[使用 clawsynapse skill 回复以下消息]\n" + req.Content
+	// Signed attachment URLs for the agent to fetch (only sent in metadata, never
+	// persisted); the content body stays unchanged to avoid altering agent parsing.
+	payloadAttachments := make([]model.ChatAttachment, len(req.Attachments))
+	copy(payloadAttachments, req.Attachments)
+	enrichChatAttachmentURLs(payloadAttachments, h.externalURL, h.jwtSecret, h.downloadTTL)
 	result, err := h.publisher.Publish(context.Background(), detail.AgentNodeID, "chat.message", payloadContent, detail.SessionKey, map[string]any{
 		"trustmeshAgentId": detail.AgentID,
 		"chatId":           detail.ID,
 		"messageId":        msg.ID,
+		"attachments":      payloadAttachments,
 	})
 	if err != nil {
 		updated, markErr := h.store.UpdateAgentChatMessageStatus(sc, detail.ID, msg.ID, "failed", "")
@@ -139,10 +161,12 @@ func (h *AgentChatHandler) SendMessage(c *gin.Context) {
 			detail.Messages[i].RemoteMessageID = result.MessageID
 			break
 		}
+		EnrichAgentChatDetailURLs(detail, h.externalURL, h.jwtSecret, h.downloadTTL)
 		transport.WriteData(c, http.StatusOK, detail)
 		return
 	}
 
+	EnrichAgentChatDetailURLs(detail, h.externalURL, h.jwtSecret, h.downloadTTL)
 	transport.WriteData(c, http.StatusOK, detail)
 }
 

@@ -130,6 +130,10 @@ type WorkflowStepProgress struct {
 	Status    string                  `json:"status"` // pending|in_progress|awaiting_review|done|failed|canceled|unassigned
 	TaskID    string                  `json:"task_id,omitempty"`
 	TaskTitle string                  `json:"task_title,omitempty"`
+	// DeclaredOutputs 是该步骤在流程里声明的输出位名称。手工绑定交付物时前端据此
+	// 限定可选范围：声明了就只能选这些（避免拼出下游步骤取不到的名字），
+	// 没声明才允许自由命名。
+	DeclaredOutputs []string                  `json:"declared_outputs,omitempty"`
 	Outputs   []WorkflowStepOutputRef `json:"outputs,omitempty"`
 }
 

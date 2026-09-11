@@ -87,7 +87,7 @@ export function AgentConfigModal({ open, onClose, agent }: Props) {
           <Input.TextArea rows={2} placeholder="描述数字员工的职责" />
         </Form.Item>
         <div className="flex flex-col gap-2">
-          <span className="text-sm font-medium text-white/80">能力标签</span>
+          <span className="text-sm font-medium text-[color:var(--text-primary)]">能力标签</span>
           <div className="flex gap-2">
             <Input
               value={capInput}
@@ -101,7 +101,7 @@ export function AgentConfigModal({ open, onClose, agent }: Props) {
             <button
               type="button"
               onClick={addCapability}
-              className="flex items-center gap-1 rounded-md border border-white/15 px-3 text-sm text-white/80 hover:bg-white/5"
+              className="flex items-center gap-1 rounded-md border border-[color:var(--line-strong)] px-3 text-sm text-[color:var(--text-primary)] hover:bg-[color:var(--surface-sunken)]"
             >
               <PlusOutlined /> 添加
             </button>

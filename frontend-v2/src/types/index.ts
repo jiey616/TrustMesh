@@ -262,6 +262,15 @@ export interface AgentInsights {
   risk_items: AgentInsightRiskItem[]
 }
 
+export interface ChatAttachment {
+  id: string
+  file_name: string
+  file_size: number
+  mime_type: string
+  /** 短时签名下载链接，只在读取/投递时由后端补全，消息本身不持久化 */
+  url?: string
+}
+
 export interface AgentChatMessage {
   id: string
   sender_type: 'user' | 'agent'
@@ -269,6 +278,7 @@ export interface AgentChatMessage {
   content: string
   status: 'pending' | 'sent' | 'failed'
   remote_message_id?: string
+  attachments?: ChatAttachment[]
   created_at: string
 }
 
@@ -603,6 +613,8 @@ export interface WorkflowStepProgress {
   status: 'pending' | 'in_progress' | 'awaiting_review' | 'done' | 'failed' | 'canceled' | 'unassigned'
   task_id?: string
   task_title?: string
+  /** 该步骤在流程里声明的输出位名称；空 = 未声明，绑定时允许自由命名 */
+  declared_outputs?: string[]
   outputs?: { output_name: string; file_id?: string; artifact_id?: string; file_name?: string; mime_type?: string; file_size?: number }[]
 }
 
@@ -771,6 +783,7 @@ export interface TaskMessage {
   content: string
   ui_blocks?: UIBlock[]
   ui_response?: UIResponse
+  attachments?: ChatAttachment[]
   created_at: string
 }
 
@@ -1096,12 +1109,14 @@ export interface Comment {
 export interface AppendTaskMessageRequest {
   content: string
   ui_response?: unknown
+  attachments?: ChatAttachment[]
 }
 
 export interface AddTaskCommentInput {
   content: string
   todo_id?: string
   mentions?: Array<{ agent_id: string }>
+  attachments?: ChatAttachment[]
 }
 
 // 办公室可视化相关类型（定义在 ./office.ts，此处转出保持单一入口）

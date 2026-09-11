@@ -113,11 +113,11 @@ function SkillAddModal({ agentId, open, onClose }: { agentId: string; open: bool
     >
       <div className="flex flex-col gap-4 mt-4">
         <div className="flex flex-col gap-1.5">
-          <span className="text-sm text-white/70">技能名称</span>
+          <span className="text-sm text-[color:var(--text-secondary)]">技能名称</span>
           <Input placeholder="如 my-custom-skill" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div className="flex flex-col gap-1.5">
-          <span className="text-sm text-white/70">技能包文件（zip / SKILL.md + 脚本）</span>
+          <span className="text-sm text-[color:var(--text-secondary)]">技能包文件（zip / SKILL.md + 脚本）</span>
           <Upload
             beforeUpload={(f) => {
               setFile(f)
@@ -157,27 +157,27 @@ function HermesSkillsTab({ agentId }: Props) {
 
   return (
     <div className="flex flex-col gap-4">
-      <Card bordered={false} className="!bg-white/[0.03]">
-        <div className="flex items-center gap-2 border-b border-white/[0.08] px-4 py-3 -mx-4 -mt-4 mb-2">
-          <BookOutlined className="text-white/50" />
-          <span className="text-sm font-semibold text-white/90">技能</span>
+      <Card bordered={false} className="!bg-[color:var(--surface)]">
+        <div className="flex items-center gap-2 border-b border-[color:var(--line)] px-4 py-3 -mx-4 -mt-4 mb-2">
+          <BookOutlined className="text-[color:var(--text-tertiary)]" />
+          <span className="text-sm font-semibold text-[color:var(--text-primary)]">技能</span>
           <Tag className="!text-xs" color="default">{skills.length}</Tag>
           <Button size="small" className="ml-auto" icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>
             部署技能
           </Button>
         </div>
         {skills.length === 0 ? (
-          <p className="px-1 py-3 text-sm text-white/40">该节点暂无可展示的技能，点击右上角部署新技能</p>
+          <p className="px-1 py-3 text-sm text-[color:var(--text-quaternary)]">该节点暂无可展示的技能，点击右上角部署新技能</p>
         ) : (
-          <div className="divide-y divide-white/[0.05]">
+          <div className="divide-y divide-[color:var(--line)]">
             {skills.map((s) => (
               <div key={s.name} className="flex items-start gap-3 px-1 py-3 first:pt-0 last:pb-0">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-white/90 truncate">{s.name}</span>
+                    <span className="text-sm font-medium text-[color:var(--text-primary)] truncate">{s.name}</span>
                     {s.category && <Tag className="!text-[10px]" color="default">{s.category}</Tag>}
                   </div>
-                  {s.description && <p className="mt-0.5 text-xs text-white/50 line-clamp-2">{s.description}</p>}
+                  {s.description && <p className="mt-0.5 text-xs text-[color:var(--text-tertiary)] line-clamp-2">{s.description}</p>}
                 </div>
               </div>
             ))}
@@ -185,7 +185,7 @@ function HermesSkillsTab({ agentId }: Props) {
         )}
       </Card>
       <SkillAddModal agentId={agentId} open={addOpen} onClose={() => setAddOpen(false)} />
-      <p className="flex items-center gap-1.5 text-xs text-white/40">
+      <p className="flex items-center gap-1.5 text-xs text-[color:var(--text-quaternary)]">
         <WarningOutlined /> 技能写回会重启节点 gateway，可能有数秒不可用窗口。
       </p>
     </div>
@@ -317,7 +317,7 @@ function ModelAddModal({ agentId, open, onClose }: { agentId: string; open: bool
     >
       <div className="flex flex-col gap-3 mt-4">
         <div className="flex flex-col gap-1.5">
-          <span className="text-sm text-white/70">API 地址（OpenAI 兼容，含 /v1）</span>
+          <span className="text-sm text-[color:var(--text-secondary)]">API 地址（OpenAI 兼容，含 /v1）</span>
           <Input
             placeholder="https://api.deepseek.com/v1"
             value={baseUrl}
@@ -325,7 +325,7 @@ function ModelAddModal({ agentId, open, onClose }: { agentId: string; open: bool
           />
         </div>
         <div className="flex flex-col gap-1.5">
-          <span className="text-sm text-white/70">API Key</span>
+          <span className="text-sm text-[color:var(--text-secondary)]">API Key</span>
           <Input.Password
             placeholder="••••••••（留空则用你在个人/平台 LLM 配置里的 key）"
             value={apiKey}
@@ -337,7 +337,7 @@ function ModelAddModal({ agentId, open, onClose }: { agentId: string; open: bool
           />
         </div>
         <div className="flex flex-col gap-1.5">
-          <span className="text-sm text-white/70">Provider 名称（按 API 地址自动推断，可改）</span>
+          <span className="text-sm text-[color:var(--text-secondary)]">Provider 名称（按 API 地址自动推断，可改）</span>
           <Input
             placeholder="如 deepseek / openai"
             value={provider}
@@ -348,7 +348,7 @@ function ModelAddModal({ agentId, open, onClose }: { agentId: string; open: bool
           />
         </div>
         <div className="flex flex-col gap-1.5">
-          <span className="text-sm text-white/70">模型名</span>
+          <span className="text-sm text-[color:var(--text-secondary)]">模型名</span>
           <Space.Compact style={{ width: '100%' }}>
             <AutoComplete
               options={modelOptions}
@@ -382,7 +382,7 @@ function ModelAddModal({ agentId, open, onClose }: { agentId: string; open: bool
             </span>
           )}
         </div>
-        <p className="text-xs text-white/40">
+        <p className="text-xs text-[color:var(--text-quaternary)]">
           提示：API 地址/Key 留空时，「拉取列表/测试」会用你在 个人空间/平台 LLM 配置 里保存的生效配置。
         </p>
       </div>
@@ -441,27 +441,27 @@ function HermesModelsTab({ agentId }: Props) {
 
   return (
     <div className="flex flex-col gap-4">
-      <Card bordered={false} className="!bg-white/[0.03]">
-        <div className="flex items-center gap-2 border-b border-white/[0.08] px-4 py-3 -mx-4 -mt-4 mb-2">
-          <ExperimentOutlined className="text-white/50" />
-          <span className="text-sm font-semibold text-white/90">推理模型</span>
+      <Card bordered={false} className="!bg-[color:var(--surface)]">
+        <div className="flex items-center gap-2 border-b border-[color:var(--line)] px-4 py-3 -mx-4 -mt-4 mb-2">
+          <ExperimentOutlined className="text-[color:var(--text-tertiary)]" />
+          <span className="text-sm font-semibold text-[color:var(--text-primary)]">推理模型</span>
           <Tag className="!text-xs" color="default">{models.length}</Tag>
           <Button size="small" className="ml-auto" icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>
             添加 provider
           </Button>
         </div>
         {models.length === 0 ? (
-          <p className="px-1 py-3 text-sm text-white/40">该节点暂无可展示的模型，点击右上角添加 provider</p>
+          <p className="px-1 py-3 text-sm text-[color:var(--text-quaternary)]">该节点暂无可展示的模型，点击右上角添加 provider</p>
         ) : (
-          <div className="divide-y divide-white/[0.05]">
+          <div className="divide-y divide-[color:var(--line)]">
             {models.map((m) => (
               <div key={m.id ?? m.model} className="flex items-center gap-3 px-1 py-3 first:pt-0 last:pb-0">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-white/90 truncate">{m.model}</span>
+                    <span className="text-sm font-medium text-[color:var(--text-primary)] truncate">{m.model}</span>
                     {m.isDefault && <Tag className="!text-[10px]" color="green">默认</Tag>}
                   </div>
-                  <p className="mt-0.5 text-xs text-white/50 truncate font-mono">{m.provider}</p>
+                  <p className="mt-0.5 text-xs text-[color:var(--text-tertiary)] truncate font-mono">{m.provider}</p>
                 </div>
                 {!m.isDefault && (
                   <div className="flex items-center gap-1 shrink-0">
@@ -479,7 +479,7 @@ function HermesModelsTab({ agentId }: Props) {
         )}
       </Card>
       <ModelAddModal agentId={agentId} open={addOpen} onClose={() => setAddOpen(false)} />
-      <p className="flex items-center gap-1.5 text-xs text-white/40">
+      <p className="flex items-center gap-1.5 text-xs text-[color:var(--text-quaternary)]">
         <WarningOutlined /> 模型写回会重启节点 gateway，API Key 仅写回时传输、不回显。
       </p>
     </div>
@@ -498,18 +498,18 @@ function ExecutionResultModal({ execution, open, onClose }: { execution: Capabil
   return (
     <Modal open={open} title={`执行结果 — ${formatMsTime(execution.startedAtMs)}`} onCancel={onClose} footer={<Button onClick={onClose}>关闭</Button>} width={680}>
       <div className="flex flex-col gap-3">
-        <div className="flex items-center gap-2 text-xs text-white/50 flex-wrap">
+        <div className="flex items-center gap-2 text-xs text-[color:var(--text-tertiary)] flex-wrap">
           <Tag style={{ color: status.color, borderColor: status.color }}>{status.label}</Tag>
           {formatDuration(execution.durationMs) && <span>耗时 {formatDuration(execution.durationMs)}</span>}
           {execution.error && <span className="text-[color:var(--error)]">错误: {execution.error}</span>}
         </div>
         {isSilent && (
-          <div className="rounded-md bg-white/[0.04] px-3 py-2 text-xs text-white/50">本次执行无新内容（[SILENT]）</div>
+          <div className="rounded-md bg-[color:var(--surface)] px-3 py-2 text-xs text-[color:var(--text-tertiary)]">本次执行无新内容（[SILENT]）</div>
         )}
         {renderBody ? (
-          <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-white/[0.08] bg-black/30 p-3 text-xs text-white/80">{renderBody}</pre>
+          <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-[color:var(--line)] bg-[color:var(--surface-inset)] p-3 text-xs text-[color:var(--text-primary)]">{renderBody}</pre>
         ) : (
-          <p className="text-sm text-white/40">该执行无结果输出</p>
+          <p className="text-sm text-[color:var(--text-quaternary)]">该执行无结果输出</p>
         )}
       </div>
     </Modal>
@@ -532,32 +532,32 @@ function JobExecutionsModal({ agentId, job, open, onClose }: { agentId: string; 
         width={680}
       >
         <div className="flex items-center justify-between mb-3">
-          <p className="text-xs text-white/50">cron: {job.schedule} {job.enabled ? '' : '（已暂停）'}</p>
+          <p className="text-xs text-[color:var(--text-tertiary)]">cron: {job.schedule} {job.enabled ? '' : '（已暂停）'}</p>
           <Button size="small" icon={<RedoOutlined />} onClick={() => refetch()} loading={isLoading}>刷新</Button>
         </div>
         {isLoading ? (
-          <div className="py-8 text-center text-sm text-white/40">加载中...</div>
+          <div className="py-8 text-center text-sm text-[color:var(--text-quaternary)]">加载中...</div>
         ) : executions.length === 0 ? (
-          <div className="py-8 text-center text-sm text-white/40">{error ? `暂无执行记录（${error}）` : '暂无执行记录'}</div>
+          <div className="py-8 text-center text-sm text-[color:var(--text-quaternary)]">{error ? `暂无执行记录（${error}）` : '暂无执行记录'}</div>
         ) : (
-          <div className="flex flex-col divide-y divide-white/10 rounded-lg border border-white/[0.08]">
+          <div className="flex flex-col divide-y divide-[color:var(--line)] rounded-lg border border-[color:var(--line)]">
             {executions.map((ex) => {
               const st = executionStatusStyle[ex.status]
               return (
                 <button
                   key={ex.executionId}
                   type="button"
-                  className="flex items-center gap-3 px-3 py-2.5 text-left hover:bg-white/5 cursor-pointer"
+                  className="flex items-center gap-3 px-3 py-2.5 text-left hover:bg-[color:var(--surface-sunken)] cursor-pointer"
                   onClick={() => setViewing(ex)}
                 >
                   <Tag style={{ color: st.color, borderColor: st.color }} className="shrink-0">{st.label}</Tag>
                   <div className="min-w-0 flex-1">
-                    <div className="text-xs text-white/50">
+                    <div className="text-xs text-[color:var(--text-tertiary)]">
                       {formatMsTime(ex.startedAtMs)} · 耗时 {formatDuration(ex.durationMs)}
                     </div>
                     {ex.error && <div className="text-xs text-[color:var(--error)] truncate">{ex.error}</div>}
                   </div>
-                  <span className="text-xs text-white/40 shrink-0">查看结果 ›</span>
+                  <span className="text-xs text-[color:var(--text-quaternary)] shrink-0">查看结果 ›</span>
                 </button>
               )
             })}
@@ -595,7 +595,7 @@ function JobRow({ job, agentId }: { job: CapabilityJob; agentId: string }) {
     <div className="flex items-start gap-3 px-1 py-3 first:pt-0 last:pb-0">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-white/90 truncate">{job.name}</span>
+          <span className="text-sm font-medium text-[color:var(--text-primary)] truncate">{job.name}</span>
           {!job.enabled && <Tag className="!text-[10px]" color="default">已暂停</Tag>}
           {latestStatus && (
             <Tag className="!text-[10px]" style={{ color: latestStatus.color, borderColor: latestStatus.color }}>
@@ -603,14 +603,14 @@ function JobRow({ job, agentId }: { job: CapabilityJob; agentId: string }) {
             </Tag>
           )}
         </div>
-        <p className="mt-0.5 text-xs text-white/50 truncate font-mono">{job.schedule}</p>
+        <p className="mt-0.5 text-xs text-[color:var(--text-tertiary)] truncate font-mono">{job.schedule}</p>
         {latest && (
-          <p className="mt-0.5 text-xs text-white/50 truncate">
+          <p className="mt-0.5 text-xs text-[color:var(--text-tertiary)] truncate">
             最近执行: {dayjs(latest.startedAtMs).fromNow()}
             {formatDuration(latest.durationMs) ? ` · 耗时 ${formatDuration(latest.durationMs)}` : ''}
           </p>
         )}
-        {job.nextRun && <p className="mt-0.5 text-xs text-white/50">下次运行: {job.nextRun}</p>}
+        {job.nextRun && <p className="mt-0.5 text-xs text-[color:var(--text-tertiary)]">下次运行: {job.nextRun}</p>}
       </div>
       <div className="flex items-center gap-1 shrink-0">
         <Button size="small" type="text" icon={<HistoryOutlined />} onClick={() => setHistoryOpen(true)} title="执行历史" />
@@ -672,15 +672,15 @@ function JobAddModal({ agentId, open, onClose }: { agentId: string; open: boolea
     >
       <div className="flex flex-col gap-4 mt-4">
         <div className="flex flex-col gap-1.5">
-          <span className="text-sm text-white/70">任务名称</span>
+          <span className="text-sm text-[color:var(--text-secondary)]">任务名称</span>
           <Input placeholder="如 daily-report" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div className="flex flex-col gap-1.5">
-          <span className="text-sm text-white/70">Cron 表达式</span>
+          <span className="text-sm text-[color:var(--text-secondary)]">Cron 表达式</span>
           <Input placeholder="0 9 * * *" value={schedule} onChange={(e) => setSchedule(e.target.value)} />
         </div>
         <div className="flex flex-col gap-1.5">
-          <span className="text-sm text-white/70">任务提示词</span>
+          <span className="text-sm text-[color:var(--text-secondary)]">任务提示词</span>
           <Input.TextArea rows={3} placeholder="每天生成日报并发送" value={prompt} onChange={(e) => setPrompt(e.target.value)} />
         </div>
       </div>
@@ -705,25 +705,25 @@ function HermesJobsTab({ agentId }: Props) {
 
   return (
     <div className="flex flex-col gap-4">
-      <Card bordered={false} className="!bg-white/[0.03]">
-        <div className="flex items-center gap-2 border-b border-white/[0.08] px-4 py-3 -mx-4 -mt-4 mb-2">
-          <ScheduleOutlined className="text-white/50" />
-          <span className="text-sm font-semibold text-white/90">定时任务</span>
+      <Card bordered={false} className="!bg-[color:var(--surface)]">
+        <div className="flex items-center gap-2 border-b border-[color:var(--line)] px-4 py-3 -mx-4 -mt-4 mb-2">
+          <ScheduleOutlined className="text-[color:var(--text-tertiary)]" />
+          <span className="text-sm font-semibold text-[color:var(--text-primary)]">定时任务</span>
           <Tag className="!text-xs" color="default">{jobs.length}</Tag>
           <Button size="small" className="ml-auto" icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>
             新建任务
           </Button>
         </div>
         {jobs.length === 0 ? (
-          <p className="px-1 py-3 text-sm text-white/40">该节点暂无定时任务，点击右上角新建</p>
+          <p className="px-1 py-3 text-sm text-[color:var(--text-quaternary)]">该节点暂无定时任务，点击右上角新建</p>
         ) : (
-          <div className="divide-y divide-white/[0.05]">
+          <div className="divide-y divide-[color:var(--line)]">
             {jobs.map((j) => <JobRow key={j.id} job={j} agentId={agentId} />)}
           </div>
         )}
       </Card>
       <JobAddModal agentId={agentId} open={addOpen} onClose={() => setAddOpen(false)} />
-      <p className="flex items-center gap-1.5 text-xs text-white/40">
+      <p className="flex items-center gap-1.5 text-xs text-[color:var(--text-quaternary)]">
         <WarningOutlined /> 定时任务由节点 gateway 原生调度，写回无需重启。
       </p>
     </div>

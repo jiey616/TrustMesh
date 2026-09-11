@@ -1,10 +1,11 @@
 import { useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '@/stores/authStore'
+import { getApiBase } from '@/stores/serverConfigStore'
 import { emitRealtimeEvent } from '@/lib/realtimeBus'
 import type { RealtimeEvent } from '@/types/office'
 
-const SSE_URL = '/api/v1/events/stream'
+const SSE_URL = `${getApiBase()}events/stream`
 
 interface SseEvent {
   event: string

@@ -110,7 +110,11 @@ func Load() Config {
 		FilesStoragePath: getEnv("FILES_STORAGE_PATH", "/var/lib/trustmesh-files"),
 
 		ExternalURL:      getEnv("TRUSTMESH_EXTERNAL_URL", "http://127.0.0.1:8080"),
-		DownloadTokenTTL: getEnvDuration("DOWNLOAD_TOKEN_TTL", 10*time.Minute),
+		// Kept at 24h to match agentfile.defaultDownloadTTL: agent download links
+		// must outlast the slowest real step (video generation measured >1h).
+		// This value feeds ONLY agent download tokens; login tokens use
+		// AccessTokenTTL/RefreshTokenTTL.
+		DownloadTokenTTL: getEnvDuration("DOWNLOAD_TOKEN_TTL", 24*time.Hour),
 		QuestionTimeout:  getEnvDuration("QUESTION_TIMEOUT", 15*time.Minute),
 
 		ExternalAppTokenTTL: getEnvDuration("EXTERNAL_APP_TOKEN_TTL", 5*time.Minute),

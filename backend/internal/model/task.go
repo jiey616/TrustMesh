@@ -97,6 +97,12 @@ type Todo struct {
 	// monitor uses it instead of AssignedAt so long-running tasks that keep
 	// reporting progress are never spuriously retried.
 	LastActivityAt *time.Time `json:"last_activity_at,omitempty" bson:"last_activity_at,omitempty"`
+	// LastProgressAt records the last time the todo made PRODUCTIVE progress
+	// (todo.progress / todo.complete / artifact received). Unlike
+	// LastActivityAt it is never refreshed by error reports. The hard deadline
+	// gate uses it so a todo that has been busy but unproductive for hours is
+	// failed even if its reminder counter never reaches the limit.
+	LastProgressAt *time.Time `json:"last_progress_at,omitempty" bson:"last_progress_at,omitempty"`
 	RetryCount     int        `json:"retry_count" bson:"retry_count"`
 	MaxRetries     int        `json:"max_retries" bson:"max_retries"`
 
@@ -106,6 +112,22 @@ type Todo struct {
 	// executions). Any agent activity (progress/complete/fail/ask) resets it.
 	RemindCount int        `json:"remind_count" bson:"remind_count"`
 	RemindAt    *time.Time `json:"remind_at,omitempty" bson:"remind_at,omitempty"`
+
+	// Dispatch tracking: makes a failed sequential dispatch observable and
+	// self-healable. Without these, dispatchNextTodo's silent returns leave
+	// the todo stuck in pending with no trace (2026-09-10: TD_04 stalled 56min
+	// because a single failed publish was swallowed without retry, event or
+	// notification).
+	DispatchAttempts int        `json:"dispatch_attempts,omitempty" bson:"dispatch_attempts,omitempty"`
+	LastDispatchAt   *time.Time `json:"last_dispatch_at,omitempty" bson:"last_dispatch_at,omitempty"`
+	LastDispatchErr  *string    `json:"last_dispatch_err,omitempty" bson:"last_dispatch_err,omitempty"`
+
+	// ReopenCount counts how many times a terminal todo (failed / canceled /
+	// done) was brought back to in_progress so late work could still land.
+	// Capped by maxReopens: without a cap, an agent that keeps uploading after
+	// its todo failed could keep the todo alive forever and the task would
+	// never settle.
+	ReopenCount int `json:"reopen_count,omitempty" bson:"reopen_count,omitempty"`
 
 	// ReviewStatus tracks the human/PM review gate for a completed todo.
 	// Values: "" (no review needed), "pending_approval" (waiting for review),
@@ -205,6 +227,12 @@ type TaskArtifact struct {
 	// transfer metadata outputName; a non-empty value marks the artifact as a
 	// deliverable and populates the owning todo's Outputs.
 	OutputName string `json:"output_name,omitempty" bson:"output_name,omitempty"`
+	// Orphan marks a deliverable that arrived AFTER its todo had already
+	// reached a terminal state. Surfaced so "failed todo carrying a done
+	// deliverable" reads as a late arrival instead of a contradiction
+	// (2026-09-10 TD_06: failed at 23:08, 4/6 videos actually delivered and
+	// bound at 00:08 with no way to reconcile the two).
+	Orphan bool `json:"orphan,omitempty" bson:"orphan,omitempty"`
 }
 
 type TaskResult struct {

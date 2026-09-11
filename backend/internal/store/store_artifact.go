@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"path"
 	"strings"
 	"time"
@@ -224,6 +225,9 @@ func (s *Store) SaveArtifactWithFiling(artifact model.TaskArtifact, declared []m
 	}
 
 	var ownerTodo *model.Todo
+	// orphan marks a deliverable that landed after its todo had already
+	// reached a terminal state (see model.TaskArtifact.Orphan).
+	orphan := false
 	if artifact.TodoID != "" {
 		found := false
 		for i := range task.Todos {
@@ -243,8 +247,16 @@ func (s *Store) SaveArtifactWithFiling(artifact model.TaskArtifact, declared []m
 				// see 2026-09-02, where the finished screenplay was rejected twice
 				// with TODO_ALREADY_DONE and never reached the platform.
 				// Duplicates are still collapsed by (todo, file name) below.
-				if task.Todos[i].Status == "done" && taskArtifactsClosed(task.Status) {
-					return ArtifactFilingResult{}, transport.Conflict("TODO_ALREADY_DONE", "todo already done; deliverables are closed")
+				//
+				// Terminal todos no longer reject: an agent that keeps working
+				// after its todo was failed still produces the REAL deliverable
+				// (2026-09-10 TD_06: failed 23:08, 4/6 videos delivered 00:08).
+				// Dropping it left a failed todo carrying a done deliverable
+				// with nothing able to reconcile the two, so accept it and mark
+				// it as a late arrival instead.
+				switch task.Todos[i].Status {
+				case "done", "failed", "canceled":
+					orphan = true
 				}
 				break
 			}
@@ -272,6 +284,9 @@ func (s *Store) SaveArtifactWithFiling(artifact model.TaskArtifact, declared []m
 	} else {
 		artifact.Kind = "process"
 	}
+	// Must be set before persistArtifactUnsafe so the late-arrival flag
+	// reaches MongoDB, not just the in-memory copy.
+	artifact.Orphan = orphan
 
 	// Deduplicate by transfer ID or by (todo, file name) — an agent re-uploading
 	// the same deliverable under a new transfer id (a common LLM behaviour)
@@ -311,6 +326,19 @@ func (s *Store) SaveArtifactWithFiling(artifact model.TaskArtifact, declared []m
 				"kind":        artifact.Kind,
 				"output_name": artifact.OutputName,
 			}, now)
+
+		if orphan {
+			late := fmt.Sprintf("交付物迟到：%s 的 todo 已处于终态，该产物被标记为 orphan（可用 reopen 回补）", artifact.FileName)
+			s.addEventUnsafe(task.UserID, task.ProjectID, artifact.TaskID, artifact.TodoID,
+				"system", "artifact_gate", "平台", "artifact_bound_after_terminal", &late,
+				map[string]any{
+					"transfer_id": artifact.TransferID,
+					"file_name":   artifact.FileName,
+					"output_name": artifact.OutputName,
+					"task_title":  task.Title,
+					"orphan":      true,
+				}, now)
+		}
 
 		if err := s.persistTaskEventsUnsafe(artifact.TaskID); err != nil {
 			if s.log != nil {
@@ -365,6 +393,13 @@ func (s *Store) SaveArtifactWithFiling(artifact model.TaskArtifact, declared []m
 		if !replacedOut {
 			ownerTodo.Outputs = append(ownerTodo.Outputs, bound)
 		}
+		// P-03: receiving a declared deliverable is PRODUCTIVE progress — it must
+		// refresh the hard-deadline gate even if the agent never sent
+		// todo.progress (an agent that uploads files but reports nothing would
+		// otherwise be failed as "no progress").
+		progressAt := time.Now().UTC()
+		ownerTodo.LastActivityAt = &progressAt
+		ownerTodo.LastProgressAt = &progressAt
 		if err := s.persistTaskUnsafe(task); err != nil && s.log != nil {
 			s.log.Warn("failed to persist todo output binding",
 				zap.String("task_id", artifact.TaskID),
@@ -648,6 +683,10 @@ func (s *Store) BindArtifactOutput(sc Scope, taskID, todoID, transferID, outputN
 	if !replaced {
 		ownerTodo.Outputs = append(ownerTodo.Outputs, bound)
 	}
+	// P-03: a successful manual binding is productive progress too.
+	progressAt := time.Now().UTC()
+	ownerTodo.LastActivityAt = &progressAt
+	ownerTodo.LastProgressAt = &progressAt
 
 	if err := s.persistArtifactUnsafe(&arts[artIdx]); err != nil && s.log != nil {
 		s.log.Warn("failed to persist bound artifact",

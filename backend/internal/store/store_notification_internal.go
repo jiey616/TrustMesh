@@ -33,6 +33,62 @@ func (s *Store) maybeCreateNotificationUnsafe(event *model.Event) {
 		body = stringOrDefault(event.Content, "Todo 失败")
 		category = "todo"
 		priority = "high"
+	case "todo_hard_deadline_failed":
+		// P-03: todo ran past the wall-clock hard deadline with no productive
+		// progress. Distinct from todo_failed so the UI can tell "died" from
+		// "busy but never produced anything".
+		title = "任务长时间无有效进展"
+		if t, ok := event.Metadata["todo_title"].(string); ok && t != "" {
+			body = "「" + t + "」长时间无有效进展（无进度上报、无产物），已判定失败"
+		} else {
+			body = stringOrDefault(event.Content, "任务长时间无有效进展，已判定失败")
+		}
+		category = "todo"
+		priority = "high"
+	case "todo_remind_escalated":
+		// P-08: reminded repeatedly with zero response - the run is wedged,
+		// not slow. Escalated so a human looks instead of the platform
+		// nudging a corpse.
+		title = "任务疑似卡死，请人工介入"
+		if t, ok := event.Metadata["todo_title"].(string); ok && t != "" {
+			body = "「" + t + "」多次提醒无响应，已判定失败；疑似执行智能体静默卡死（预算耗尽 / 额度不足 / 进程异常）"
+		} else {
+			body = stringOrDefault(event.Content, "任务多次提醒无响应，请人工介入")
+		}
+		category = "todo"
+		priority = "high"
+	case "todo_run_budget_exhausted":
+		// P-08: the run was truncated by its tool-call budget before it could
+		// report completion. Distinct from a plain failure so the user knows to
+		// split the step rather than wait.
+		title = "执行预算耗尽"
+		body = stringOrDefault(event.Content, "执行侧 run 预算耗尽，执行被静默截断")
+		category = "todo"
+		priority = "high"
+	case "todo_reopened":
+		// P-05: a terminal todo was brought back so late work could land.
+		// Medium priority - it is a recovery, not a failure, but the user
+		// should know the state changed underneath them.
+		title = "Todo 已重新开启"
+		if t, ok := event.Metadata["todo_title"].(string); ok && t != "" {
+			body = "「" + t + "」已重新开启（原为终态），等待执行结果"
+		} else {
+			body = stringOrDefault(event.Content, "Todo 已重新开启")
+		}
+		category = "todo"
+		priority = "medium"
+	case "todo_dispatch_failed":
+		// P-01: automatic sequential dispatch failed (all retries exhausted).
+		// Surfaced because a silent dispatch failure used to stall the whole
+		// pipeline invisibly.
+		title = "任务派发失败"
+		if t, ok := event.Metadata["todo_title"].(string); ok && t != "" {
+			body = "「" + t + "」自动派发失败，系统将自动重试；若持续失败请手动派发"
+		} else {
+			body = stringOrDefault(event.Content, "任务派发失败")
+		}
+		category = "todo"
+		priority = "high"
 	case "planning_reply":
 		title = "PM 回复"
 		body = stringOrDefault(event.Content, "新的回复")

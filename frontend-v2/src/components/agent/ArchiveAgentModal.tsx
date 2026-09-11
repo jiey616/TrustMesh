@@ -45,7 +45,7 @@ export function ArchiveAgentModal({ open, onClose, agent, onArchived }: Props) {
       cancelText="取消"
       destroyOnClose
     >
-      <p className="text-sm text-white/70">
+      <p className="text-sm text-[color:var(--text-secondary)]">
         {alreadyArchived
           ? '这个数字员工已经离职，无需重复操作。'
           : '离职后数字员工会从列表中隐藏，且不能被分配到新的项目或任务。'}

@@ -44,7 +44,7 @@ export function MeetingListPage({ projectId }: Props) {
   const { data: projects } = useQuery({
     queryKey: ['projects'],
     queryFn: async () => {
-      const res = await apiClient.get('/api/v1/projects').json<ApiListResponse<Project>>()
+      const res = await apiClient.get('projects').json<ApiListResponse<Project>>()
       return res.data.items
     },
     enabled: !projectId,
@@ -53,7 +53,7 @@ export function MeetingListPage({ projectId }: Props) {
   const { data: meetings, isLoading } = useQuery({
     queryKey: ['meetings', activeProjectId],
     queryFn: async () => {
-      const res = await apiClient.get(`/api/v1/projects/${activeProjectId}/meetings`).json<ApiListResponse<Meeting>>()
+      const res = await apiClient.get(`projects/${activeProjectId}/meetings`).json<ApiListResponse<Meeting>>()
       return res.data.items
     },
     enabled: !!activeProjectId,

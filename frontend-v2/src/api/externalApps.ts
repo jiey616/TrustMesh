@@ -9,29 +9,29 @@ import type {
 
 export async function listExternalApps() {
   return apiClient
-    .get('/api/v1/external-apps')
+    .get('external-apps')
     .json<ApiResponse<{ external_apps: ExternalAppView[] }>>()
 }
 
 // 创建后后端会一次性返回 client_secret（仅此一次），需在前端提示用户保存。
 export async function createExternalApp(input: CreateExternalAppRequest) {
   return apiClient
-    .post('/api/v1/external-apps', { json: input })
+    .post('external-apps', { json: input })
     .json<ApiResponse<{ external_app: ExternalAppView; client_secret: string }>>()
 }
 
 export async function getExternalApp(id: string) {
-  return apiClient.get(`/api/v1/external-apps/${id}`).json<ApiResponse<{ external_app: ExternalAppView }>>()
+  return apiClient.get(`external-apps/${id}`).json<ApiResponse<{ external_app: ExternalAppView }>>()
 }
 
 export async function updateExternalApp(id: string, input: UpdateExternalAppRequest) {
   return apiClient
-    .patch(`/api/v1/external-apps/${id}`, { json: input })
+    .patch(`external-apps/${id}`, { json: input })
     .json<ApiResponse<{ external_app: ExternalAppView }>>()
 }
 
 export async function deleteExternalApp(id: string) {
-  return apiClient.delete(`/api/v1/external-apps/${id}`).json<ApiResponse<{ deleted: boolean }>>()
+  return apiClient.delete(`external-apps/${id}`).json<ApiResponse<{ deleted: boolean }>>()
 }
 
 export async function launchExternalApp(
@@ -39,6 +39,6 @@ export async function launchExternalApp(
   input?: { project_id?: string; task_id?: string },
 ) {
   return apiClient
-    .post(`/api/v1/external-apps/${id}/launch`, { json: input ?? {} })
+    .post(`external-apps/${id}/launch`, { json: input ?? {} })
     .json<ApiResponse<LaunchExternalAppResponse>>()
 }

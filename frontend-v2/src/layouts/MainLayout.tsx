@@ -23,9 +23,11 @@ import {
   CheckOutlined,
   BankOutlined,
   AlertOutlined,
+  ApiOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
 import { useAuthStore } from '@/stores/authStore'
+import { isElectronRuntime } from '@/stores/serverConfigStore'
 import { useUnreadCount } from '@/hooks/useNotifications'
 import { useRealtimeEvents } from '@/hooks/useRealtimeEvents'
 import { useProjects } from '@/hooks/useProjects'
@@ -188,6 +190,10 @@ export function MainLayout() {
     { key: 'org-manage', icon: <CrownOutlined />, label: '企业管理' },
     { type: 'divider' as const },
     { key: 'profile', icon: <UserOutlined />, label: '个人信息' },
+    // 服务器地址配置仅桌面端可用（Web/容器部署固定走同源 /api/v1/）
+    ...(isElectronRuntime()
+      ? ([{ key: 'server', icon: <ApiOutlined />, label: '服务器设置' }] as const)
+      : []),
     { type: 'divider' as const },
     { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', danger: true },
   ]
@@ -391,6 +397,7 @@ export function MainLayout() {
                   if (key === 'logout') handleLogout()
                   else if (key === 'org-manage') navigate('/organizations')
                   else if (key === 'profile') navigate('/profile')
+                  else if (key === 'server') navigate('/profile#server')
                   // 其余 key 为工作区 id（含 __personal__）
                   else handleOrgSwitch(key)
                 },

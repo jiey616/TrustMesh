@@ -6,7 +6,7 @@ export interface PlatformInfo {
 
 export async function fetchPlatformInfo(): Promise<PlatformInfo> {
   try {
-    const res = await apiClient.get('/api/v1/platform/info').json<{ data: { name: string } }>()
+    const res = await apiClient.get('platform/info').json<{ data: { name: string } }>()
     return { name: res.data?.name ?? 'TrustMesh' }
   } catch {
     return { name: 'TrustMesh' }

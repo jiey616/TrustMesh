@@ -39,37 +39,37 @@ export interface LLMConfigTestResult {
 
 export async function getPlatformLLMConfig() {
   return apiClient
-    .get('/api/v1/platform/llm-config')
+    .get('platform/llm-config')
     .json<ApiResponse<{ config: LLMConfigView }>>()
 }
 
 export async function updatePlatformLLMConfig(input: UpdateLLMConfigRequest) {
   return apiClient
-    .put('/api/v1/platform/llm-config', { json: input })
+    .put('platform/llm-config', { json: input })
     .json<ApiResponse<{ config: LLMConfigView }>>()
 }
 
 export async function deletePlatformLLMConfig() {
-  return apiClient.delete('/api/v1/platform/llm-config').json<ApiResponse<{ deleted: boolean }>>()
+  return apiClient.delete('platform/llm-config').json<ApiResponse<{ deleted: boolean }>>()
 }
 
 // ---- 租户覆盖层（org owner/admin） ----
 
 export async function getOrgLLMConfig(orgId: string) {
   return apiClient
-    .get(`/api/v1/organizations/${orgId}/llm-config`)
+    .get(`organizations/${orgId}/llm-config`)
     .json<ApiResponse<{ config: LLMConfigView }>>()
 }
 
 export async function updateOrgLLMConfig(orgId: string, input: UpdateLLMConfigRequest) {
   return apiClient
-    .put(`/api/v1/organizations/${orgId}/llm-config`, { json: input })
+    .put(`organizations/${orgId}/llm-config`, { json: input })
     .json<ApiResponse<{ config: LLMConfigView }>>()
 }
 
 export async function deleteOrgLLMConfig(orgId: string) {
   return apiClient
-    .delete(`/api/v1/organizations/${orgId}/llm-config`)
+    .delete(`organizations/${orgId}/llm-config`)
     .json<ApiResponse<{ deleted: boolean }>>()
 }
 
@@ -86,7 +86,7 @@ export interface LLMConfigScopeInput {
 
 export async function testLLMConfig(input?: LLMConfigScopeInput) {
   return apiClient
-    .post('/api/v1/llm-config/test', { json: input ?? {} })
+    .post('llm-config/test', { json: input ?? {} })
     .json<ApiResponse<{ test: LLMConfigTestResult }>>()
 }
 
@@ -99,7 +99,7 @@ export interface LLMModelsResult {
 /** 拉取 provider 可用模型列表（OpenAI 兼容 GET {api_url}/models）。 */
 export async function fetchLLMModels(input?: LLMConfigScopeInput) {
   return apiClient
-    .post('/api/v1/llm-config/models', { json: input ?? {} })
+    .post('llm-config/models', { json: input ?? {} })
     .json<ApiResponse<{ models: LLMModelsResult }>>()
 }
 
@@ -107,18 +107,18 @@ export async function fetchLLMModels(input?: LLMConfigScopeInput) {
 
 export async function getPersonalLLMConfig() {
   return apiClient
-    .get('/api/v1/llm-config/personal')
+    .get('llm-config/personal')
     .json<ApiResponse<{ config: LLMConfigView }>>()
 }
 
 export async function updatePersonalLLMConfig(input: UpdateLLMConfigRequest) {
   return apiClient
-    .put('/api/v1/llm-config/personal', { json: input })
+    .put('llm-config/personal', { json: input })
     .json<ApiResponse<{ config: LLMConfigView }>>()
 }
 
 export async function deletePersonalLLMConfig() {
   return apiClient
-    .delete('/api/v1/llm-config/personal')
+    .delete('llm-config/personal')
     .json<ApiResponse<{ deleted: boolean }>>()
 }

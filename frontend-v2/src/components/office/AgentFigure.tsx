@@ -1,10 +1,10 @@
 import { useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import type { Group, Mesh } from 'three'
-import type { AgentRole } from '@/types'
 
 export interface AgentFigureProps {
-  role: AgentRole
+  /** Agent 角色（当前仅用于语义标注，颜色由 color 传入） */
+  role: string
   /** 该 Agent 的专属颜色（按 id 稳定分配） */
   color: string
   /** 离线时整体变淡 */
@@ -27,7 +27,8 @@ function approach(current: number, target: number, k: number): number {
  * 头部（脸）跟随身体朝向：在工位时面朝桌上显示器，走动时朝移动方向。
  * 动画全部在 useFrame 内直改 Object3D，不触发 re-render。
  */
-export function AgentFigure({ role, color, dimmed, walking, typing, phase }: AgentFigureProps) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function AgentFigure({ role: _role, color, dimmed, walking, typing, phase }: AgentFigureProps) {
   const legLRef = useRef<Group>(null)
   const legRRef = useRef<Group>(null)
   const armLRef = useRef<Group>(null)

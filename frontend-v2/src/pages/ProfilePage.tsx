@@ -18,7 +18,9 @@ import {
 } from 'antd'
 import { EditOutlined, LockOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons'
 import { PageHeader } from '@/components/shared/PageHeader'
+import { ServerConfigCard } from '@/components/settings/ServerConfigCard'
 import { useAuthStore } from '@/stores/authStore'
+import { isElectronRuntime } from '@/stores/serverConfigStore'
 import { useOrganizations, orgKeys } from '@/hooks/useOrgs'
 import { updateProfile, changePassword } from '@/api/user'
 import { ApiRequestError } from '@/types'
@@ -129,6 +131,13 @@ export function ProfilePage() {
           <Descriptions.Item label="更新时间">{fmtDate(user.updated_at)}</Descriptions.Item>
         </Descriptions>
       </Card>
+
+      {/* 服务器地址配置仅桌面端提供；Web 端固定同源 /api/v1/ */}
+      {isElectronRuntime() && (
+        <div id="server">
+          <ServerConfigCard />
+        </div>
+      )}
 
       <Card
         title="安全"

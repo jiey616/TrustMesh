@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"trustmesh/backend/internal/model"
@@ -85,6 +86,36 @@ func (h *ProjectHandler) WorkflowProgress(c *gin.Context) {
 		return
 	}
 	transport.WriteData(c, http.StatusOK, progress)
+}
+
+// BindStepOutput handles
+// POST /api/v1/projects/:projectId/workflow/steps/:stepIndex/outputs/bind.
+//
+// 项目流程 · 手工绑定交付物：把项目里任意一个文件（用户在文件区手工上传的、或别的
+// 任务产出的）绑定为总流程某个步骤的最终交付物。地址用 project + stepIndex 而不是
+// task + todo —— 后端自己解析承载任务与 todo，前端因此可以从任意入口发起，
+// 不必先知道该步骤此刻对应哪个 todoId。
+func (h *ProjectHandler) BindStepOutput(c *gin.Context) {
+	sc, ok := currentScope(c)
+	if !ok {
+		return
+	}
+	stepIndex, err := strconv.Atoi(c.Param("stepIndex"))
+	if err != nil || stepIndex < 0 {
+		transport.WriteError(c, transport.BadRequest("BAD_STEP_INDEX", "step index must be a non-negative integer"))
+		return
+	}
+	var body store.BindStepOutputRequest
+	if err := c.ShouldBindJSON(&body); err != nil {
+		transport.WriteError(c, transport.BadRequest("BAD_PAYLOAD", "invalid request body"))
+		return
+	}
+	artifact, appErr := h.store.BindStepOutput(sc, c.Param("projectId"), stepIndex, body)
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
+	transport.WriteData(c, http.StatusOK, artifact)
 }
 
 type updateProjectRequest struct {

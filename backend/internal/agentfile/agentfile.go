@@ -1,6 +1,7 @@
 package agentfile
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -21,7 +22,13 @@ import (
 
 const (
 	tokenTypeAgentDownload = "agent_download"
-	defaultDownloadTTL     = 10 * time.Minute
+	// defaultDownloadTTL is the fallback used when DOWNLOAD_TOKEN_TTL is unset.
+	// It must comfortably outlast the slowest real step (video generation was
+	// measured >1h in production), otherwise an agent that pauses before
+	// downloading hits an expired link it cannot distinguish from a bad one.
+	// NOTE: this only feeds agent download tokens; login tokens use
+	// AccessTokenTTL/RefreshTokenTTL (see app/router.go).
+	defaultDownloadTTL     = 24 * time.Hour
 )
 
 // Handler serves agent file download requests authenticated by short-lived tokens.
@@ -124,7 +131,6 @@ func EnrichWithDownloadURLs(files []model.TaskAttachedFile, externalURL string, 
 		token, err := GenerateDownloadToken(jwtSecret, f.ID, ttl)
 		if err != nil {
 			// Non-fatal: agent gets metadata without a valid download URL.
-			fmt.Fprintf(os.Stderr, "[DEBUG] GenerateDownloadToken error for file %s: %v\n", f.ID, err)
 			token = ""
 		}
 		ref := protocol.TaskAttachedFileRef{
@@ -136,7 +142,6 @@ func EnrichWithDownloadURLs(files []model.TaskAttachedFile, externalURL string, 
 		}
 		if token != "" {
 			ref.DownloadUrl = BuildDownloadURL(externalURL, f.ID, token)
-			fmt.Fprintf(os.Stderr, "[DEBUG] EnrichWithDownloadURLs: fileID=%s externalURL=%s jwtSecretLen=%d ttl=%s downloadUrl=%s\n", f.ID, externalURL, len(jwtSecret), ttl.String(), ref.DownloadUrl)
 		}
 		out[i] = ref
 	}
@@ -165,11 +170,19 @@ func (h *Handler) Download(c *gin.Context) {
 	}
 
 	// Parse and validate the token.
-	fmt.Fprintf(os.Stderr, "[DEBUG] Download: fileID=%s tokenLen=%d jwtMgr_secretLen=%d\n", fileID, len(token), len(h.jwtMgr.GetSecret()))
 	claims, err := h.jwtMgr.ParseToken(token)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[DEBUG] Download: ParseToken FAILED for fileID=%s: %v\n", fileID, err)
-		transport.WriteError(c, transport.Unauthorized("invalid or expired download token"))
+		// Separate "expired" from "invalid": expiry is RECOVERABLE, the agent
+		// only needs a fresh link. Collapsing both into one message made
+		// agents treat a recoverable error as fatal and fail the todo outright
+		// (2026-09-10 TD_06). transport.Unauthorized pins code=UNAUTHORIZED,
+		// so build the error directly to expose a machine-readable code.
+		if errors.Is(err, jwt.ErrTokenExpired) {
+			transport.WriteError(c, transport.NewError(http.StatusUnauthorized, "DOWNLOAD_TOKEN_EXPIRED",
+				"下载令牌已过期，请重新调用 task.context.query 获取新的 download_url 后重试"))
+			return
+		}
+		transport.WriteError(c, transport.Unauthorized("invalid download token"))
 		return
 	}
 	if claims.TokenType != tokenTypeAgentDownload {

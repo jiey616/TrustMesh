@@ -14,6 +14,9 @@ import {
 } from '@ant-design/icons'
 import { useMeeting, useMeetingMessages } from '@/hooks/useMeetings'
 import { sendMeetingMessage, startMeeting, endMeeting } from '@/api/meetings'
+import { getApiBase } from '@/stores/serverConfigStore'
+
+const API_BASE = getApiBase()
 import { MeetingMessageList } from '@/components/meeting/MeetingMessageList'
 import { MeetingParticipantPanel } from '@/components/meeting/MeetingParticipantPanel'
 import { NeonBadge } from '@/components/NeonBadge'
@@ -209,7 +212,7 @@ export function MeetingRoomPage() {
               return (
                 <a
                   key={fid}
-                  href={`/api/v1/projects/${meeting.project_id}/files/${fid}/content`}
+                  href={`${API_BASE}projects/${meeting.project_id}/files/${fid}/content`}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{
@@ -245,7 +248,7 @@ export function MeetingRoomPage() {
       {meeting.status === 'completed' && meeting.summary_file_id && (
         <div style={{ padding: '10px 16px', background: 'rgba(59,130,246,0.08)', borderBottom: '1px solid var(--line)' }}>
           <a
-            href={`/api/v1/projects/${meeting.project_id}/files/${meeting.summary_file_id}/content`}
+            href={`${API_BASE}projects/${meeting.project_id}/files/${meeting.summary_file_id}/content`}
             target="_blank"
             rel="noopener noreferrer"
             style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--info)', textDecoration: 'none' }}

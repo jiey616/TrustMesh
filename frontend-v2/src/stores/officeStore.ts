@@ -339,7 +339,7 @@ export const useOfficeStore = create<OfficeState>()(
         // 关键：必须做幂等比较 —— waiting_user 的问题在每次任务快照里都会出现，
         // 若「有 bubble 就算 changed」，快照轮询会无限 set() → React #185
         // （Maximum update depth exceeded）直接把办公室页面打崩。
-        let nextBubble: { bubble: string; bubbleKind: 'normal' | 'question'; bubbleUntil: number } | null = null
+        let nextBubble: { bubble: string | null; bubbleKind: 'normal' | 'question'; bubbleUntil: number } | null = null
         if (bubble) {
           if (
             prev.bubble !== bubble.text ||

@@ -9,5 +9,5 @@ export interface ClawSynapseHealth {
 }
 
 export async function getClawSynapseHealth() {
-  return apiClient.get('/api/v1/clawsynapse/health').json<ApiResponse<ClawSynapseHealth>>()
+  return apiClient.get('clawsynapse/health').json<ApiResponse<ClawSynapseHealth>>()
 }

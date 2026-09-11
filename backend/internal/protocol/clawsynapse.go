@@ -170,18 +170,19 @@ type TaskCommentPayload struct {
 }
 
 type TaskMentionPayload struct {
-	TaskID          string `json:"task_id"`
-	ProjectID       string `json:"project_id"`
-	CommentID       string `json:"comment_id"`
-	TodoID          string `json:"todo_id,omitempty"`
-	TaskTitle       string `json:"task_title"`
-	TaskDescription string `json:"task_description,omitempty"`
-	TaskStatus      string `json:"task_status"`
-	TaskPriority    string `json:"task_priority"`
-	TodoTitle       string `json:"todo_title,omitempty"`
-	AuthorName      string `json:"author_name"`
-	UserContent     string `json:"user_content"`
-	Content         string `json:"content"`
+	TaskID          string                `json:"task_id"`
+	ProjectID       string                `json:"project_id"`
+	CommentID       string                `json:"comment_id"`
+	TodoID          string                `json:"todo_id,omitempty"`
+	TaskTitle       string                `json:"task_title"`
+	TaskDescription string                `json:"task_description,omitempty"`
+	TaskStatus      string                `json:"task_status"`
+	TaskPriority    string                `json:"task_priority"`
+	TodoTitle       string                `json:"todo_title,omitempty"`
+	AuthorName      string                `json:"author_name"`
+	UserContent     string                `json:"user_content"`
+	Content         string                `json:"content"`
+	AttachedFiles   []TaskAttachedFileRef `json:"attached_files,omitempty"`
 }
 
 type TaskCreatedPayload struct {

@@ -43,6 +43,12 @@ services:
       ASSISTANT_MODEL: ${ASSISTANT_MODEL:-gpt-4o-mini}
       MARKET_DATA_PATH: ${MARKET_DATA_PATH:-/app/data/roles_index.json}
       FILES_STORAGE_PATH: ${FILES_STORAGE_PATH:-/var/lib/trustmesh-files}
+      # Download-link lifetime. Without an explicit value the backend falls back
+      # to its in-code default of 10m (config.go:113), which is far shorter than
+      # the gap between a task producing an artifact and the next step fetching
+      # it (2026-09-10: 上游文件 15:08 产出 / 22:56 取用). docker-compose.yml has
+      # carried 24h since 75f3c70; prod was missing it.
+      DOWNLOAD_TOKEN_TTL: ${DOWNLOAD_TOKEN_TTL:-24h}
     volumes:
       - trustmesh-transfer-data:/var/lib/trustmesh-transfers:ro
       - trustmesh-knowledge-data:/var/lib/trustmesh-knowledge

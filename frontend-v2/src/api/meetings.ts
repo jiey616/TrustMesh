@@ -12,36 +12,36 @@ export async function createMeeting(
     file_ids?: string[]
   },
 ): Promise<Meeting> {
-  const res = await apiClient.post(`/api/v1/projects/${projectId}/meetings`, { json: data })
+  const res = await apiClient.post(`projects/${projectId}/meetings`, { json: data })
   return (await res.json<{ data: Meeting }>()).data
 }
 
 export async function listMeetings(projectId: string): Promise<Meeting[]> {
-  const res = await apiClient.get(`/api/v1/projects/${projectId}/meetings`)
+  const res = await apiClient.get(`projects/${projectId}/meetings`)
   const body = await res.json<{ data: { items: Meeting[] } }>()
   return body.data.items
 }
 
 export async function getMeeting(meetingId: string): Promise<Meeting> {
-  const res = await apiClient.get(`/api/v1/meetings/${meetingId}`)
+  const res = await apiClient.get(`meetings/${meetingId}`)
   return (await res.json<{ data: Meeting }>()).data
 }
 
 export async function startMeeting(meetingId: string): Promise<void> {
-  await apiClient.post(`/api/v1/meetings/${meetingId}/start`)
+  await apiClient.post(`meetings/${meetingId}/start`)
 }
 
 export async function endMeeting(meetingId: string): Promise<void> {
-  await apiClient.post(`/api/v1/meetings/${meetingId}/end`)
+  await apiClient.post(`meetings/${meetingId}/end`)
 }
 
 export async function sendMeetingMessage(meetingId: string, content: string): Promise<MeetingMessage> {
-  const res = await apiClient.post(`/api/v1/meetings/${meetingId}/messages`, { json: { content } })
+  const res = await apiClient.post(`meetings/${meetingId}/messages`, { json: { content } })
   return (await res.json<{ data: MeetingMessage }>()).data
 }
 
 export async function listMeetingMessages(meetingId: string): Promise<MeetingMessage[]> {
-  const res = await apiClient.get(`/api/v1/meetings/${meetingId}/messages`)
+  const res = await apiClient.get(`meetings/${meetingId}/messages`)
   const body = await res.json<{ data: { items: MeetingMessage[] } }>()
   return body.data.items
 }

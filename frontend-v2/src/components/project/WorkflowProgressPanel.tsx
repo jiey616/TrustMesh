@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Skeleton, Tooltip, App } from 'antd'
 import {
@@ -12,6 +12,7 @@ import {
 import { useWorkflowProgress } from '@/hooks/useProjects'
 import { downloadProjectFile } from '@/api/projectFiles'
 import { FileViewer } from '@/components/task/FileViewer'
+import { BindOutputModal } from '@/components/project/BindOutputModal'
 import type { WorkflowStepProgress } from '@/types'
 
 interface Props {
@@ -55,6 +56,36 @@ function roleColor(role?: string, agentId?: string) {
   return rolePalette[h % rolePalette.length]
 }
 
+/** 连接段最小宽度：步骤多到撑不下时靠它兜底，从而触发横向滚动 */
+const MIN_CONNECTOR_WIDTH = 28
+/** 单个节点胶囊最大宽度，避免超长步骤名把整条流程顶宽 */
+const MAX_PILL_WIDTH = 208
+
+/**
+ * 连接段（节点 i → 节点 i+1）的填充比例与配色。
+ * 填充端点天然落在节点圆心上，所以进度线与步骤永远是同一套坐标。
+ */
+function connectorFill(status: WorkflowStepProgress['status']): {
+  pct: number
+  bg: string
+  animate: boolean
+} {
+  switch (status) {
+    case 'done':
+      return { pct: 100, bg: 'linear-gradient(90deg, var(--signal), var(--cyan))', animate: false }
+    case 'awaiting_review':
+      return { pct: 72, bg: 'linear-gradient(90deg, var(--signal), var(--warning))', animate: true }
+    case 'in_progress':
+      return { pct: 48, bg: 'linear-gradient(90deg, var(--signal), var(--cyan))', animate: true }
+    case 'failed':
+      return { pct: 100, bg: 'linear-gradient(90deg, var(--error), #b91c1c)', animate: false }
+    case 'canceled':
+      return { pct: 100, bg: 'var(--line-strong)', animate: false }
+    default:
+      return { pct: 0, bg: 'transparent', animate: false }
+  }
+}
+
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -81,7 +112,51 @@ export function WorkflowProgressPanel({ projectId }: Props) {
   const [selected, setSelected] = useState<number | null>(null)
   const [preview, setPreview] = useState<{ blob: Blob; fileName: string } | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
+  // 手工绑定交付物：非 null 时打开弹窗并锁定该步骤
+  const [bindStepIndex, setBindStepIndex] = useState<number | null>(null)
   const navigate = useNavigate()
+  const flowRef = useRef<HTMLDivElement | null>(null)
+  const [edge, setEdge] = useState({ left: false, right: false })
+
+  const stepCount = progress?.steps?.length ?? 0
+  // 当前焦点步骤：进行中/待确认优先，否则第一个未完成，全完成则停在末尾
+  const activeIdx = useMemo(() => {
+    const steps = progress?.steps ?? []
+    const running = steps.findIndex((s) => s.status === 'in_progress' || s.status === 'awaiting_review')
+    if (running >= 0) return running
+    const undone = steps.findIndex((s) => s.status !== 'done')
+    return undone >= 0 ? undone : Math.max(0, steps.length - 1)
+  }, [progress])
+
+  // 横向滚动状态 → 两侧渐隐遮罩（提示"还能滚"）
+  useEffect(() => {
+    const el = flowRef.current
+    if (!el) return
+    const sync = () => {
+      const max = el.scrollWidth - el.clientWidth
+      setEdge({ left: el.scrollLeft > 1, right: max > 1 && el.scrollLeft < max - 1 })
+    }
+    sync()
+    el.addEventListener('scroll', sync, { passive: true })
+    const ro = new ResizeObserver(sync)
+    ro.observe(el)
+    return () => {
+      el.removeEventListener('scroll', sync)
+      ro.disconnect()
+    }
+  }, [stepCount])
+
+  // 步骤太多时，把当前步骤滚到可视区中间
+  useEffect(() => {
+    const el = flowRef.current
+    if (!el) return
+    const node = el.querySelector<HTMLElement>(`[data-step-index="${activeIdx}"]`)
+    if (!node) return
+    if (el.scrollWidth <= el.clientWidth + 1) return
+    const left = node.offsetLeft - (el.clientWidth - node.offsetWidth) / 2
+    const max = el.scrollWidth - el.clientWidth
+    el.scrollTo({ left: Math.max(0, Math.min(left, max)), behavior: 'smooth' })
+  }, [activeIdx, stepCount])
 
   // 点击节点 = 展开产出预览；该步骤已绑定任务时同时打开任务工作台（?task= 深链）
   const handleStepClick = (i: number) => {
@@ -107,6 +182,7 @@ export function WorkflowProgressPanel({ projectId }: Props) {
 
   const selectedStep = selected !== null ? progress.steps[selected] : null
   const doneCount = progress.steps.filter((s) => s.status === 'done').length
+  const failedCount = progress.steps.filter((s) => s.status === 'failed').length
   const totalCount = progress.steps.length
   const pct = Math.round((doneCount / totalCount) * 100)
 
@@ -142,107 +218,178 @@ export function WorkflowProgressPanel({ projectId }: Props) {
           0%, 100% { opacity: 1; transform: scale(1); }
           50% { opacity: 0.4; transform: scale(0.82); }
         }
+        @keyframes wp-flow-slide {
+          0% { background-position: 0% 50%; }
+          100% { background-position: 200% 50%; }
+        }
       `}</style>
 
-      {/* 顶部完成度小条 */}
+      {/* 完成度读数（进度条本体已并入下方节点连接段，保证与步骤对齐） */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
           <span style={{ color: 'var(--signal-hover)', fontWeight: 600 }}>{doneCount}</span>/{totalCount} 完成
         </span>
-        <span
-          style={{
-            flex: 1,
-            height: 3,
-            borderRadius: 'var(--radius-pill)',
-            background: 'var(--surface-raised)',
-            overflow: 'hidden',
-          }}
-        >
-          <span
-            style={{
-              display: 'block',
-              height: '100%',
-              width: `${pct}%`,
-              background: 'linear-gradient(90deg, var(--signal), var(--cyan))',
-              borderRadius: 'var(--radius-pill)',
-              transition: 'width 0.4s ease',
-            }}
-          />
-        </span>
+        {failedCount > 0 && <span style={{ fontSize: 12, color: 'var(--error)' }}>· {failedCount} 个失败</span>}
+        <span style={{ flex: 1 }} />
+        <span style={{ fontSize: 12, color: 'var(--text-tertiary)', flexShrink: 0 }}>{pct}%</span>
       </div>
 
-      {/* 节点流（单行横向滚动，已完成灰度） */}
-      <div className="wp-flow-scroll" style={{ display: 'flex', flexWrap: 'nowrap', alignItems: 'center', gap: 8, overflowX: 'auto', overflowY: 'hidden', paddingBottom: 6, width: '100%', minWidth: 0 }}>
-        {progress.steps.map((step, i) => {
-          const cfg = statusConfig[step.status] ?? statusConfig.unassigned
-          const isSelected = selected === i
-          const isDone = step.status === 'done'
-          // 已完成节点灰度展示，未完成保持状态色
-          const nodeColor = isDone ? 'var(--text-quaternary)' : cfg.color
-          const nodeBorder = isDone ? 'var(--line-strong)' : cfg.border
-          const nodeBg = isDone ? 'var(--surface-raised)' : isSelected ? cfg.bg : 'var(--surface)'
-          const nodeText = isDone ? 'var(--text-quaternary)' : 'var(--text-primary)'
-          const rc = isDone
-            ? { bg: 'linear-gradient(135deg, var(--text-quaternary), var(--text-quaternary))', color: 'var(--text-tertiary)' }
-            : roleColor(step.role, step.agent_id)
-          const badge = getBadgeChar(step.task_title, step.role, step.name)
-          return (
-            <div key={step.index} style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-              <Tooltip title={`${step.name} · ${cfg.label}${step.task_title ? `（${step.task_title}）` : ''}`}>
-                <button
-                  type="button"
-                  onClick={() => handleStepClick(i)}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '6px 12px 6px 6px',
-                    borderRadius: 'var(--radius-pill)',
-                    border: `1px solid ${isSelected ? nodeColor : nodeBorder}`,
-                    background: nodeBg,
-                    boxShadow: isSelected && !isDone ? `0 0 14px ${cfg.color}35` : 'none',
-                    cursor: 'pointer',
-                    fontFamily: 'inherit',
-                    transition: 'border-color 0.15s, box-shadow 0.15s, background 0.15s',
-                  }}
-                >
-                  <span
+      {/* 节点流：连接段 flex:1 撑满剩余宽度；步骤过多时连接段收到 MIN_CONNECTOR_WIDTH 兜底并触发横向滚动。
+          进度条即连接段本身，填充端点天然落在节点圆心，与步骤严格对齐。 */}
+      <div style={{ position: 'relative', width: '100%', minWidth: 0 }}>
+        <div
+          ref={flowRef}
+          className="wp-flow-scroll"
+          style={{
+            position: 'relative',
+            display: 'flex',
+            flexWrap: 'nowrap',
+            alignItems: 'center',
+            gap: 0,
+            overflowX: 'auto',
+            overflowY: 'hidden',
+            paddingBottom: 6,
+            width: '100%',
+            minWidth: 0,
+          }}
+        >
+          {progress.steps.map((step, i) => {
+            const cfg = statusConfig[step.status] ?? statusConfig.unassigned
+            const isSelected = selected === i
+            const isDone = step.status === 'done'
+            // 已完成节点灰度展示，未完成保持状态色
+            const nodeColor = isDone ? 'var(--text-quaternary)' : cfg.color
+            const nodeBorder = isDone ? 'var(--line-strong)' : cfg.border
+            const nodeBg = isDone ? 'var(--surface-raised)' : isSelected ? cfg.bg : 'var(--surface)'
+            const nodeText = isDone ? 'var(--text-quaternary)' : 'var(--text-primary)'
+            const rc = isDone
+              ? { bg: 'linear-gradient(135deg, var(--text-quaternary), var(--text-quaternary))', color: 'var(--text-tertiary)' }
+              : roleColor(step.role, step.agent_id)
+            const badge = getBadgeChar(step.task_title, step.role, step.name)
+            const fill = connectorFill(step.status)
+            return (
+              <Fragment key={step.index}>
+                <div data-step-index={i} style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', minWidth: 0 }}>
+                  <Tooltip title={`${step.name} · ${cfg.label}${step.task_title ? `（${step.task_title}）` : ''}`}>
+                    <button
+                      type="button"
+                      onClick={() => handleStepClick(i)}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        maxWidth: MAX_PILL_WIDTH,
+                        padding: '6px 12px 6px 6px',
+                        borderRadius: 'var(--radius-pill)',
+                        border: `1px solid ${isSelected ? nodeColor : nodeBorder}`,
+                        background: nodeBg,
+                        boxShadow: isSelected && !isDone ? `0 0 14px ${cfg.color}35` : 'none',
+                        cursor: 'pointer',
+                        fontFamily: 'inherit',
+                        transition: 'border-color 0.15s, box-shadow 0.15s, background 0.15s',
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 26,
+                          height: 26,
+                          borderRadius: 'var(--radius-avatar)',
+                          background: rc.bg,
+                          color: isDone ? 'var(--text-tertiary)' : '#fff',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {badge}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 12.5,
+                          color: nodeText,
+                          fontWeight: 500,
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          minWidth: 0,
+                        }}
+                      >
+                        {step.name}
+                      </span>
+                      <span
+                        style={{
+                          color: nodeColor,
+                          fontSize: 13,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          animation: step.status === 'in_progress' ? 'wp-pulse2 1.8s ease-in-out infinite' : 'none',
+                        }}
+                      >
+                        {cfg.icon}
+                      </span>
+                    </button>
+                  </Tooltip>
+                </div>
+                {i < progress.steps.length - 1 && (
+                  <div
                     style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: 'var(--radius-avatar)',
-                      background: rc.bg,
-                      color: isDone ? 'var(--text-tertiary)' : '#fff',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      flexShrink: 0,
+                      flex: `1 1 ${MIN_CONNECTOR_WIDTH}px`,
+                      minWidth: MIN_CONNECTOR_WIDTH,
+                      height: 2,
+                      borderRadius: 'var(--radius-pill)',
+                      background: 'var(--surface-raised)',
+                      overflow: 'hidden',
                     }}
                   >
-                    {badge}
-                  </span>
-                  <span style={{ fontSize: 12.5, color: nodeText, fontWeight: 500, whiteSpace: 'nowrap' }}>{step.name}</span>
-                  <span
-                    style={{
-                      color: nodeColor,
-                      fontSize: 13,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      animation: step.status === 'in_progress' ? 'wp-pulse2 1.8s ease-in-out infinite' : 'none',
-                    }}
-                  >
-                    {cfg.icon}
-                  </span>
-                </button>
-              </Tooltip>
-              {i < progress.steps.length - 1 && (
-                <span style={{ color: isDone ? 'rgba(107,114,128,0.4)' : 'rgba(139,127,248,0.5)', fontSize: 14, userSelect: 'none', flexShrink: 0 }}>→</span>
-              )}
-            </div>
-          )
-        })}
+                    <span
+                      style={{
+                        display: 'block',
+                        height: '100%',
+                        width: `${fill.pct}%`,
+                        background: fill.bg,
+                        backgroundSize: fill.animate ? '200% 100%' : undefined,
+                        animation: fill.animate ? 'wp-flow-slide 2.4s linear infinite' : 'none',
+                        borderRadius: 'var(--radius-pill)',
+                        transition: 'width 0.4s ease',
+                      }}
+                    />
+                  </div>
+                )}
+              </Fragment>
+            )
+          })}
+        </div>
+
+        {/* 两侧渐隐：提示横向还能继续滚 */}
+        {edge.left && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              bottom: 6,
+              left: 0,
+              width: 28,
+              pointerEvents: 'none',
+              background: 'linear-gradient(90deg, var(--surface), transparent)',
+            }}
+          />
+        )}
+        {edge.right && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              bottom: 6,
+              right: 0,
+              width: 28,
+              pointerEvents: 'none',
+              background: 'linear-gradient(270deg, var(--surface), transparent)',
+            }}
+          />
+        )}
       </div>
 
       {/* 选中节点产物区（常驻展开） */}
@@ -258,8 +405,32 @@ export function WorkflowProgressPanel({ projectId }: Props) {
             gap: 3,
           }}
         >
-          <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
-            步骤 {selectedStep.index + 1} · {selectedStep.name} · 最终产物
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+              步骤 {selectedStep.index + 1} · {selectedStep.name} · 最终产物
+            </span>
+            <span style={{ flex: 1 }} />
+            {/* 从步骤视角绑定：允许在这里挑项目里的任意文件（含手工上传的） */}
+            <button
+              type="button"
+              disabled={selectedStep.status === 'unassigned' || !selectedStep.task_id}
+              onClick={() => setBindStepIndex(selectedStep.index)}
+              style={{
+                fontSize: 12,
+                lineHeight: '20px',
+                padding: '1px 10px',
+                borderRadius: 'var(--radius-pill)',
+                border: '1px solid rgba(139,127,248,0.4)',
+                background: 'rgba(139,127,248,0.12)',
+                color: 'var(--signal-hover)',
+                cursor: selectedStep.status === 'unassigned' || !selectedStep.task_id ? 'not-allowed' : 'pointer',
+                opacity: selectedStep.status === 'unassigned' || !selectedStep.task_id ? 0.45 : 1,
+                fontFamily: 'inherit',
+                flexShrink: 0,
+              }}
+            >
+              + 绑定交付物
+            </button>
           </div>
           {selectedStep.outputs && selectedStep.outputs.length > 0 ? (
             selectedStep.outputs.map((o, oi) => (
@@ -315,6 +486,16 @@ export function WorkflowProgressPanel({ projectId }: Props) {
         onOpenChange={setPreviewOpen}
         blob={preview?.blob ?? null}
         fileName={preview?.fileName ?? ''}
+      />
+
+      {/* 手工绑定交付物：任意文件 → 该步骤的输出位 */}
+      <BindOutputModal
+        open={bindStepIndex !== null}
+        onOpenChange={(o) => !o && setBindStepIndex(null)}
+        projectId={projectId}
+        file={null}
+        pickFile
+        lockedStepIndex={bindStepIndex ?? undefined}
       />
     </div>
   )

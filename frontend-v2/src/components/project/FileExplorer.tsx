@@ -11,6 +11,7 @@ import {
   HomeOutlined,
   EditOutlined,
   ArrowLeftOutlined,
+  LinkOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import {
@@ -22,6 +23,7 @@ import {
 } from '@/hooks/useProjectFiles'
 import { downloadProjectFile } from '@/api/projectFiles'
 import { FileViewer } from '@/components/task/FileViewer'
+import { BindOutputModal, type BindOutputFile } from '@/components/project/BindOutputModal'
 import type { ProjectFile } from '@/types'
 
 interface Props {
@@ -80,6 +82,8 @@ export function FileExplorer({ projectId }: Props) {
   const [folderName, setFolderName] = useState('')
   const [renaming, setRenaming] = useState<ProjectFile | null>(null)
   const [renameName, setRenameName] = useState('')
+  // 手工绑定交付物：任意文件 → 任意流程步骤（含用户手工上传的文件）
+  const [bindTarget, setBindTarget] = useState<BindOutputFile | null>(null)
 
   // 文件预览
   const [preview, setPreview] = useState<ProjectFile | null>(null)
@@ -230,7 +234,7 @@ export function FileExplorer({ projectId }: Props) {
     {
       title: '操作',
       key: 'action',
-      width: 150,
+      width: 190,
       render: (_: unknown, record: ProjectFile) => (
         <span style={{ display: 'inline-flex', gap: 4 }}>
           {!record.is_folder && (
@@ -240,6 +244,14 @@ export function FileExplorer({ projectId }: Props) {
               </Tooltip>
               <Tooltip title="下载">
                 <Button type="text" size="small" icon={<DownloadOutlined />} onClick={() => handleDownload(record)} />
+              </Tooltip>
+              <Tooltip title="绑定为交付物">
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<LinkOutlined />}
+                  onClick={() => setBindTarget({ fileId: record.id, fileName: record.file_name })}
+                />
               </Tooltip>
             </>
           )}
@@ -365,6 +377,14 @@ export function FileExplorer({ projectId }: Props) {
         blob={previewBlob}
         fileName={preview?.file_name ?? ''}
         onDownload={preview ? () => handleDownload(preview) : undefined}
+      />
+
+      {/* 手工绑定交付物：任意文件 → 任意流程步骤 */}
+      <BindOutputModal
+        open={!!bindTarget}
+        onOpenChange={(o) => !o && setBindTarget(null)}
+        projectId={projectId}
+        file={bindTarget}
       />
     </div>
   )

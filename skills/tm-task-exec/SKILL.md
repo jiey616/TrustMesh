@@ -148,6 +148,13 @@ TrustMesh 会回复 `knowledge.result`，包含 `results[]`（每项：`document
 
 **执行中遇到"方向性/偏好性"决策、且会显著影响产出方向时，用 `todo.ask` 请求用户拍板。** 发出后 todo 挂起为 `waiting_user`，用户回答后自动恢复，你会收到 `todo.answer` 回包并继续执行。
 
+> ⚠️ **确认门铁律（2026-09-07 事故修复，逐字遵守）**
+> - **请求用户确认/拍板，必须发 `todo.ask` 协议消息。** `task.comment` 只是聊天记录，**永远不会**触发平台交互确认 UI；发出「task.comment + 等待用户确认」然后停下 = 违规，用户只能被迫打字回复。
+> - ❌ **不存在 `clawsynapse todo ask` 以外的快捷方式**；❌ 不存在 `clawsynapse message send`、`clawsynapse send`、`clawsynapse todo`（旧版 CLI 会报 `unknown command: todo`）。
+> - ✅ **首选（clawsynapse v1.0.36+）**：`clawsynapse todo ask --target "$TARGET_NODE" --session-key "$TASK_ID" --todo "$TODO_ID" --options "A,B,C" --question "..."`（question 支持 `@/path/file.txt` 读文件，question_id 自动生成）。
+> - ✅ **回退（旧版 CLI）**：`clawsynapse publish --type todo.ask` + JSON payload（见下方模板）。
+> - 工位卡（kanban）完成后：`transfer send` 上传产物 → **立即 `todo.ask`** → STATE 写 `awaiting_user` → 结束会话。全程不许把确认请求降级成 task.comment。
+
 **什么时候该 ask（方向性/偏好性）**：
 - 二选一/多选一的方案取舍（"第 8 集结尾走 A 还是 B"）
 - 设定/规则冲突需要用户定夺（"金手指规则要不要调整"）

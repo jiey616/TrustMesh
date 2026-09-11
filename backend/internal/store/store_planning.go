@@ -23,14 +23,16 @@ type TaskPlanReadyInput struct {
 }
 
 func (s *Store) CreateTaskPlanning(sc Scope, projectID, content string) (*model.TaskDetail, *transport.AppError) {
-	return s.CreateTaskPlanningWithFiles(sc, projectID, content, nil, nil, nil, 0, 0)
+	return s.CreateTaskPlanningWithFiles(sc, projectID, content, nil, nil, nil, 0, 0, nil)
 }
 
 // CreateTaskPlanningWithFiles creates a planning-mode task with optional file attachments.
 // When workflowIndex points at a project workflow, the snapshot is trimmed to the
 // requested step range (stepFrom..stepTo) and a WorkflowRef is recorded, mirroring
 // CreateTaskByUser. Otherwise the explicitly chosen (or default) workflow is used as-is.
-func (s *Store) CreateTaskPlanningWithFiles(sc Scope, projectID, content string, fileIDs []string, workflow *model.Workflow, workflowIndex *int, stepFrom, stepTo int) (*model.TaskDetail, *transport.AppError) {
+// chatAttachments are user-uploaded files (chat-attachment domain) carried on the
+// first user message so the planning thread renders them like any other message.
+func (s *Store) CreateTaskPlanningWithFiles(sc Scope, projectID, content string, fileIDs []string, workflow *model.Workflow, workflowIndex *int, stepFrom, stepTo int, chatAttachments []model.ChatAttachment) (*model.TaskDetail, *transport.AppError) {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return nil, transport.Validation("invalid content", map[string]any{"content": "required"})
@@ -89,7 +91,7 @@ func (s *Store) CreateTaskPlanningWithFiles(sc Scope, projectID, content string,
 		wfSnapshot = workflowSnapshot(workflow)
 	}
 
-	msg := model.TaskMessage{ID: uuid.NewString(), Role: "user", Content: content, CreatedAt: now}
+	msg := model.TaskMessage{ID: uuid.NewString(), Role: "user", Content: content, CreatedAt: now, Attachments: append([]model.ChatAttachment(nil), chatAttachments...)}
 
 	task := &model.TaskDetail{
 		ID:        newID(),
@@ -101,8 +103,8 @@ func (s *Store) CreateTaskPlanningWithFiles(sc Scope, projectID, content string,
 		Priority:  "medium",
 		// Workflow snapshot trimmed to the requested step range (or the
 		// explicitly chosen workflow as-is), plus its WorkflowRef when bound.
-		Workflow:    wfSnapshot,
-		WorkflowRef: wfRef,
+		Workflow:      wfSnapshot,
+		WorkflowRef:   wfRef,
 		PMAgentID:     pmAgent.ID,
 		PMAgent:       toPMSummary(pmAgent),
 		Messages:      []model.TaskMessage{msg},
@@ -135,9 +137,9 @@ func (s *Store) CreateTaskPlanningWithFiles(sc Scope, projectID, content string,
 	return s.copyTaskWithArtifactsUnsafe(task), nil
 }
 
-func (s *Store) AppendTaskMessage(sc Scope, taskID, content string, uiResponse *model.UIResponse) (*model.TaskDetail, *transport.AppError) {
+func (s *Store) AppendTaskMessage(sc Scope, taskID, content string, uiResponse *model.UIResponse, attachments []model.ChatAttachment) (*model.TaskDetail, *transport.AppError) {
 	content = strings.TrimSpace(content)
-	if content == "" {
+	if content == "" && len(attachments) == 0 {
 		return nil, transport.Validation("invalid content", map[string]any{"content": "required"})
 	}
 
@@ -163,7 +165,7 @@ func (s *Store) AppendTaskMessage(sc Scope, taskID, content string, uiResponse *
 	}
 
 	now := time.Now().UTC()
-	msg := model.TaskMessage{ID: uuid.NewString(), Role: "user", Content: content, UIResponse: uiResponse, CreatedAt: now}
+	msg := model.TaskMessage{ID: uuid.NewString(), Role: "user", Content: content, UIResponse: uiResponse, Attachments: attachments, CreatedAt: now}
 	task.Messages = append(task.Messages, msg)
 	task.UpdatedAt = now
 	task.Version++

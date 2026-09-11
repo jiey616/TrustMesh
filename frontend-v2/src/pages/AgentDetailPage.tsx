@@ -103,13 +103,13 @@ const taskStatusFilters: { label: string; value: TaskStatus | 'all' }[] = [
 const taskStatusIcon: Record<TaskStatus, { icon: React.ComponentType<{ className?: string }>; className: string }> = {
   planning: { icon: MessageOutlined, className: 'text-[color:var(--signal)]' },
   review: { icon: MessageOutlined, className: 'text-[color:var(--warning)]' },
-  pending: { icon: MinusCircleOutlined, className: 'text-white/40' },
+  pending: { icon: MinusCircleOutlined, className: 'text-[color:var(--text-quaternary)]' },
   in_progress: { icon: LoadingOutlined, className: 'text-[color:var(--info)]' },
   awaiting_review: { icon: MessageOutlined, className: 'text-[color:var(--error)]' },
   waiting_user: { icon: MessageOutlined, className: 'text-[color:var(--warning)]' },
   done: { icon: CheckCircleOutlined, className: 'text-[color:var(--success)]' },
   failed: { icon: CloseCircleOutlined, className: 'text-[color:var(--error)]' },
-  canceled: { icon: StopOutlined, className: 'text-white/40' },
+  canceled: { icon: StopOutlined, className: 'text-[color:var(--text-quaternary)]' },
 }
 
 const priorityColor: Record<string, string> = {
@@ -204,7 +204,7 @@ export function AgentDetailPage() {
           </Space>
 
           {/* 表头 */}
-          <div className="grid items-center gap-3 grid-cols-[minmax(0,1fr)_120px_80px_120px_90px] px-3 py-2 border-b border-white/10 text-xs font-medium text-white/40">
+          <div className="grid items-center gap-3 grid-cols-[minmax(0,1fr)_120px_80px_120px_90px] px-3 py-2 border-b border-[color:var(--line-strong)] text-xs font-medium text-[color:var(--text-quaternary)]">
             <span>任务名称</span>
             <span>项目</span>
             <span className="text-center">优先级</span>
@@ -223,7 +223,7 @@ export function AgentDetailPage() {
             <div className="flex flex-col">
               {tasks.map((task) => {
                 const StatusIcon = taskStatusIcon[task.status]?.icon ?? MinusCircleOutlined
-                const iconClass = taskStatusIcon[task.status]?.className ?? 'text-white/40'
+                const iconClass = taskStatusIcon[task.status]?.className ?? 'text-[color:var(--text-quaternary)]'
                 const progress = task.todo_count > 0
                   ? Math.round((task.completed_todo_count / task.todo_count) * 100)
                   : 0
@@ -231,26 +231,26 @@ export function AgentDetailPage() {
                   <div
                     key={task.id}
                     onClick={() => navigate(`/projects/${task.project_id}?task=${task.id}`)}
-                    className="grid items-center gap-3 grid-cols-[minmax(0,1fr)_120px_80px_120px_90px] px-3 py-2.5 rounded-md cursor-pointer transition-colors hover:bg-white/[0.04]"
+                    className="grid items-center gap-3 grid-cols-[minmax(0,1fr)_120px_80px_120px_90px] px-3 py-2.5 rounded-md cursor-pointer transition-colors hover:bg-[color:var(--surface-sunken)]"
                   >
                     {/* 名称 + 状态图标 + 描述 + PM 徽章 */}
                     <div className="flex items-center gap-2.5 min-w-0">
                       <StatusIcon className={`text-base shrink-0 ${iconClass}`} />
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm text-white/90 font-medium">
+                        <div className="truncate text-sm text-[color:var(--text-primary)] font-medium">
                           {task.title}
                           {task.relation === 'pm' && (
                             <Tag className="!text-[10px] !ml-1.5" color="default">PM</Tag>
                           )}
                         </div>
                         {task.description && (
-                          <div className="truncate text-xs text-white/40 mt-0.5">{task.description}</div>
+                          <div className="truncate text-xs text-[color:var(--text-quaternary)] mt-0.5">{task.description}</div>
                         )}
                       </div>
                     </div>
 
                     {/* 项目 */}
-                    <div className="truncate text-xs text-white/50">{task.project_name}</div>
+                    <div className="truncate text-xs text-[color:var(--text-tertiary)]">{task.project_name}</div>
 
                     {/* 优先级 */}
                     <div className="flex justify-center">
@@ -270,17 +270,17 @@ export function AgentDetailPage() {
                             strokeColor={task.failed_todo_count > 0 ? '#ef4444' : '#3b82f6'}
                             className="flex-1"
                           />
-                          <span className="text-xs text-white/40 whitespace-nowrap">
+                          <span className="text-xs text-[color:var(--text-quaternary)] whitespace-nowrap">
                             {task.completed_todo_count}/{task.todo_count}
                           </span>
                         </>
                       ) : (
-                        <span className="text-xs text-white/40">-</span>
+                        <span className="text-xs text-[color:var(--text-quaternary)]">-</span>
                       )}
                     </div>
 
                     {/* 时间 */}
-                    <div className="text-xs text-white/40 text-right whitespace-nowrap">
+                    <div className="text-xs text-[color:var(--text-quaternary)] text-right whitespace-nowrap">
                       {dayjs(task.updated_at).fromNow()}
                     </div>
                   </div>
@@ -457,7 +457,7 @@ export function AgentDetailPage() {
 
       {agent.archived && (
         <div style={{ padding: '0 24px 16px' }}>
-          <div className="flex items-center gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-400">
+          <div className="flex items-center gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-[color:var(--warning)]">
             <InboxOutlined />
             该 Agent 已离职，不再接收新任务
           </div>

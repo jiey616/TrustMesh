@@ -6,12 +6,13 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { ChatBubbleContent } from '@/components/shared/ChatBubbleContent'
+import { ChatAttachmentList } from '@/components/shared/ChatAttachmentList'
 import { MessageInput } from '@/components/task-thread/MessageInput'
 import { useAgentChat, useAgentChatSession, useAgentChatSessions, useResetAgentChat, useSendAgentChatMessage } from '@/hooks/useAgentChat'
 import { cn, formatDateTime, formatRelativeTime } from '@/lib/utils'
 import { ApiRequestError } from '@/api/client'
 import { usePlatformStore } from '@/stores/platformStore'
-import type { Agent, AgentChatSessionSummary } from '@/types'
+import type { Agent, AgentChatSessionSummary, ChatAttachment } from '@/types'
 
 interface AgentChatPanelProps {
   agent: Agent
@@ -91,9 +92,9 @@ export function AgentChatPanel({ agent }: AgentChatPanelProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messageList])
 
-  const handleSend = async (content: string) => {
+  const handleSend = async (content: string, attachments?: ChatAttachment[]) => {
     try {
-      const res = await sendMessage.mutateAsync({ agentId: agent.id, content })
+      const res = await sendMessage.mutateAsync({ agentId: agent.id, content, attachments })
       setIsDraftingNewSession(false)
       setSelectedSessionId(res.data.id)
     } catch (err) {
@@ -177,6 +178,9 @@ export function AgentChatPanel({ agent }: AgentChatPanelProps) {
                         ].join(' ')}
                       >
                         <ChatBubbleContent content={message.content} markdown={!isUser} />
+                        {message.attachments && message.attachments.length > 0 && (
+                          <ChatAttachmentList attachments={message.attachments} compact />
+                        )}
                       </div>
                       <div className="text-xs text-muted-foreground" title={formatDateTime(message.created_at)}>
                         {formatRelativeTime(message.created_at)}

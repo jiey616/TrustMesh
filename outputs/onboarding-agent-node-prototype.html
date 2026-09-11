@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TrustMesh · 连接你的 Agent 节点（OPC Onboarding 原型）</title>
+<style>
+  :root{
+    --bg:#f6f7fb; --panel:#ffffff; --ink:#1e2330; --muted:#6b7280;
+    --line:#e6e8ef; --brand:#4f46e5; --brand-soft:#eef0ff;
+    --ok:#16a34a; --ok-soft:#e9f8ef; --warn:#d97706; --warn-soft:#fdf3e3;
+    --pend:#7c3aed; --pend-soft:#f3ecff; --off:#94a3b8;
+    --radius:14px; --shadow:0 1px 2px rgba(16,24,40,.04),0 8px 24px rgba(16,24,40,.06);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.6;-webkit-font-smoothing:antialiased}
+  .topbar{display:flex;align-items:center;gap:12px;padding:14px 26px;border-bottom:1px solid var(--line);background:#fff}
+  .logo{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,#6366f1,#4f46e5);
+    display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700}
+  .brand{font-weight:700;letter-spacing:.2px}
+  .brand small{display:block;font-weight:500;color:var(--muted);font-size:12px}
+  .tag{margin-left:auto;font-size:12px;color:var(--muted);background:var(--brand-soft);color:var(--brand);
+    padding:4px 10px;border-radius:999px;font-weight:600}
+  .wrap{display:grid;grid-template-columns:248px 1fr;gap:22px;max-width:1080px;margin:26px auto;padding:0 22px}
+  /* Stepper */
+  .stepper{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow);height:fit-content}
+  .stepper h4{margin:2px 0 14px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+  .step{display:flex;gap:12px;padding:11px 10px;border-radius:10px;cursor:pointer;align-items:flex-start;transition:.15s}
+  .step:hover{background:#fafbff}
+  .step.active{background:var(--brand-soft)}
+  .dot{flex:0 0 24px;width:24px;height:24px;border-radius:50%;border:2px solid var(--line);display:flex;align-items:center;
+    justify-content:center;font-size:12px;font-weight:700;color:var(--off);background:#fff}
+  .step.active .dot{border-color:var(--brand);color:var(--brand)}
+  .step.done .dot{background:var(--ok);border-color:var(--ok);color:#fff}
+  .step .t{font-weight:600;font-size:14px}
+  .step .s{font-size:12px;color:var(--muted)}
+  /* Card */
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:26px;box-shadow:var(--shadow);min-height:480px}
+  .card h2{margin:0 0 4px;font-size:21px}
+  .card .lead{color:var(--muted);margin:0 0 20px;font-size:14px}
+  .field{margin:16px 0}
+  .field label{display:block;font-size:13px;font-weight:600;margin-bottom:6px}
+  .field .hint{font-size:12px;color:var(--muted);margin-top:5px}
+  input[type=text],input[type=password]{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;font-size:14px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#fbfcfe;color:var(--ink)}
+  input:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft)}
+  .row{display:flex;gap:10px;align-items:center}
+  .tokenbox{display:flex;align-items:center;gap:8px;background:#0f172a;color:#e2e8f0;padding:11px 12px;border-radius:10px;
+    font-family:ui-monospace,Menlo,monospace;font-size:13px;letter-spacing:.3px}
+  .btn{border:none;border-radius:10px;padding:11px 16px;font-size:14px;font-weight:600;cursor:pointer;transition:.15s;
+    display:inline-flex;align-items:center;gap:8px}
+  .btn-primary{background:var(--brand);color:#fff}
+  .btn-primary:hover{background:#4338ca}
+  .btn-ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}
+  .btn-ghost:hover{background:#f7f8fc}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn-sm{padding:7px 11px;font-size:12.5px}
+  .actions{display:flex;justify-content:space-between;margin-top:26px;gap:10px}
+  .alert{background:var(--warn-soft);border:1px solid #f3d9a8;color:#92500e;padding:11px 13px;border-radius:10px;font-size:13px;margin:14px 0}
+  .alert.ok{background:var(--ok-soft);border-color:#bfe9cc;color:#0f6b35}
+  .alert.info{background:var(--brand-soft);border-color:#cfd2ff;color:#3730a3}
+  /* Tabs */
+  .tabs{display:flex;gap:6px;background:#f1f2f7;padding:5px;border-radius:10px;width:fit-content;margin-bottom:14px}
+  .tab{padding:7px 14px;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;color:var(--muted)}
+  .tab.active{background:#fff;color:var(--brand);box-shadow:var(--shadow)}
+  pre{background:#0f172a;color:#e2e8f0;padding:16px;border-radius:10px;overflow:auto;font-size:12.5px;line-height:1.55;
+    font-family:ui-monospace,Menlo,monospace;max-height:300px}
+  .copyrow{display:flex;gap:8px;margin:10px 0 4px}
+  /* Status flow */
+  .pipeline{display:flex;flex-direction:column;gap:0;margin:22px 0}
+  .pnode{display:flex;gap:14px;align-items:flex-start}
+  .pleft{display:flex;flex-direction:column;align-items:center}
+  .pdot{width:26px;height:26px;border-radius:50%;border:2px solid var(--line);background:#fff;display:flex;align-items:center;
+    justify-content:center;font-size:12px;font-weight:700;color:var(--off);flex:0 0 26px}
+  .pline{width:2px;flex:1;background:var(--line);margin:2px 0;min-height:26px}
+  .pnode:last-child .pline{display:none}
+  .pbody{fadding:0;padding-bottom:18px}
+  .pbody .pt{font-weight:600;font-size:14.5px}
+  .pbody .ps{font-size:12.5px;color:var(--muted)}
+  .pnode.done .pdot{background:var(--ok);border-color:var(--ok);color:#fff}
+  .pnode.active .pdot{border-color:var(--brand);color:var(--brand);background:var(--brand-soft);animation:pulse 1.4s infinite}
+  .pnode.pending .pdot{border-color:var(--pend);color:var(--pend);background:var(--pend-soft)}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(79,70,229,.35)}70%{box-shadow:0 0 0 7px rgba(79,70,229,0)}100%{box-shadow:0 0 0 0 rgba(79,70,229,0)}}
+  .console{background:#0f172a;color:#cbd5e1;padding:14px;border-radius:10px;font-family:ui-monospace,Menlo,monospace;font-size:12px;
+    height:150px;overflow:auto;margin-top:8px}
+  .console .l{opacity:.95}
+  .console .t{color:#64748b}
+  .console .ok{color:#4ade80}.console .warn{color:#fbbf24}.console .info{color:#818cf8}
+  .banner{display:flex;gap:12px;align-items:center;padding:14px 16px;border-radius:12px;font-weight:600}
+  .banner.ok{background:var(--ok-soft);color:#0f6b35;border:1px solid #bfe9cc}
+  .footer{text-align:center;color:var(--muted);font-size:12px;margin:30px 0 40px}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px}
+  .pill.off{background:#eef1f6;color:var(--off)}.pill.ok{background:var(--ok-soft);color:var(--ok)}
+  .pill.pend{background:var(--pend-soft);color:var(--pend)}
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="logo">T</div>
+    <div class="brand">TrustMesh<small>一人公司创业社区 · OPC 运营工具</small></div>
+    <div class="tag">原型 · 连接 Agent 节点引导</div>
+  </div>
+
+  <div class="wrap">
+    <!-- Stepper -->
+    <aside class="stepper">
+      <h4>入驻引导</h4>
+      <div class="step active" data-step="0" onclick="go(0)">
+        <div class="dot">1</div>
+        <div><div class="t">创建节点身份</div><div class="s">生成 NODE_ID 与引导令牌</div></div>
+      </div>
+      <div class="step" data-step="1" onclick="go(1)">
+        <div class="dot">2</div>
+        <div><div class="t">获取配置包</div><div class="s">预填 docker-compose / .env</div></div>
+      </div>
+      <div class="step" data-step="2" onclick="go(2)">
+        <div class="dot">3</div>
+        <div><div class="t">启动并连接</div><div class="s">状态流 · 运营审核 · 激活</div></div>
+      </div>
+    </aside>
+
+    <!-- Card -->
+    <main class="card" id="card"></main>
+  </div>
+
+  <div class="footer">TrustMesh OPC Onboarding 原型 · 状态机：未启动 → 等待心跳 → 已发现 → 等待审核 → 已激活　|　复用现有 JoinRequest + 信任审批机制</div>
+
+<script>
+/* ---------- 模拟数据 ---------- */
+const founder = { id: "f_" + Math.random().toString(36).slice(2,8) };
+const rand = (n)=>Math.random().toString(36).slice(2,2+n);
+const state = {
+  step:0,
+  nodeId:"opc-"+rand(6),
+  nodeName:"我的 Agent",
+  token:"tm_" + rand(10) + "-" + rand(8),
+  phase:"idle",        // idle | launching | waiting | detected | pending | approved
+  launched:false
+};
+const HUB = "trustmesh-server";
+const NATS = "nats://nats.opc.trustmesh:4222";
+const WEBHOOK = "https://platform.opc.trustmesh/webhook/clawsynapse";
+
+/* ---------- 工具 ---------- */
+function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function copy(t){ navigator.clipboard?.writeText(t); flash("已复制到剪贴板"); }
+
+let flashTimer;
+function flash(msg){
+  let el=document.getElementById('flash');
+  if(!el){el=document.createElement('div');el.id='flash';el.style.cssText=
+    'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1e2330;color:#fff;padding:9px 16px;border-radius:10px;font-size:13px;z-index:99;box-shadow:0 8px 24px rgba(0,0,0,.2)';
+    document.body.appendChild(el);}
+  el.textContent=msg;el.style.opacity=1;clearTimeout(flashTimer);
+  flashTimer=setTimeout(()=>el.style.opacity=0,1600);
+}
+
+/* ---------- 渲染各步 ---------- */
+function render(){
+  document.querySelectorAll('.step').forEach(s=>{
+    const i=+s.dataset.step;
+    s.classList.toggle('active',i===state.step);
+    s.classList.toggle('done', i<state.step || (i===2 && state.phase==='approved'));
+  });
+  const c=document.getElementById('card');
+  if(state.step===0) c.innerHTML=step1();
+  else if(state.step===1) c.innerHTML=step2();
+  else c.innerHTML=step3();
+  bind();
+}
+
+function step1(){
+  const valid = state.nodeId.startsWith('opc-');
+  return `
+  <h2>创建你的 Agent 节点身份</h2>
+  <p class="lead">你将运行一个属于自己的 <b>ClawSynapse 节点</b>——它是你这家一人公司的 AI 运营官（COO）。
+  节点由你本地或云端启动，经原生信任握手接入 TrustMesh 社区。</p>
+
+  <div class="field">
+    <label>节点名称（展示用）</label>
+    <div class="row"><input id="nodeName" type="text" value="${esc(state.nodeName)}" placeholder="例如：我的 Agent"></div>
+    <div class="hint">仅用于社区内展示，可随时修改。</div>
+  </div>
+
+  <div class="field">
+    <label>节点 ID（NODE_ID）</label>
+    <div class="row"><input id="nodeId" type="text" value="${esc(state.nodeId)}" placeholder="opc-xxxxxx"></div>
+    <div class="hint">${valid
+      ? '✓ 符合 <code>opc-</code> 命名空间要求，平台会自动识别为 OPC 社区节点。'
+      : '⚠ 必须以 <code>opc-</code> 开头，否则平台将拒绝注册。'}</div>
+  </div>
+
+  <div class="field">
+    <label>引导令牌（Bootstrap Token）</label>
+    <div class="tokenbox"><span id="tok">${esc(state.token)}</span>
+      <button class="btn btn-ghost btn-sm" onclick="copy('${esc(state.token)}')">复制</button>
+      <button class="btn btn-ghost btn-sm" onclick="regen()">重新生成</button></div>
+    <div class="hint">节点首次启动时凭此令牌完成身份认证（一次性）。令牌仅在注册前有效，请妥善保存。</div>
+  </div>
+
+  <div class="alert info">下一步平台会为你生成<b>预填好全部参数的配置包</b>，你下载后一条命令即可拉起节点，无需手工填写 NATS / Webhook / 枢纽节点。</div>
+
+  <div class="actions">
+    <span></span>
+    <button class="btn btn-primary" ${valid?'':'disabled'} onclick="next()">下一步：获取配置包 →</button>
+  </div>`;
+}
+
+function composeYaml(){
+  return `services:
+  clawsynapse:
+    image: trustmesh/clawsynapse:latest
+    container_name: ${state.nodeId}
+    restart: unless-stopped
+    environment:
+      NODE_ID: ${state.nodeId}
+      NODE_NAME: "${state.nodeName}"
+      BOOTSTRAP_TOKEN: ${state.token}
+      HUB_NODE: ${HUB}
+      NATS_SERVERS: ${NATS}
+      WEBHOOK_URL: ${WEBHOOK}
+    volumes:
+      - ./data:/var/lib/clawsynapse
+      - ./skills:/skills
+    ports:
+      - "8080:8080"`;
+}
+function envFile(){
+  return `NODE_ID=${state.nodeId}
+NODE_NAME=${state.nodeName}
+BOOTSTRAP_TOKEN=${state.token}
+HUB_NODE=${HUB}
+NATS_SERVERS=${NATS}
+WEBHOOK_URL=${WEBHOOK}`;
+}
+
+function step2(){
+  return `
+  <h2>获取配置包</h2>
+  <p class="lead">下面是平台为你预填好的启动配置。两条命令即可拉起你的 Agent 节点：</p>
+  <div class="alert info"><b>①</b> 复制配置保存为 <code>docker-compose.yml</code>　<b>②</b> <code>docker compose up -d</code></div>
+
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('yaml')">docker-compose.yml</div>
+    <div class="tab" onclick="switchTab('env')">.env</div>
+  </div>
+  <div id="yamlBox"><pre>${esc(composeYaml())}</pre>
+    <div class="copyrow"><button class="btn btn-ghost btn-sm" onclick="copy(\`${composeYaml().replace(/`/g,'\\`')}\`)">复制 YAML</button>
+    <button class="btn btn-ghost btn-sm" onclick="dl('docker-compose.yml',\`${composeYaml().replace(/`/g,'\\`')}\`)">下载</button></div></div>
+  <div id="envBox" style="display:none"><pre>${esc(envFile())}</pre>
+    <div class="copyrow"><button class="btn btn-ghost btn-sm" onclick="copy(\`${envFile().replace(/`/g,'\\`')}\`)">复制 .env</button>
+    <button class="btn btn-ghost btn-sm" onclick="dl('.env',\`${envFile().replace(/`/g,'\\`')}\`)">下载</button></div></div>
+
+  <div class="alert">节点启动后会自动向平台发起<b>身份认证 + 注册申请</b>，平台记录其节点身份并转交运营者审核（你无需在节点侧单独申请）。</div>
+
+  <div class="actions">
+    <button class="btn btn-ghost" onclick="go(0)">← 上一步</button>
+    <button class="btn btn-primary" onclick="next()">我准备好了，去启动 →</button>
+  </div>`;
+}
+
+function dl(name,content){
+  const b=new Blob([content],{type:'text/plain'});const a=document.createElement('a');
+  a.href=URL.createObjectURL(b);a.download=name;a.click();flash('已下载 '+name);
+}
+
+/* ---------- Step 3: 状态流 ---------- */
+const phases=[
+  {key:'idle',     label:'未启动',           sub:'节点尚未运行', cls:''},
+  {key:'launching',label:'节点启动中',       sub:'正在读取配置并连接 NATS', cls:'active'},
+  {key:'waiting',  label:'等待节点心跳',     sub:'平台轮询 /v1/health', cls:'active'},
+  {key:'detected', label:'已发现节点',       sub:'完成信任握手，自动创建注册申请', cls:'done'},
+  {key:'pending',  label:'等待运营审核',     sub:'运营者批准信任后将激活 Agent', cls:'pending'},
+  {key:'approved', label:'Agent 已激活',     sub:'你的专属 AI 运营官在线', cls:'done'},
+];
+function phaseIndex(){return phases.findIndex(p=>p.key===state.phase)}
+
+function step3(){
+  const idx=phaseIndex();
+  const labels=['idle','launching','waiting','detected','pending','approved'];
+  let pipe='<div class="pipeline">';
+  phases.forEach((p,i)=>{
+    let c=''; if(i<idx) c='done'; else if(i===idx) c=p.cls||'active';
+    const icon = i<idx ? '✓' : (i+1);
+    pipe+=`<div class="pnode ${c}"><div class="pleft"><div class="pdot">${icon}</div><div class="pline"></div></div>
+      <div class="pbody"><div class="pt">${p.label} ${badge(i,idx)}</div><div class="ps">${p.sub}</div></div></div>`;
+  });
+  pipe+='</div>';
+
+  const controls = state.phase==='idle'
+    ? `<button class="btn btn-primary" onclick="launch()">我已启动节点，开始连接 →</button>`
+    : state.phase==='approved'
+    ? `<button class="btn btn-primary" onclick="enterCockpit()">进入 Agent 驾驶舱 →</button>`
+    : `<button class="btn btn-ghost" onclick="resetFlow()">重置流程</button>`;
+
+  return `
+  <h2>启动并连接</h2>
+  <p class="lead">按上一步配置包拉起节点后，点击下方按钮开始连接。平台将自动检测节点并推进注册。</p>
+  ${state.phase==='idle'?'<div class="alert">提示：节点启动后大约 10–30 秒内会被平台发现。你也可以先离开，审核通过后会收到通知。</div>':''}
+  ${state.phase==='approved'?'<div class="banner ok">🎉 你的 Agent 节点已激活，专属 AI 运营官现在在线。它已绑定到你的账户（UserID: <code>'+founder.id+'</code>），并打上 <span class="pill ok">Product: opc</span> 标识。</div>':''}
+  ${pipe}
+  <div class="console" id="console"></div>
+  <div class="actions">
+    <button class="btn btn-ghost" onclick="go(1)">← 上一步</button>
+    ${controls}
+  </div>`;
+}
+function badge(i,idx){
+  if(i===idx && (state.phase==='launching'||state.phase==='waiting')) return '<span class="pill off">进行中</span>';
+  if(i===idx && state.phase==='pending') return '<span class="pill pend">待处理</span>';
+  if(i<idx) return '<span class="pill ok">完成</span>';
+  return '';
+}
+function logLine(msg,type=''){
+  const con=document.getElementById('console'); if(!con)return;
+  const t=new Date().toLocaleTimeString('zh-CN',{hour12:false});
+  con.innerHTML+=`<div class="l"><span class="t">[${t}]</span> <span class="${type}">${msg}</span></div>`;
+  con.scrollTop=con.scrollHeight;
+}
+
+/* 模拟状态推进 */
+let flowTimer;
+function launch(){
+  state.phase='launching'; render();
+  logLine('节点启动中，读取 docker-compose 配置…','info');
+  flowTimer=setTimeout(()=>{
+    state.phase='waiting'; render();
+    logLine('已连接 NATS（'+NATS+'），正在上报 /v1/health…','info');
+    flowTimer=setTimeout(()=>{
+      state.phase='detected'; render();
+      logLine('✓ 平台检测到节点 '+state.nodeId+' 心跳','ok');
+      logLine('执行 ClawSynapse 原生信任握手，生成注册申请（JoinRequest）…','info');
+      flowTimer=setTimeout(()=>{
+        state.phase='pending'; render();
+        logLine('✓ 注册申请已创建，转交运营者审核','warn');
+        logLine('⏳ 等待运营者批准信任（你将在审核通过后收到通知）…','warn');
+      },1100);
+    },1300);
+  },1100);
+}
+function resetFlow(){clearTimeout(flowTimer);state.phase='idle';render();}
+function enterCockpit(){
+  logLine('→ 跳转 Agent 驾驶舱（原型到此为止，后续为驾驶舱首屏）','info');
+  flash('驾驶舱为后续楔子，本原型结束于此');
+}
+
+/* ---------- 导航 ---------- */
+function go(i){ if(i>state.step && i===2 && state.phase==='idle') {/*允许*/} state.step=i; render(); }
+function next(){ if(state.step<2) state.step++; render(); window.scrollTo({top:0,behavior:'smooth'}); }
+function regen(){ state.token="tm_"+rand(10)+"-"+rand(8); render(); }
+function switchTab(t){
+  document.querySelectorAll('.tab').forEach((el,i)=>el.classList.toggle('active',(t==='yaml'?i===0:i===1)));
+  document.getElementById('yamlBox').style.display=t==='yaml'?'block':'none';
+  document.getElementById('envBox').style.display=t==='env'?'block':'none';
+}
+function bind(){
+  const nid=document.getElementById('nodeName'); if(nid)nid.oninput=e=>state.nodeName=e.target.value;
+  const id=document.getElementById('nodeId'); if(id)id.oninput=e=>{state.nodeId=e.target.value;render();};
+}
+
+render();
+</script>
+</body>
+</html>

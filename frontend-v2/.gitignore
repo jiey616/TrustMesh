@@ -3,6 +3,8 @@ dist
 dist-v2
 dist-v2-*
 .vite-cache*
+release/
+release-new/
 *.local
 .DS_Store
 tmp/

@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TrustMesh 文件管理 v2 — 原型</title>
+<style>
+:root {
+  --bg: #0f1117;
+  --bg-sidebar: #161822;
+  --bg-main: #1a1d2e;
+  --bg-hover: #252840;
+  --bg-selected: #2a2f45;
+  --border: #2d3148;
+  --text: #e4e6f0;
+  --text-dim: #8b8fa8;
+  --accent: #6366f1;
+  --accent-light: #818cf8;
+  --danger: #ef4444;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --radius: 8px;
+  --shadow: 0 4px 24px rgba(0,0,0,0.3);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  overflow: hidden;
+}
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* Header */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.header .logo {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--accent-light);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.header .logo span { color: var(--text-dim); font-weight:400; font-size:13px; }
+
+/* Main layout */
+.main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 260px;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.sidebar-header {
+  padding: 12px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+.tree-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  transition: background 0.15s;
+  user-select: none;
+  white-space: nowrap;
+}
+.tree-item:hover { background: var(--bg-hover); }
+.tree-item.active { background: var(--bg-selected); color: var(--accent-light); }
+.tree-item .icon { width:18px; text-align:center; flex-shrink:0; font-size:14px; }
+.tree-item .label { flex:1; overflow:hidden; text-overflow:ellipsis; }
+.tree-item .badge {
+  font-size: 10px;
+  background: var(--bg-hover);
+  padding: 1px 6px;
+  border-radius: 10px;
+  color: var(--text-dim);
+}
+.tree-item .arrow { 
+  width:14px; text-align:center; flex-shrink:0;
+  font-size:10px; color:var(--text-dim);
+  transition: transform 0.15s;
+}
+.tree-item .arrow.expanded { transform: rotate(90deg); }
+
+.tree-children { overflow: hidden; }
+.tree-level-1 { padding-left: 12px; }
+.tree-level-2 { padding-left: 24px; }
+.tree-level-3 { padding-left: 36px; }
+
+.sidebar-divider {
+  border-top: 1px solid var(--border);
+  margin: 4px 0;
+}
+.sidebar-section {
+  padding: 4px 14px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* Content area */
+.content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-main);
+}
+
+/* Breadcrumb */
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 16px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.breadcrumb-item {
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.breadcrumb-item:hover { background: var(--bg-hover); color: var(--text); }
+.breadcrumb-item.active { color: var(--text); font-weight: 500; }
+.breadcrumb-sep { color: var(--border); margin: 0 2px; }
+
+/* Toolbar */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.toolbar .spacer { flex: 1; }
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.btn:hover { background: var(--bg-hover); border-color: var(--text-dim); }
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.btn.primary:hover { background: var(--accent-light); }
+.btn.ghost { border-color: transparent; }
+.btn.ghost:hover { background: var(--bg-hover); }
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 13px;
+  color: var(--text);
+  width: 200px;
+}
+.search-box input {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  width: 100%;
+  font-family: inherit;
+}
+.search-box input::placeholder { color: var(--text-dim); }
+
+/* File Table */
+.file-table-wrap {
+  flex: 1;
+  overflow-y: auto;
+}
+.file-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.file-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-main);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  user-select: none;
+}
+.file-table th.sortable { cursor: pointer; }
+.file-table th.sortable:hover { color: var(--text); }
+.file-table td {
+  padding: 9px 16px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.file-table tr { transition: background 0.1s; cursor: pointer; }
+.file-table tr:hover { background: var(--bg-hover); }
+.file-table tr.selected { background: var(--bg-selected); }
+.file-table .name-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.file-table .name-cell .file-icon { font-size: 18px; width: 22px; text-align: center; }
+.file-table .name-cell .file-name { font-weight: 500; }
+.file-table .size-cell { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.file-table .type-cell { color: var(--text-dim); font-size:12px; }
+.file-table .source-cell { font-size: 12px; }
+.file-table .date-cell { color: var(--text-dim); font-size:12px; }
+.source-tag {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.source-tag.user { background: rgba(99,102,241,0.15); color: var(--accent-light); }
+.source-tag.agent { background: rgba(34,197,94,0.15); color: var(--success); }
+
+/* Empty state */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: var(--text-dim);
+}
+.empty-state .empty-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.5; }
+.empty-state .empty-title { font-size: 16px; font-weight: 500; color: var(--text); margin-bottom: 6px; }
+.empty-state .empty-desc { font-size: 13px; }
+.empty-state .empty-actions { margin-top: 16px; display: flex; gap: 8px; }
+
+/* Context menu */
+.context-menu {
+  position: fixed;
+  min-width: 180px;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  z-index: 1000;
+  padding: 4px 0;
+  display: none;
+}
+.context-menu.show { display: block; }
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text);
+  transition: background 0.1s;
+}
+.context-menu-item:hover { background: var(--bg-hover); }
+.context-menu-item.danger { color: var(--danger); }
+.context-menu-divider {
+  border-top: 1px solid var(--border);
+  margin: 4px 0;
+}
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 16px;
+  font-size: 13px;
+  color: var(--text);
+  box-shadow: var(--shadow);
+  z-index: 2000;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: all 0.3s;
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+.toast.success { border-color: var(--success); }
+.toast.error { border-color: var(--danger); }
+
+/* Drag upload zone */
+.drop-zone {
+  position: absolute;
+  inset: 0;
+  background: rgba(99,102,241,0.08);
+  border: 2px dashed var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: var(--accent-light);
+  z-index: 500;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.drop-zone.active { opacity: 1; pointer-events: all; }
+
+/* Responsive sidebar toggle */
+.sidebar-toggle {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .sidebar { width: 100%; position: absolute; z-index: 100; display: none; }
+  .sidebar.open { display: flex; }
+  .sidebar-toggle { display: flex; }
+}
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+  <!-- Header -->
+  <div class="header">
+    <div class="logo">🗂️ TrustMesh <span>| 文件管理 v2</span></div>
+  </div>
+
+  <!-- Main layout -->
+  <div class="main">
+    <!-- Sidebar -->
+    <div class="sidebar" id="sidebar">
+      <div class="sidebar-header">📂 项目：智慧城市平台</div>
+      <div class="sidebar-tree" id="sidebarTree">
+        <!-- User files section -->
+        <div class="sidebar-section">📁 用户文件</div>
+        <!-- Rendered by JS -->
+        <!-- Agent artifacts section -->
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-section">🤖 智能体产物</div>
+        <!-- Rendered by JS -->
+      </div>
+    </div>
+
+    <!-- Content -->
+    <div class="content" id="contentArea">
+      <!-- Breadcrumb -->
+      <div class="breadcrumb" id="breadcrumb"></div>
+
+      <!-- Toolbar -->
+      <div class="toolbar">
+        <button class="btn primary" onclick="showUpload()">📤 上传文件</button>
+        <button class="btn" onclick="showNewFolder()">📁 新建文件夹</button>
+        <div class="spacer"></div>
+        <span id="selectedCount" style="display:none;font-size:13px;color:var(--accent-light)"></span>
+        <button class="btn ghost" id="batchDeleteBtn" style="display:none" onclick="batchDelete()">🗑️ 批量删除</button>
+        <div class="search-box">
+          🔍 <input type="text" placeholder="搜索文件..." oninput="filterFiles(this.value)">
+        </div>
+      </div>
+
+      <!-- File Table -->
+      <div class="file-table-wrap" id="fileTableWrap"
+           ondragover="handleDragOver(event)"
+           ondragleave="handleDragLeave(event)"
+           ondrop="handleDrop(event)">
+        <div class="drop-zone" id="dropZone">📤 释放文件以上传</div>
+        <table class="file-table">
+          <thead>
+            <tr>
+              <th style="width:40px"></th>
+              <th class="sortable" onclick="sortBy('name')">名称 ▾</th>
+              <th style="width:100px" class="sortable" onclick="sortBy('size')">大小</th>
+              <th style="width:80px">类型</th>
+              <th style="width:100px">来源</th>
+              <th style="width:100px" class="sortable" onclick="sortBy('date')">修改日期</th>
+            </tr>
+          </thead>
+          <tbody id="fileTableBody"></tbody>
+        </table>
+        <div class="empty-state" id="emptyState" style="display:none">
+          <div class="empty-icon">📭</div>
+          <div class="empty-title">此文件夹为空</div>
+          <div class="empty-desc">拖拽文件到此处上传，或点击按钮创建新内容</div>
+          <div class="empty-actions">
+            <button class="btn primary" onclick="showUpload()">📤 上传文件</button>
+            <button class="btn" onclick="showNewFolder()">📁 新建文件夹</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Context Menu -->
+  <div class="context-menu" id="contextMenu">
+    <div class="context-menu-item" onclick="contextAction('download')">📥 下载</div>
+    <div class="context-menu-item" onclick="contextAction('rename')">✏️ 重命名</div>
+    <div class="context-menu-item" onclick="contextAction('move')">📂 移动到...</div>
+    <div class="context-menu-divider"></div>
+    <div class="context-menu-item danger" onclick="contextAction('delete')">🗑️ 删除</div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+// ─── Mock Data ───
+const mockFiles = {
+  'root': [
+    { id:'f1', name:'需求文档', isFolder:true, parentId:null, size:0, mimeType:'folder', source:'user', date:'2026-06-25', children:[
+      { id:'f1-1', name:'PRD_v2.pdf', isFolder:false, parentId:'f1', size:2450000, mimeType:'application/pdf', source:'user', date:'2026-06-24' },
+      { id:'f1-2', name:'用户故事.xlsx', isFolder:false, parentId:'f1', size:890000, mimeType:'application/vnd.openxmlformats', source:'user', date:'2026-06-23' },
+    ]},
+    { id:'f2', name:'原型设计', isFolder:true, parentId:null, size:0, mimeType:'folder', source:'user', date:'2026-06-22', children:[
+      { id:'f2-1', name:'首页原型.fig', isFolder:false, parentId:'f2', size:5200000, mimeType:'application/octet-stream', source:'user', date:'2026-06-21' },
+      { id:'f2-2', name:'管理后台原型.fig', isFolder:false, parentId:'f2', size:3800000, mimeType:'application/octet-stream', source:'user', date:'2026-06-20' },
+    ]},
+    { id:'f3', name:'参考资料', isFolder:true, parentId:null, size:0, mimeType:'folder', source:'user', date:'2026-06-18', children:[] },
+    { id:'f4', name:'技术选型方案.md', isFolder:false, parentId:null, size:12500, mimeType:'text/markdown', source:'user', date:'2026-06-19' },
+    { id:'f5', name:'接口文档.yaml', isFolder:false, parentId:null, size:8700, mimeType:'text/yaml', source:'user', date:'2026-06-17' },
+  ],
+  'f1': [
+    { id:'f1-1', name:'PRD_v2.pdf', isFolder:false, parentId:'f1', size:2450000, mimeType:'application/pdf', source:'user', date:'2026-06-24' },
+    { id:'f1-2', name:'用户故事.xlsx', isFolder:false, parentId:'f1', size:890000, mimeType:'application/vnd.openxmlformats', source:'user', date:'2026-06-23' },
+  ],
+  'f2': [
+    { id:'f2-1', name:'首页原型.fig', isFolder:false, parentId:'f2', size:5200000, mimeType:'application/octet-stream', source:'user', date:'2026-06-21' },
+    { id:'f2-2', name:'管理后台原型.fig', isFolder:false, parentId:'f2', size:3800000, mimeType:'application/octet-stream', source:'user', date:'2026-06-20' },
+  ],
+  'f3': [],
+  'agent-root': [
+    { taskId:'task1', taskTitle:'首页UI开发', agents:[
+      { agentId:'agent1', agentName:'前端开发Agent', files:[
+        { id:'a1-1', name:'index.html', size:45000, mimeType:'text/html', source:'agent', date:'2026-06-26T10:30' },
+        { id:'a1-2', name:'App.tsx', size:32000, mimeType:'text/typescript', source:'agent', date:'2026-06-26T10:28' },
+        { id:'a1-3', name:'styles.css', size:12000, mimeType:'text/css', source:'agent', date:'2026-06-26T10:25' },
+      ]},
+      { agentId:'agent2', agentName:'后端开发Agent', files:[
+        { id:'a1-4', name:'handler.go', size:8500, mimeType:'text/go', source:'agent', date:'2026-06-26T10:20' },
+      ]},
+    ]},
+    { taskId:'task2', taskTitle:'数据库设计', agents:[
+      { agentId:'agent3', agentName:'DBA Agent', files:[
+        { id:'a2-1', name:'schema.sql', size:6800, mimeType:'text/sql', source:'agent', date:'2026-06-25T16:00' },
+        { id:'a2-2', name:'ER图.png', size:320000, mimeType:'image/png', source:'agent', date:'2026-06-25T15:55' },
+      ]},
+    ]},
+  ],
+};
+
+// ─── State ───
+let currentView = 'user';       // 'user' | 'agent-task-N' | 'agent-agent-N'
+let currentFolderId = null;     // null = project root
+let currentPath = [];
+let searchQuery = '';
+let selectedFiles = new Set();
+let contextTarget = null;
+let sortField = 'name';
+let sortAsc = true;
+
+// ─── Helpers ───
+function formatSize(bytes) {
+  if (bytes === 0) return '-';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/(1024*1024)).toFixed(1) + ' MB';
+}
+function formatDate(d) {
+  if (typeof d === 'string') {
+    if (d.includes('T')) d = d.split('T')[0];
+    return d;
+  }
+  return new Date(d).toISOString().slice(0,10);
+}
+function getFileIcon(file) {
+  if (file.isFolder) return '📁';
+  const mime = file.mimeType || '';
+  if (mime.includes('pdf')) return '📕';
+  if (mime.includes('image')) return '🖼️';
+  if (mime.includes('html') || mime.includes('css') || mime.includes('javascript') || mime.includes('typescript')) return '💻';
+  if (mime.includes('markdown') || mime.includes('text')) return '📝';
+  if (mime.includes('sql')) return '🗄️';
+  if (mime.includes('go')) return '🔷';
+  if (mime.includes('yaml') || mime.includes('json')) return '⚙️';
+  if (mime.includes('sheet') || mime.includes('excel') || mime.includes('xlsx')) return '📊';
+  if (mime.includes('zip') || mime.includes('octet-stream')) return '📦';
+  return '📄';
+}
+
+// ─── Navigation ───
+function navigateTo(type, id, title) {
+  if (type === 'user-folder') {
+    currentView = 'user';
+    currentFolderId = id;
+    if (id === null) {
+      currentPath = [];
+    } else {
+      // Find path
+      const path = [];
+      let fid = id;
+      const visited = new Set();
+      while (fid && !visited.has(fid)) {
+        visited.add(fid);
+        const allFolders = getAllUserFolders();
+        const folder = allFolders.find(f => f.id === fid);
+        if (folder) {
+          path.unshift(folder);
+          fid = folder.parentId;
+        } else break;
+      }
+      currentPath = path.map(f => ({ id: f.id, name: f.name }));
+    }
+    render();
+  } else if (type === 'agent-task') {
+    currentView = 'agent-task-' + id;
+    currentPath = [{ id: 'agent:root', name: '智能体产物' }, { id, name: title }];
+    render();
+  } else if (type === 'agent-agent') {
+    const taskId = contextTarget?.taskId || currentView.replace('agent-task-','').split('/')[0];
+    currentView = `agent-agent-${taskId}-${id}`;
+    currentPath = [{ id: 'agent:root', name: '智能体产物' }, { id: taskId, name: title.split(' > ')[0] || '' }, { id, name: title }];
+    render();
+  }
+}
+
+function getAllUserFolders() {
+  const result = [];
+  function walk(files) {
+    for (const f of files) {
+      if (f.isFolder) {
+        result.push(f);
+        if (f.children) walk(f.children);
+      }
+    }
+  }
+  walk(mockFiles['root']);
+  return result;
+}
+
+function navigateBreadcrumb(index) {
+  if (currentView === 'user') {
+    if (index < 0) {
+      currentFolderId = null;
+      currentPath = [];
+    } else if (index < currentPath.length - 1) {
+      currentFolderId = currentPath[index].id;
+      currentPath = currentPath.slice(0, index + 1);
+    }
+  } else {
+    if (index < 0) {
+      currentView = 'user';
+      currentFolderId = null;
+      currentPath = [];
+    } else {
+      const crumb = currentPath[index];
+      if (crumb.id === 'agent:root') {
+        currentView = 'user';
+        currentFolderId = null;
+        currentPath = [];
+      } else if (index === 1) {
+        navigateTo('agent-task', crumb.id, crumb.name);
+      }
+    }
+  }
+  render();
+}
+
+// ─── Current files ───
+function getCurrentFiles() {
+  if (currentView === 'user') {
+    const key = currentFolderId || 'root';
+    let files = (mockFiles[key] || []).map(f => ({...f}));
+    if (searchQuery) {
+      files = files.filter(f => f.name.toLowerCase().includes(searchQuery.toLowerCase()));
+    }
+    // Sort
+    files.sort((a,b) => {
+      if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+      let va, vb;
+      if (sortField === 'name') { va = a.name; vb = b.name; }
+      else if (sortField === 'size') { va = a.size; vb = b.size; }
+      else { va = a.date; vb = b.date; }
+      return sortAsc ? va > vb ? 1 : -1 : va < vb ? 1 : -1;
+    });
+    return files;
+  } else {
+    // Agent view
+    const parts = currentView.split('-');
+    const taskId = parts[2];
+    const agentId = parts[3];
+    const tasksData = mockFiles['agent-root'];
+    const task = tasksData.find(t => t.taskId === taskId);
+    if (!task) return [];
+    if (agentId) {
+      const agent = task.agents.find(a => a.agentId === agentId);
+      return (agent?.files || []).map(f => ({...f, isFolder: false, _source: 'agent'}));
+    } else {
+      return task.agents.map(a => ({
+        id: a.agentId,
+        name: a.agentName,
+        isFolder: false,
+        _agentFiles: a.files.length,
+        _agentData: a,
+        _nodeType: 'agent',
+        size: 0,
+        mimeType: 'agent',
+        source: 'agent',
+        date: a.files[0]?.date || ''
+      }));
+    }
+  }
+}
+
+// ─── Render ───
+function render() {
+  renderSidebar();
+  renderBreadcrumb();
+  renderTable();
+  updateSelectedUI();
+}
+
+function renderSidebar() {
+  const el = document.getElementById('sidebarTree');
+  
+  // User folders tree
+  const rootFolders = mockFiles['root'].filter(f => f.isFolder);
+  
+  let userHtml = '<div class="sidebar-section">📁 用户文件</div>';
+  userHtml += `<div class="tree-item ${currentView==='user' && currentFolderId===null ? 'active' : ''}" onclick="navigateTo('user-folder',null,'用户上传')">
+    <span class="icon">📂</span><span class="label">项目根目录</span>
+  </div>`;
+  
+  function renderFolderTree(folders, level) {
+    let html = '';
+    for (const f of folders) {
+      const isActive = currentView === 'user' && currentFolderId === f.id;
+      html += `<div class="tree-item tree-level-${level} ${isActive ? 'active' : ''}" onclick="navigateTo('user-folder','${f.id}','${f.name}')">
+        <span class="icon">📁</span><span class="label">${f.name}</span>
+        ${f.children?.length ? `<span class="badge">${f.children.length}</span>` : ''}
+      </div>`;
+      if (f.children) {
+        const sub = f.children.filter(c => c.isFolder);
+        if (sub.length) html += renderFolderTree(sub, level+1);
+      }
+    }
+    return html;
+  }
+  userHtml += renderFolderTree(rootFolders, 1);
+  
+  // Agent artifacts tree
+  const tasksData = mockFiles['agent-root'];
+  let agentHtml = '<div class="sidebar-divider"></div>';
+  agentHtml += '<div class="sidebar-section">🤖 智能体产物</div>';
+  
+  for (const task of tasksData) {
+    const isTaskActive = currentView === `agent-task-${task.taskId}`;
+    const totalFiles = task.agents.reduce((s,a) => s + a.files.length, 0);
+    agentHtml += `<div class="tree-item tree-level-1 ${isTaskActive ? 'active' : ''}" onclick="navigateTo('agent-task','${task.taskId}','${task.taskTitle}')">
+      <span class="icon">📋</span><span class="label">${task.taskTitle}</span>
+      <span class="badge">${totalFiles}</span>
+    </div>`;
+    if (isTaskActive) {
+      for (const agent of task.agents) {
+        const isAgentActive = currentView === `agent-agent-${task.taskId}-${agent.agentId}`;
+        agentHtml += `<div class="tree-item tree-level-2 ${isAgentActive ? 'active' : ''}" onclick="navigateTo('agent-agent','${agent.agentId}','${task.taskTitle} > ${agent.agentName}')">
+          <span class="icon">🤖</span><span class="label">${agent.agentName}</span>
+          <span class="badge">${agent.files.length}</span>
+        </div>`;
+      }
+    }
+  }
+  
+  el.innerHTML = userHtml + agentHtml;
+}
+
+function renderBreadcrumb() {
+  const el = document.getElementById('breadcrumb');
+  let html = '<span class="breadcrumb-item" onclick="navigateBreadcrumb(-1)">🏠 项目根目录</span>';
+  
+  for (let i = 0; i < currentPath.length; i++) {
+    html += '<span class="breadcrumb-sep">/</span>';
+    const isLast = i === currentPath.length - 1;
+    html += `<span class="breadcrumb-item ${isLast ? 'active' : ''}" onclick="navigateBreadcrumb(${i})">${currentPath[i].name}</span>`;
+  }
+  
+  el.innerHTML = html;
+}
+
+function renderTable() {
+  const tbody = document.getElementById('fileTableBody');
+  const empty = document.getElementById('emptyState');
+  const files = getCurrentFiles();
+  
+  if (files.length === 0) {
+    tbody.innerHTML = '';
+    empty.style.display = 'flex';
+    return;
+  }
+  empty.style.display = 'none';
+  
+  tbody.innerHTML = files.map(f => {
+    const isSelected = selectedFiles.has(f.id);
+    const isFolder = f.isFolder || f._nodeType === 'agent';
+    const icon = f._nodeType === 'agent' ? '🤖' : getFileIcon(f);
+    const clickAction = isFolder
+      ? f._nodeType === 'agent'
+        ? `navigateTo('agent-agent','${f.id}','${f._agentData ? f.name : ''}')`
+        : `navigateTo('user-folder','${f.id}','${f.name}')`
+      : '';
+    
+    const displaySize = f._agentFiles ? `${f._agentFiles} 个文件` : formatSize(f.size);
+    const displayType = f._nodeType === 'agent' ? '智能体' : f.isFolder ? '文件夹' : (f.mimeType || '').split('/').pop()?.toUpperCase() || '-';
+    const displayDate = f._nodeType === 'agent' ? '' : formatDate(f.date);
+    const sourceLabel = f._source || f.source;
+    
+    return `<tr class="${isSelected ? 'selected' : ''}" 
+                onclick="${isFolder ? clickAction : ''}"
+                oncontextmenu="showContextMenu(event, '${f.id}', '${f.name}', ${isFolder}, '${f.source || 'user'}')"
+                ondblclick="${isFolder ? clickAction : 'downloadFile(\''+f.id+'\',\''+f.name+'\')'}">
+      <td onclick="event.stopPropagation(); toggleSelect('${f.id}')" style="text-align:center">
+        <input type="checkbox" ${isSelected ? 'checked' : ''} style="accent-color:var(--accent)">
+      </td>
+      <td>
+        <div class="name-cell">
+          <span class="file-icon">${icon}</span>
+          <span class="file-name">${f.name}</span>
+        </div>
+      </td>
+      <td class="size-cell">${displaySize}</td>
+      <td class="type-cell">${displayType}</td>
+      <td class="source-cell">
+        <span class="source-tag ${sourceLabel}">${sourceLabel === 'agent' ? '🤖 智能体' : '👤 用户'}</span>
+      </td>
+      <td class="date-cell">${displayDate}</td>
+    </tr>`;
+  }).join('');
+}
+
+function updateSelectedUI() {
+  const countEl = document.getElementById('selectedCount');
+  const btn = document.getElementById('batchDeleteBtn');
+  if (selectedFiles.size > 0) {
+    countEl.style.display = '';
+    countEl.textContent = `已选 ${selectedFiles.size} 项`;
+    btn.style.display = '';
+  } else {
+    countEl.style.display = 'none';
+    btn.style.display = 'none';
+  }
+}
+
+// ─── Actions ───
+function toggleSelect(id) {
+  if (selectedFiles.has(id)) selectedFiles.delete(id);
+  else selectedFiles.add(id);
+  renderTable();
+  updateSelectedUI();
+}
+
+function showUpload() {
+  showToast('📤 文件上传功能已就绪（原型演示）', 'success');
+}
+
+function showNewFolder() {
+  const name = prompt('请输入文件夹名称：');
+  if (name) {
+    showToast(`📁 文件夹"${name}"创建成功`, 'success');
+  }
+}
+
+function downloadFile(id, name) {
+  showToast(`📥 正在下载 ${name}...`, 'success');
+}
+
+function sortBy(field) {
+  if (sortField === field) sortAsc = !sortAsc;
+  else { sortField = field; sortAsc = true; }
+  renderTable();
+}
+
+function filterFiles(query) {
+  searchQuery = query;
+  renderTable();
+}
+
+function batchDelete() {
+  if (confirm(`确定删除选中的 ${selectedFiles.size} 个项目吗？此操作不可撤销。`)) {
+    selectedFiles.clear();
+    showToast('🗑️ 批量删除成功', 'success');
+    renderTable();
+    updateSelectedUI();
+  }
+}
+
+// ─── Context Menu ───
+function showContextMenu(e, id, name, isFolder, source) {
+  e.preventDefault();
+  contextTarget = { id, name, isFolder, source };
+  const menu = document.getElementById('contextMenu');
+  menu.style.display = 'block';
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+  menu.classList.add('show');
+}
+
+document.addEventListener('click', () => {
+  const menu = document.getElementById('contextMenu');
+  menu.classList.remove('show');
+  setTimeout(() => { menu.style.display = 'none'; }, 150);
+});
+
+function contextAction(action) {
+  const { id, name, isFolder, source } = contextTarget || {};
+  switch (action) {
+    case 'download': showToast(`📥 正在下载 ${name}...`, 'success'); break;
+    case 'rename': showToast(`✏️ 重命名功能已就绪（原型演示）`, 'success'); break;
+    case 'move': showToast(`📂 移动功能已就绪（原型演示）`, 'success'); break;
+    case 'delete':
+      if (confirm(`确定删除"${name}"吗？`)) showToast('🗑️ 删除成功', 'success');
+      break;
+  }
+  contextTarget = null;
+}
+
+// ─── Drag & Drop ───
+function handleDragOver(e) {
+  e.preventDefault();
+  document.getElementById('dropZone').classList.add('active');
+}
+function handleDragLeave(e) {
+  if (!e.currentTarget.contains(e.relatedTarget)) {
+    document.getElementById('dropZone').classList.remove('active');
+  }
+}
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('dropZone').classList.remove('active');
+  const files = e.dataTransfer.files;
+  if (files.length > 0) {
+    const names = Array.from(files).map(f => f.name).join(', ');
+    showToast(`📤 已上传 ${files.length} 个文件：${names}`, 'success');
+  }
+}
+
+// ─── Toast ───
+function showToast(msg, type) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.className = `toast ${type} show`;
+  setTimeout(() => toast.classList.remove('show'), 2500);
+}
+
+// ─── Init ───
+render();
+</script>
+</body>
+</html>

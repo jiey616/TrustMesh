@@ -1,6 +1,7 @@
 import { useAuthStore } from '@/stores/authStore'
+import { getApiBase } from '@/stores/serverConfigStore'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
+const API_BASE = getApiBase()
 
 interface ChatParams {
   message: string
@@ -33,7 +34,7 @@ export function chatAssistant(params: ChatParams, callbacks: ChatCallbacks): Abo
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`
     if (activeOrgId) headers['X-Org-Id'] = activeOrgId
 
-    const response = await fetch(`${API_BASE}/api/v1/assistant/chat`, {
+    const response = await fetch(`${API_BASE}assistant/chat`, {
       method: 'POST',
       headers,
       body: JSON.stringify(params),
