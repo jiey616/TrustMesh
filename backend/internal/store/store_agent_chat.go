@@ -49,7 +49,7 @@ func (s *Store) ListAgentChatSessions(sc Scope, agentID string) ([]model.AgentCh
 
 	sessions := make([]model.AgentChatSessionSummary, 0)
 	for _, chat := range s.agentChats {
-		if chat.UserID != sc.UserID || chat.AgentID != agentID {
+		if !ownedByUser(sc, chat.UserID) || chat.AgentID != agentID {
 			continue
 		}
 		sessions = append(sessions, s.toAgentChatSessionSummaryUnsafe(chat))
@@ -74,7 +74,7 @@ func (s *Store) GetAgentChatByID(sc Scope, agentID, chatID string) (*model.Agent
 	}
 
 	chat, ok := s.agentChats[chatID]
-	if !ok || chat.UserID != sc.UserID || chat.AgentID != agentID {
+	if !ok || !ownedByUser(sc, chat.UserID) || chat.AgentID != agentID {
 		return nil, transport.NotFound("agent chat not found")
 	}
 
@@ -158,7 +158,7 @@ func (s *Store) UpdateAgentChatMessageStatus(sc Scope, chatID, messageID, status
 	defer s.mu.Unlock()
 
 	chat, ok := s.agentChats[chatID]
-	if !ok || chat.UserID != sc.UserID {
+	if !ok || !ownedByUser(sc, chat.UserID) {
 		return nil, transport.NotFound("agent chat not found")
 	}
 	for i := range chat.Messages {

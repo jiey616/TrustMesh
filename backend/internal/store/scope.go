@@ -124,3 +124,61 @@ func (s *Store) projectVisible(sc Scope, p *model.Project) bool {
 	}
 	return false
 }
+
+// agentCanWriteTaskUnsafe 节点回写路径（todo.progress/complete/fail/ask、
+// task.comment、artifact 归档等）的任务归属裁决。webhook 调用没有 HTTP
+// 租户上下文，不能直接用 visibleToScope，需要按 agent 自身身份裁决。
+// 放行条件（任一满足）：
+//  1. agent 与任务同属一个用户（存量行为，零回归兜底）；
+//  2. agent 显式归属任务所在租户（agent.org_id == task.org_id）；
+//  3. agent 的属主用户是任务租户（org）的成员 —— 支撑「同租户跨用户协作」：
+//     org 内任何成员创建的任务派给 org 共享的 agent 后，agent 回写不再因
+//     task.UserID != agent.UserID 被 404 弹回（2026-09-11 实锤：山雨账号
+//     建任务，编剧全部回报被 webhook 404 吞掉，前端零显示）。
+//
+// 任务未回填 org_id 时仅条件 1 生效，与改造前行为一致（宁可漏、不可泄）。
+// 调用方必须持锁（findMembershipUnsafe 为 Unsafe 层）。
+func (s *Store) agentCanWriteTaskUnsafe(task *model.TaskDetail, agent *model.Agent) bool {
+	if task == nil || agent == nil {
+		return false
+	}
+	if task.UserID == agent.UserID {
+		return true
+	}
+	if task.OrgID == "" {
+		return false
+	}
+	if agent.OrgID == task.OrgID {
+		return true
+	}
+	_, ok := s.findMembershipUnsafe(task.OrgID, agent.UserID)
+	return ok
+}
+
+// taskVisibleInProjectUnsafe 判断任务是否归属于某个项目（资源间归属关系）。
+//
+// ⚠️ 与访问裁决 visibleToScope 的区别：visibleToScope 回答的是
+// "当前请求能否看到这个资源"（入参是 Scope），而这里回答的是
+// "这个任务算不算这个项目的任务"（入参是资源本身）。项目聚合统计、
+// 归档重置等场景需要的是后者 —— 用 visibleToScope 替换会把它变成
+// "请求者能否看到这个任务"，语义不同且会把 Scope 透传到 7 个调用点。
+//
+// 修复的问题：企业共享项目下，成员 B 建的任务因
+// task.UserID(B) != project.UserID(A) 被排除，导致项目任务统计/归档
+// 静默漏掉同租户其他成员创建的任务。
+//
+// 🔴 空 org 短路：存量个人项目/任务（OrgID 为空）只按 user 严格相等，
+// 避免 空org == 空org 被误判为同租户而把他人任务算进来。
+// 调用方必须持锁（命名沿用 Unsafe 约定）。
+func taskVisibleInProjectUnsafe(task *model.TaskDetail, project *model.Project) bool {
+	if task == nil || project == nil {
+		return false
+	}
+	if task.UserID == project.UserID {
+		return true
+	}
+	if task.OrgID == "" || project.OrgID == "" {
+		return false
+	}
+	return task.OrgID == project.OrgID
+}

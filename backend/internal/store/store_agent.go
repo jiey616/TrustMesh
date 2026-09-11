@@ -308,9 +308,9 @@ func (s *Store) GetAgentStats(sc Scope, agentID string) (*model.AgentStats, *tra
 	}
 
 	if a.Role == "pm" {
-		return s.pmStatsUnsafe(agentID), nil
+		return s.pmStatsUnsafe(sc, agentID), nil
 	}
-	return s.executorStatsUnsafe(agentID), nil
+	return s.executorStatsUnsafe(sc, agentID), nil
 }
 
 func (s *Store) GetAgentInsights(sc Scope, agentID string) (*model.AgentInsights, *transport.AppError) {
@@ -630,8 +630,7 @@ func (s *Store) initDailyBuckets() ([]model.DailyActivityItem, map[string]int, t
 	return dailyItems, dailyMap, cutoff
 }
 
-func (s *Store) pmStatsUnsafe(agentID string) *model.AgentStats {
-	agent := s.agents[agentID]
+func (s *Store) pmStatsUnsafe(sc Scope, agentID string) *model.AgentStats {
 	dailyItems, dailyMap, cutoff := s.initDailyBuckets()
 
 	stats := &model.AgentStats{
@@ -697,7 +696,7 @@ func (s *Store) pmStatsUnsafe(agentID string) *model.AgentStats {
 
 	// planning replies count from agent events
 	for _, ev := range s.agentEvents[agentID] {
-		if ev.EventType == "planning_reply" && ev.UserID == agent.UserID {
+		if ev.EventType == "planning_reply" && visibleToScope(sc, ev.OrgID, ev.UserID) {
 			stats.PlanningReplies++
 		}
 	}
@@ -705,7 +704,7 @@ func (s *Store) pmStatsUnsafe(agentID string) *model.AgentStats {
 	return stats
 }
 
-func (s *Store) executorStatsUnsafe(agentID string) *model.AgentStats {
+func (s *Store) executorStatsUnsafe(sc Scope, agentID string) *model.AgentStats {
 	agent := s.agents[agentID]
 	dailyItems, dailyMap, cutoff := s.initDailyBuckets()
 
@@ -719,7 +718,7 @@ func (s *Store) executorStatsUnsafe(agentID string) *model.AgentStats {
 	var responseCount, completionCount int
 
 	for _, t := range s.tasks {
-		if t.UserID != agent.UserID {
+		if !visibleToScope(sc, t.OrgID, t.UserID) {
 			continue
 		}
 		for _, todo := range t.Todos {

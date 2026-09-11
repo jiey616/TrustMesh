@@ -60,7 +60,10 @@ func (s *Store) MarkNotificationRead(sc Scope, notificationID string) *transport
 	defer s.mu.Unlock()
 
 	n, ok := s.notifications[notificationID]
-	if !ok || n.UserID != sc.UserID {
+	// 已读态是「个人维度数据」（见 scope.go ownedByUser 注释）：即便 Notification
+	// 带有 OrgID，也不能走 visibleToScope 的 org 共享语义，否则同租户成员可以
+	// 互相把对方的通知标记为已读。这里统一到 scope.go 的 ownedByUser 裁决。
+	if !ok || !ownedByUser(sc, n.UserID) {
 		return transport.NotFound("notification not found")
 	}
 	if n.IsRead {

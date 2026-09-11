@@ -38,7 +38,7 @@ func (s *Store) aggregateProjectTaskSummaryUnsafe(project *model.Project) model.
 	ids := s.projectTasks[project.ID]
 	for _, id := range ids {
 		task, ok := s.tasks[id]
-		if !ok || task.UserID != project.UserID {
+		if !ok || !taskVisibleInProjectUnsafe(task, project) {
 			continue
 		}
 
@@ -283,7 +283,7 @@ func (s *Store) resetArchivedProjectTasksUnsafe(project *model.Project, now time
 
 	for _, taskID := range s.projectTasks[project.ID] {
 		task, ok := s.tasks[taskID]
-		if !ok || task.UserID != project.UserID {
+		if !ok || !taskVisibleInProjectUnsafe(task, project) {
 			continue
 		}
 

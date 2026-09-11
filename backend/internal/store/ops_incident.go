@@ -229,14 +229,11 @@ func opsIncidentVisible(sc Scope, inc *model.OpsIncident) bool {
 	if inc == nil {
 		return false
 	}
-	if sc.HasOrg() {
-		if inc.OrgID != "" {
-			return inc.OrgID == sc.OrgID
-		}
-		// 未回填 org 的工单：宁可漏、不可泄。
-		return inc.UserID == sc.UserID
-	}
-	return inc.UserID == sc.UserID
+	// 统一委托 scope.go 的 visibleToScope，消除此前的重复实现。
+	// 原实现与 visibleToScope 语义一致（有租户比 org，无租户/未回填退回
+	// user 维度），但缺 sc.System 处理，且 inc.UserID 与 sc.UserID 同时为空时
+	// 会误判为可见；委托后这些边界与全局裁决保持统一。
+	return visibleToScope(sc, inc.OrgID, inc.UserID)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
