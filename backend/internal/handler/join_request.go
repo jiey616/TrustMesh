@@ -2,7 +2,9 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -120,7 +122,13 @@ func (h *JoinRequestHandler) Approve(c *gin.Context) {
 	requestID := c.Param("id")
 
 	var req approveJoinRequestRequest
-	_ = c.ShouldBindJSON(&req)
+	// body 的覆盖字段全部可选，空 body 是合法调用（io.EOF 表示无 body）。
+	// 但畸形 JSON 必须 400：原先用 `_ =` 静默吞错，会让请求体解析失败被
+	// 当成「无覆盖」继续走审批流程，错误被推迟且不可见。
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		transport.WriteError(c, transport.Validation("invalid join request payload", map[string]any{"body": "malformed json"}))
+		return
+	}
 
 	// Get the join request to find trust request ID
 	jr, appErr := h.store.GetJoinRequest(middleware.Scope(c), requestID)

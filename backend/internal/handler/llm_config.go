@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -161,7 +162,12 @@ func (h *LLMConfigHandler) Test(c *gin.Context) {
 		return
 	}
 	var req model.LLMConfigTestRequest
-	_ = c.ShouldBindJSON(&req)
+	// 字段全部可选：空 body（io.EOF）合法，继续用零值；
+	// 但畸形 JSON 必须 400，不能静默吞错。
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		transport.WriteError(c, transport.Validation("invalid llm config test payload", map[string]any{"body": "malformed json"}))
+		return
+	}
 
 	// 解析层定位：personal=测当前用户个人空间配置；org=测指定租户；其余=平台默认。
 	resolveOrgID, resolveUserID := "", ""
@@ -254,7 +260,11 @@ func (h *LLMConfigHandler) Models(c *gin.Context) {
 		return
 	}
 	var req model.LLMConfigTestRequest
-	_ = c.ShouldBindJSON(&req)
+	// 字段全部可选：空 body（io.EOF）合法；畸形 JSON 必须 400。
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		transport.WriteError(c, transport.Validation("invalid llm config models payload", map[string]any{"body": "malformed json"}))
+		return
+	}
 	if _, _, appErr := h.resolveScopeForWrite(userID, &req); appErr != nil {
 		transport.WriteError(c, appErr)
 		return

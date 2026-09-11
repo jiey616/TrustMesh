@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+	"io"
 	"net/url"
 	"strings"
 	"time"
@@ -157,7 +159,13 @@ func (h *ExternalAppHandler) Launch(c *gin.Context) {
 	sc := middleware.Scope(c)
 	id := c.Param("id")
 	var req launchExternalAppRequest
-	_ = c.ShouldBindJSON(&req)
+	// Launch 的 body 字段可选，空 body（io.EOF）合法；
+	// 但畸形 JSON 必须 400 —— Launch 会签发 SSO token，
+	// 静默吞错会让参数缺失被当成默认值继续放行。
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		transport.WriteError(c, transport.Validation("invalid launch payload", map[string]any{"body": "malformed json"}))
+		return
+	}
 
 	// Visibility is enforced here: launching mints a token, so a user must not
 	// be able to launch an app they cannot see.

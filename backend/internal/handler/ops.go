@@ -1,6 +1,9 @@
 package handler
 
 import (
+	"errors"
+	"io"
+
 	"github.com/gin-gonic/gin"
 	"trustmesh/backend/internal/middleware"
 	"trustmesh/backend/internal/model"
@@ -100,7 +103,13 @@ type opsManualActionRequest struct {
 func (h *OpsHandler) Ignore(c *gin.Context) {
 	sc := middleware.Scope(c)
 	var req opsManualActionRequest
-	_ = c.ShouldBindJSON(&req) // body 可选：无理由时用默认文案
+	// body 可选：无理由时用默认文案（io.EOF = 无 body，属合法调用）。
+	// 但畸形 JSON 必须 400 —— 人工干预会落 OpsAction 留痕，
+	// 静默吞错会让 reason 被静默丢弃且不可见。
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		transport.WriteError(c, transport.Validation("invalid ops ignore payload", map[string]any{"body": "malformed json"}))
+		return
+	}
 	inc, appErr := h.store.IgnoreOpsIncident(sc, c.Param("id"), req.Reason)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
@@ -113,7 +122,11 @@ func (h *OpsHandler) Ignore(c *gin.Context) {
 func (h *OpsHandler) Close(c *gin.Context) {
 	sc := middleware.Scope(c)
 	var req opsManualActionRequest
-	_ = c.ShouldBindJSON(&req)
+	// 同 Ignore：body 可选（io.EOF 合法），畸形 JSON 必须 400。
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		transport.WriteError(c, transport.Validation("invalid ops close payload", map[string]any{"body": "malformed json"}))
+		return
+	}
 	inc, appErr := h.store.CloseOpsIncident(sc, c.Param("id"), req.Reason)
 	if appErr != nil {
 		transport.WriteError(c, appErr)

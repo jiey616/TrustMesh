@@ -2,7 +2,9 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -407,7 +409,11 @@ func (h *TaskHandler) ReopenTodo(c *gin.Context) {
 		Reason string `json:"reason"`
 	}
 	// Body is optional: reason is purely descriptive.
-	_ = c.ShouldBindJSON(&body)
+	// 空 body（io.EOF）继续用零值；畸形 JSON 必须 400，不能静默吞错。
+	if err := c.ShouldBindJSON(&body); err != nil && !errors.Is(err, io.EOF) {
+		transport.WriteError(c, transport.Validation("invalid reopen payload", map[string]any{"body": "malformed json"}))
+		return
+	}
 
 	task, _, appErr := h.store.ReopenTodo(sc, c.Param("id"), c.Param("todoId"), body.Reason)
 	if appErr != nil {

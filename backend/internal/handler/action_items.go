@@ -107,7 +107,20 @@ func (h *ActionItemsHandler) Convert(c *gin.Context) {
 	// Apply UI assignee overrides: item key → agent id. Resolve agent id → node id.
 	overrides := make(map[string]string) // item key -> node id
 	for key, agentID := range body.Assignees {
-		if agent, err := h.store.GetAgent(sc, agentID); err == nil && agent != nil {
+		agent, err := h.store.GetAgent(sc, agentID)
+		if err != nil {
+			// 不得再用 `err == nil && agent != nil` 静默跳过：
+			// 越权/不存在 会被伪装成「没有指定 assignee」，从而返回
+			// 200 + 空覆盖，把鉴权失败藏进正常响应里。
+			//
+			// 这里直接透传 GetAgent 的 AppError（NotFound）。
+			// 说明：store 层对「不存在」与「越权不可见」有意一律返回 404
+			// （见 store_agent.go GetAgent），避免通过 403/404 差异枚举
+			// 他人 agent，故此处不区分为 403，直接透传 404 更安全。
+			transport.WriteError(c, err)
+			return
+		}
+		if agent != nil {
 			overrides[key] = agent.NodeID
 		}
 	}
