@@ -293,8 +293,13 @@ func (s *Store) CreateTaskByPMNodeWithMessageID(nodeID, messageID string, in Tas
 		if assigneeErr != nil {
 			return nil, transport.Validation("invalid assignee_node_id", map[string]any{"todo_index": i, "assignee_node_id": assigneeNode})
 		}
-		if assigneeAgent.UserID != project.UserID {
-			return nil, transport.Forbidden("assignee agent does not belong to same user")
+		// 创建期校验：原为 assigneeAgent.UserID != project.UserID（纯 user 维度），
+		// 与回写期 agentCanWriteTaskUnsafe 的 org 级放行自相矛盾 —— 企业共享
+		// agent 被 PM 指派后，回报时却被 404 弹回（"共享 agent 回报 404"根因）。
+		// 改为 project 维度的三选一裁决，与回写期语义一致；空 org 短路保证
+		// 存量个人项目仍按 user 严格相等，不会放开为任意指派。
+		if !s.agentCanAssignableToProjectUnsafe(assigneeAgent, project) {
+			return nil, transport.Forbidden("assignee agent does not belong to this project's tenant")
 		}
 
 		todoID := strings.TrimSpace(todoIn.ID)
@@ -681,7 +686,7 @@ func (s *Store) UpdateTodoProgressByNode(nodeID string, in TodoProgressInput) (*
 		return nil, err
 	}
 	task, ok := s.tasks[in.TaskID]
-	if !ok || task.UserID != agent.UserID {
+	if !ok || !s.agentCanWriteTaskUnsafe(task, agent) {
 		return nil, transport.NotFound("task not found")
 	}
 	if appErr := s.ensureTaskProjectActiveUnsafe(task); appErr != nil {
@@ -766,7 +771,7 @@ func (s *Store) CompleteTodoByNodeWithMessageID(nodeID, messageID string, in Tod
 		return nil, nil, err
 	}
 	task, ok := s.tasks[in.TaskID]
-	if !ok || task.UserID != agent.UserID {
+	if !ok || !s.agentCanWriteTaskUnsafe(task, agent) {
 		return nil, nil, transport.NotFound("task not found")
 	}
 	if appErr := s.ensureTaskProjectActiveUnsafe(task); appErr != nil {
@@ -908,7 +913,7 @@ func (s *Store) AskTodoByNode(nodeID string, in TodoAskInput) (*model.TaskDetail
 		return nil, nil, err
 	}
 	task, ok := s.tasks[in.TaskID]
-	if !ok || task.UserID != agent.UserID {
+	if !ok || !s.agentCanWriteTaskUnsafe(task, agent) {
 		return nil, nil, transport.NotFound("task not found")
 	}
 	if appErr := s.ensureTaskProjectActiveUnsafe(task); appErr != nil {
@@ -1152,7 +1157,7 @@ func (s *Store) FailTodoByNodeWithMessageID(nodeID, messageID string, in TodoFai
 		return nil, err
 	}
 	task, ok := s.tasks[in.TaskID]
-	if !ok || task.UserID != agent.UserID {
+	if !ok || !s.agentCanWriteTaskUnsafe(task, agent) {
 		return nil, transport.NotFound("task not found")
 	}
 	if appErr := s.ensureTaskProjectActiveUnsafe(task); appErr != nil {
@@ -1232,7 +1237,7 @@ func (s *Store) AddTaskCommentByNode(nodeID string, in TaskCommentInput) (*model
 		return nil, err
 	}
 	task, ok := s.tasks[in.TaskID]
-	if !ok || task.UserID != agent.UserID {
+	if !ok || !s.agentCanWriteTaskUnsafe(task, agent) {
 		return nil, transport.NotFound("task not found")
 	}
 	if in.TodoID != "" {
@@ -2175,7 +2180,9 @@ func (s *Store) ReviewTodo(sc Scope, nodeID, taskID, todoID, action, reason stri
 	if !ok {
 		return nil, nil, transport.NotFound("task not found")
 	}
-	// Authorize: either the owning user or an agent belonging to that user.
+	// Authorize: either the owning user or an agent whose owner belongs to
+	// the task's tenant (same-user / same-org / org-membership, 见
+	// agentCanWriteTaskUnsafe —— 支撑同租户跨用户协作回写)。
 	if !sc.System && !visibleToScope(sc, task.OrgID, task.UserID) {
 		return nil, nil, transport.Forbidden("task does not belong to this user")
 	}
@@ -2184,7 +2191,7 @@ func (s *Store) ReviewTodo(sc Scope, nodeID, taskID, todoID, action, reason stri
 		if err != nil {
 			return nil, nil, err
 		}
-		if agent.UserID != task.UserID {
+		if !s.agentCanWriteTaskUnsafe(task, agent) {
 			return nil, nil, transport.Forbidden("agent does not belong to this task's user")
 		}
 	}

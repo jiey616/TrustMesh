@@ -182,3 +182,38 @@ func taskVisibleInProjectUnsafe(task *model.TaskDetail, project *model.Project) 
 	}
 	return task.OrgID == project.OrgID
 }
+
+// agentCanAssignableToProjectUnsafe 判断一个 agent 是否可以被指派到该项目下
+// 创建的任务（创建期校验）。
+//
+// 为什么不用 agentCanWriteTaskUnsafe：后者签名是
+// (task *model.TaskDetail, agent *model.Agent)，要求 task 已存在；
+// 而 CreateTaskByPMNode 此刻只有 project、task 尚未创建，签名不成立。
+// 这里是它的 project 维度镜像，放行条件与之一致（三选一）：
+//  1. agent 与项目同属一个用户（存量行为，零回归兜底）；
+//  2. agent 显式归属项目所在租户（agent.OrgID == project.OrgID）；
+//  3. agent 的属主用户是项目租户的成员 —— 支撑「同租户跨用户协作」。
+//
+// 🔴 空 org 短路（v2 关键修正）：存量个人项目 project.OrgID 为空时，
+// 只走条件 1（严格 user 相等），绝不进入 org 匹配。否则 空org == 空org
+// 会被判为同租户，导致任意 agent 都能指派到存量个人项目 —— 即全量
+// 跨用户越权放开。
+//
+// 调用方必须持锁（findMembershipUnsafe 为 Unsafe 层）。
+func (s *Store) agentCanAssignableToProjectUnsafe(agent *model.Agent, project *model.Project) bool {
+	if agent == nil || project == nil {
+		return false
+	}
+	if agent.UserID == project.UserID {
+		return true
+	}
+	// 🔴 空 org 短路：存量个人项目不做 org 匹配，仅按 user 严格相等。
+	if project.OrgID == "" {
+		return false
+	}
+	if agent.OrgID == project.OrgID {
+		return true
+	}
+	_, ok := s.findMembershipUnsafe(project.OrgID, agent.UserID)
+	return ok
+}
