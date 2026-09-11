@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,27 @@ import (
 	"trustmesh/backend/internal/store"
 	"trustmesh/backend/internal/transport"
 )
+
+// inviteReason 是 GetInvitePrompt 下发给节点 CLI 的 reason JSON 结构。
+// 必须用 json.Marshal 生成：原先 fmt.Sprintf 手拼 JSON，userID / orgID 中
+// 一旦出现 " 或 \ 就会破坏 JSON 结构，且直接拼进 CLI 提示词存在命令注入面。
+type inviteReason struct {
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Role         string `json:"role"`
+	AgentProduct string `json:"agent_product"`
+	UserID       string `json:"user_id"`
+	// OrgID 仅企业空间下招聘时出现（个人空间用 omitempty 保持与改造前一致）。
+	OrgID string `json:"org_id,omitempty"`
+}
+
+// shellSingleQuote 把字符串包进 shell 单引号，并把内部的单引号按 POSIX
+// 规则转义：先闭合当前引号，再输出被反斜杠转义的单引号，最后重新开启引号。
+// json.Marshal 不会转义单引号，而 reason 是作为 --reason '...' 拼进 CLI
+// 提示词的，不转义会让单引号提前闭合引号，构成命令注入面。
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
 
 type JoinRequestHandler struct {
 	store      *store.Store
@@ -61,11 +83,17 @@ func (h *JoinRequestHandler) GetInvitePrompt(c *gin.Context) {
 	// 个人空间（无 X-Org-Id）提示词与 reason 均不含 org，行为与改造前一致。
 	// 归属在发起招聘时锁定：节点只透传 reason（不感知内容），
 	// sync 落库时校验后写 jr.OrgID，审批时 agent 继承该归属。
-	reasonJSON := fmt.Sprintf(`'{"name":"<你的名称>","description":"<能力简述>","role":"developer","agent_product":"<产品标识>","user_id":"%s"}'`, userID)
+	reason := inviteReason{
+		Name:         "<你的名称>",
+		Description:  "<能力简述>",
+		Role:         "developer",
+		AgentProduct: "<产品标识>",
+		UserID:       userID,
+	}
 	orgIDDoc := ""
 	enterpriseSection := ""
 	if sc.OrgID != "" {
-		reasonJSON = fmt.Sprintf(`'{"name":"<你的名称>","description":"<能力简述>","role":"developer","agent_product":"<产品标识>","user_id":"%s","org_id":"%s"}'`, userID, sc.OrgID)
+		reason.OrgID = sc.OrgID
 		orgIDDoc = "- org_id: 不要修改此字段（本次招聘锁定的目标企业）\n"
 		orgName := sc.OrgID
 		if org, orgErr := h.store.GetOrganization(sc.OrgID); orgErr == nil && org != nil && strings.TrimSpace(org.Name) != "" {
@@ -76,6 +104,22 @@ func (h *JoinRequestHandler) GetInvitePrompt(c *gin.Context) {
 ## 本次招聘归属
 你正在被企业「%s」招聘。审批通过后，你将加入该企业（org_id: %s），参与其下的项目、任务与会议室协作。`, orgName, sc.OrgID)
 	}
+
+	// 用 json.Marshal 生成而非 fmt.Sprintf 手拼：
+	//  1. userID / orgID 含 " 或 \ 时会破坏 JSON 结构（原实现的注入面）；
+	//  2. reason 以 `--reason '...'` 拼进 CLI 提示词，json.Marshal 不转义
+	//     单引号，故再套一层 shell 单引号转义，消除命令注入面。
+	reasonBytes, marshalErr := json.Marshal(reason)
+	if marshalErr != nil {
+		transport.WriteError(c, &transport.AppError{
+			Status:  http.StatusInternalServerError,
+			Code:    "INVITE_PROMPT_BUILD_FAILED",
+			Message: "failed to build invite reason",
+			Details: map[string]any{"cause": marshalErr.Error()},
+		})
+		return
+	}
+	reasonJSON := shellSingleQuote(string(reasonBytes))
 
 	prompt := fmt.Sprintf(`你被邀请加入 TrustMesh 工作平台协作网络。请按以下步骤操作：
 
