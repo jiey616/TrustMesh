@@ -214,7 +214,7 @@ func (s *Store) SaveArtifactWithFiling(artifact model.TaskArtifact, declared []m
 
 	// Verify the task exists.
 	task, ok := s.tasks[artifact.TaskID]
-	if !ok || task.UserID != agent.UserID {
+	if !ok || !s.agentCanWriteTaskUnsafe(task, agent) {
 		return ArtifactFilingResult{}, transport.NotFound("task not found")
 	}
 
@@ -484,7 +484,7 @@ func (s *Store) ResolveTransferOwner(nodeID string) (*TransferOwner, *transport.
 	var candidates []candidate
 
 	for _, task := range s.tasks {
-		if task.UserID != agent.UserID || taskArtifactsClosed(task.Status) {
+		if !s.agentCanWriteTaskUnsafe(task, agent) || taskArtifactsClosed(task.Status) {
 			continue
 		}
 		for i := range task.Todos {
