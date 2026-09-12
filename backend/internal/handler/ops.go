@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/gin-gonic/gin"
+	"trustmesh/backend/internal/metrics"
 	"trustmesh/backend/internal/middleware"
 	"trustmesh/backend/internal/model"
 	"trustmesh/backend/internal/store"
@@ -133,4 +134,36 @@ func (h *OpsHandler) Close(c *gin.Context) {
 		return
 	}
 	transport.WriteData(c, 200, gin.H{"incident": inc})
+}
+
+// Metrics GET /ops/metrics — Phase 0 可观测性三件套（T0.11）的只读出口：
+// 计数器快照 + 直方图（步骤推进/静默时长）+ 告警规则清单。
+//
+// 指标是进程级聚合值（不含任何资源标识、任务名或用户），但对普通成员暴露
+// 平台整体体量仍不合适，因此要求「带租户上下文且角色为 owner/admin」。
+// 个人空间（无 X-Org-Id）拿不到指标 —— 需要观测时以企业身份访问。
+func (h *OpsHandler) Metrics(c *gin.Context) {
+	sc := middleware.Scope(c)
+	if !isOrgAdminScope(sc) {
+		transport.WriteError(c, transport.Forbidden("ops metrics require org owner/admin role"))
+		return
+	}
+	histograms := make([]metrics.HistogramReport, 0, len(metrics.KnownCounterNames()))
+	for _, name := range metrics.KnownCounterNames() {
+		histograms = append(histograms, metrics.Histogram(name))
+	}
+	transport.WriteData(c, 200, gin.H{
+		"counters":   metrics.Snapshot(),
+		"histograms": histograms,
+		"alerts":     metrics.AlertRules,
+	})
+}
+
+// isOrgAdminScope reports whether the request carries an org context with an
+// owner/admin role. Used to gate platform-wide (cross-tenant) read endpoints.
+func isOrgAdminScope(sc store.Scope) bool {
+	if !sc.HasOrg() {
+		return false
+	}
+	return sc.Role == model.OrgRoleOwner || sc.Role == model.OrgRoleAdmin
 }

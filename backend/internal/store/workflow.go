@@ -216,6 +216,8 @@ func (s *Store) RecordSequentialTodoDispatch(taskID, todoID string) (*model.Task
 		todo.Status = "in_progress"
 		todo.StartedAt = &now
 		todo.AssignedAt = &now
+		// T0.11②: measure "step N completed -> step N+1 started" latency.
+		observeStepAdvanceUnsafe(task, todoIdx, now)
 	}
 	s.updateTaskStatusUnsafe(task, now)
 	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
@@ -733,6 +735,8 @@ func (s *Store) UpdateTodoProgressByNode(nodeID string, in TodoProgressInput) (*
 	todo.LastProgressAt = &now
 	todo.RemindCount = 0
 	todo.RemindAt = nil
+	// T0.11③: a real progress report breaks the compliance streak.
+	s.clearAutoAdvanceStreakUnsafe(task.ID, agent.ID)
 	progress := in.Message
 	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "agent", agent.ID, agent.Name, "todo_progress", &progress, map[string]any{"todo_id": todo.ID, "task_title": task.Title, "todo_title": todo.Title}, now)
 
@@ -812,6 +816,8 @@ func (s *Store) CompleteTodoByNodeWithMessageID(nodeID, messageID string, in Tod
 	todo.LastProgressAt = &now // P-03
 	todo.RemindCount = 0
 	todo.RemindAt = nil
+	// T0.11③: completing a step proves the agent is reporting; break the streak.
+	s.clearAutoAdvanceStreakUnsafe(task.ID, agent.ID)
 	todo.FailedAt = nil
 	todo.CanceledAt = nil
 	todo.Error = nil
@@ -1299,6 +1305,8 @@ func (s *Store) AddTaskCommentByNode(nodeID string, in TaskCommentInput) (*model
 			td.RemindAt = nil
 			td.LastProgressAt = &now // P-03: 有效进展时间戳
 		}
+		// T0.11③: a non-error comment is a progress report; break the streak.
+		s.clearAutoAdvanceStreakUnsafe(task.ID, agent.ID)
 	}
 	if err := s.persistCommentUnsafe(comment); err != nil {
 		return nil, mongoWriteError(err)

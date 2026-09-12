@@ -53,6 +53,11 @@ type Store struct {
 	// throttle state for the planning-stall monitor.
 	planningStallCount      map[string]int
 	planningStallLastRemind map[string]time.Time
+	// autoAdvanceStreak counts, per task and assignee agent, how many
+	// CONSECUTIVE steps the platform had to advance on that agent's behalf
+	// (the T0.7c promotions). Reaching agentStallStreakThreshold trips the
+	// agent compliance sentinel (T0.11③). Guarded by s.mu.
+	autoAdvanceStreak map[string]map[string]int
 	tasks              map[string]*model.TaskDetail
 	projectTasks       map[string][]string
 	taskEvents         map[string][]model.Event
@@ -140,7 +145,7 @@ type Store struct {
 	mongoOrgMemberships *mongo.Collection
 	mongoProjectMembers *mongo.Collection
 	mongoWorkflowTemplates *mongo.Collection
-	mongoOpsIncidents      *mongo.Collection
+	mongoOpsIncidents      *mongo.Collection
 	mongoLLMSettings      *mongo.Collection
 	mongoTimeout           time.Duration
 	log                    *zap.Logger
@@ -208,6 +213,7 @@ func New() *Store {
 		planRejectNotify:   make(map[string]int),
 		planningStallCount:      make(map[string]int),
 		planningStallLastRemind: make(map[string]time.Time),
+		autoAdvanceStreak:       make(map[string]map[string]int),
 		tasks:              make(map[string]*model.TaskDetail),
 		projectTasks:       make(map[string][]string),
 		taskEvents:         make(map[string][]model.Event),

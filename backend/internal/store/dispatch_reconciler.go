@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"trustmesh/backend/internal/metrics"
 )
 
 // Dispatch reconciler configuration.
@@ -125,6 +126,10 @@ func (s *Store) reconcilePendingDispatches() {
 // Idempotent: only pending todos are promoted, so once promoted (in_progress)
 // later ticks skip it. State mutation happens under the write lock; the
 // dispatch hook is invoked outside it, mirroring reconcilePendingDispatches.
+//
+// Telemetry (T0.11): every promotion is a step-advance latency sample and a
+// TodoAutoAdvanced tick; a repeat offender on the same agent also trips the
+// agent compliance sentinel.
 func (s *Store) advanceStalledPendingTodos() {
 	now := time.Now().UTC()
 
@@ -132,6 +137,7 @@ func (s *Store) advanceStalledPendingTodos() {
 	var advanced []advancedTodo
 
 	s.mu.Lock()
+	s.pruneAutoAdvanceStreaksUnsafe()
 	for _, task := range s.tasks {
 		if task.Status != "in_progress" {
 			continue
@@ -162,6 +168,28 @@ func (s *Store) advanceStalledPendingTodos() {
 		// judged dead the instant it enters the monitoring window.
 		todo.LastProgressAt = &now
 		todo.LastActivityAt = &now
+
+		// T0.11②: this promotion IS the step-advance event, so measure the gap
+		// from the predecessor's completion.
+		observeStepAdvanceUnsafe(task, idx, now)
+		metrics.Inc(metrics.TodoAutoAdvancedTotal)
+
+		// T0.11③: once the same agent needs consecutive auto-advances it stops
+		// being "a lost report" and becomes a compliance problem worth a human.
+		if s.bumpAutoAdvanceStreakUnsafe(task.ID, todo.Assignee.AgentID) {
+			metrics.Inc(metrics.AgentStepStalledTotal)
+			stallMsg := fmt.Sprintf("执行智能体 %s 连续 %d 步未回报，均由平台自愈推进，疑似 skill 被裁剪或上下文丢失，需人工核查该 agent",
+				todo.Assignee.Name, agentStallStreakThreshold)
+			s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID,
+				"system", "dispatch-reconciler", "派发器", "agent_step_stalled", &stallMsg, map[string]any{
+					"agent_id":   todo.Assignee.AgentID,
+					"agent_name": todo.Assignee.Name,
+					"streak":     agentStallStreakThreshold,
+					"task_title": task.Title,
+					"todo_id":    todo.ID,
+					"todo_title": todo.Title,
+				}, now)
+		}
 
 		msg := fmt.Sprintf("todo auto-advanced after %s without an agent report: %s", dispatchReconcileGrace, todo.Title)
 		s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "system", "dispatch-reconciler", "派发器", "todo_auto_advanced", &msg, map[string]any{

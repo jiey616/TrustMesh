@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"trustmesh/backend/internal/metrics"
 	"trustmesh/backend/internal/model"
 )
 
@@ -295,6 +296,15 @@ func (s *Store) checkTodoTimeouts() {
 			todo.RemindAt = &now
 			remindedCount++
 			reminds = append(reminds, pendingRemind{taskID: task.ID, todoID: todo.ID})
+
+			// T0.11①: sample how long the todo had already been silent at the
+			// moment it was first flagged. p95 of this is the "execution side is
+			// getting slow" early warning; sampling on every reminder (rather
+			// than only the first) means a todo that keeps stalling contributes
+			// repeatedly instead of once.
+			if lastActivity != nil {
+				metrics.Observe(metrics.TodoStalledDuration, now.Sub(*lastActivity))
+			}
 
 			s.log.Warn("todo timed out, sending reminder",
 				zap.String("task_id", task.ID),

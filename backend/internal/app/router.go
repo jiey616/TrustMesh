@@ -326,6 +326,10 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	ops.GET("/incidents/:id", opsHandler.Get)
 	ops.POST("/incidents/:id/ignore", opsHandler.Ignore)
 	ops.POST("/incidents/:id/close", opsHandler.Close)
+	// Phase 0 observability export (T0.11): process-wide counters, histograms
+	// (step-advance latency, stall duration) and the alert rule set. Gated to
+	// org owner/admin inside the handler.
+	ops.GET("/metrics", opsHandler.Metrics)
 
 	// Current user account: rename + password change.
 	// 账号是 user 维度资源，不参与租户裁决（不受 X-Org-Id 影响）。
