@@ -1220,10 +1220,10 @@ func (h *WebhookHandler) handleTaskPlanReady(c *gin.Context, webhook protocol.We
 				fmt.Sprintf("⚠️ PM 规划校验未通过：%s。提交的 todos：%s。请 PM 修正 assignee_node_id 后重新提交 task.plan_ready。", mismatch, string(submittedJSON))); cErr != nil && h.log != nil {
 				h.log.Warn("append plan-reject system comment failed", zap.String("task_id", payload.TaskID), zap.Error(cErr))
 			}
-		// 422 回执在 ClawSynapse 侧不会触发 PM 的新一轮 LLM 推理（它只回一句 ACK 就停在
-		// WAITING），任务会永久卡在 planning。这里平台主动推一条 task.message 把修正指令
-		// 送进 PM 会话，让它自行重发 plan_ready（用户消息可唤醒 PM，已实证）。
-		h.notifyPMPlanRejected(c, taskWithWF, mismatch, string(submittedJSON))
+			// 422 回执在 ClawSynapse 侧不会触发 PM 的新一轮 LLM 推理（它只回一句 ACK 就停在
+			// WAITING），任务会永久卡在 planning。这里平台主动推一条 task.message 把修正指令
+			// 送进 PM 会话，让它自行重发 plan_ready（用户消息可唤醒 PM，已实证）。
+			h.notifyPMPlanRejected(c, taskWithWF, mismatch, string(submittedJSON))
 
 			transport.WriteError(c, transport.Validation("规划不符合项目工作流，请修正后重新提交 task.plan_ready", map[string]any{
 				"code":            "WORKFLOW_MISMATCH",
@@ -1273,10 +1273,10 @@ func (h *WebhookHandler) notifyPMPlanRejected(c *gin.Context, task *model.TaskDe
 	}
 	instruction := fmt.Sprintf(
 		"你刚才提交的 task.plan_ready 被平台校验拒绝，规划未生效，任务仍停留在 planning（todo 数为 0）。\n\n"+
-		"拒绝原因：%s\n\n"+
-		"你提交的 todos：%s\n\n"+
-		"请按拒绝原因修正后，立即重新发送 task.plan_ready（不要回到澄清流程，需求已经确认过）。\n"+
-		"若缺少的步骤是用户明确表示不需要的尾部步骤，请在 task.plan_ready 中声明 deliver_scope.up_to_step 为你打算止步的那一步（该步骤名必须真实存在于工作流中）。",
+			"拒绝原因：%s\n\n"+
+			"你提交的 todos：%s\n\n"+
+			"请按拒绝原因修正后，立即重新发送 task.plan_ready（不要回到澄清流程，需求已经确认过）。\n"+
+			"若缺少的步骤是用户明确表示不需要的尾部步骤，请在 task.plan_ready 中声明 deliver_scope.up_to_step 为你打算止步的那一步（该步骤名必须真实存在于工作流中）。",
 		mismatch, submittedTodos)
 	payload := protocol.PMTaskMessage{
 		SchemaVersion: "1.0",
@@ -2933,14 +2933,14 @@ func (h *WebhookHandler) PublishOpsMention(ctx context.Context, req store.OpsPub
 		return errors.New("clawsynapse client unavailable")
 	}
 	payload := protocol.TaskMentionPayload{
-		TaskID:     req.TaskID,
-		ProjectID:  req.ProjectID,
-		TodoID:     req.TodoID,
-		TaskTitle:  req.TaskTitle,
-		TaskStatus: req.TaskStatus,
-		AuthorName: req.AuthorName,
+		TaskID:      req.TaskID,
+		ProjectID:   req.ProjectID,
+		TodoID:      req.TodoID,
+		TaskTitle:   req.TaskTitle,
+		TaskStatus:  req.TaskStatus,
+		AuthorName:  req.AuthorName,
 		UserContent: req.Content,
-		Content:    req.Content,
+		Content:     req.Content,
 	}
 	metadata := req.Metadata
 	if metadata == nil {
