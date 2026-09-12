@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"go.uber.org/zap"
@@ -42,6 +43,11 @@ func (s *Store) StartDispatchReconciler(ctx context.Context) {
 			}
 			return
 		case <-ticker.C:
+			// Advance first: promoting a stalled pending todo into in_progress
+			// makes the redispatch pass below skip it (NextDispatchableTodo
+			// returns nil once the leading todo is in_progress), so the two
+			// stages never fight over the same todo.
+			s.advanceStalledPendingTodos()
 			s.reconcilePendingDispatches()
 		}
 	}
@@ -90,6 +96,99 @@ func (s *Store) reconcilePendingDispatches() {
 	for _, c := range cands {
 		if s.log != nil {
 			s.log.Warn("dispatch reconcile: re-dispatching stalled pending todo",
+				zap.String("task_id", c.taskID), zap.String("todo_id", c.todoID))
+		}
+		dispatch(context.Background(), c.taskID, c.todoID)
+	}
+}
+
+// advanceStalledPendingTodos is the second stage of the dispatch reconciler. It
+// closes the "pipeline stuck at step N" failure mode (T0.7c).
+//
+// Root cause it addresses: CompleteTodoByNode only finalizes the current todo
+// and never advances the next one, while checkTodoTimeouts only scans
+// in_progress todos (timeout_monitor.go). A todo left pending after its
+// predecessor completed is therefore invisible to the timeout monitor, the
+// P-03 hard-deadline gate and human escalation. Whenever the assignee agent
+// never reports — e.g. its skill context was pruned and it silently stopped —
+// the step sits pending forever. Redispatching alone does not help: an
+// unresponsive agent stays unresponsive, so the todo is retried every tick
+// without ever escalating.
+//
+// This stage promotes such a stalled pending todo into in_progress so it
+// enters the monitoring window, then re-dispatches it. Promotion is gated on
+// all of: (a) the task being in_progress; (b) the next dispatchable todo being
+// pending with no incomplete predecessor; (c) at least one real dispatch
+// attempt already made and the grace window elapsed since that attempt — so it
+// never races the synchronous dispatch that follows task creation.
+//
+// Idempotent: only pending todos are promoted, so once promoted (in_progress)
+// later ticks skip it. State mutation happens under the write lock; the
+// dispatch hook is invoked outside it, mirroring reconcilePendingDispatches.
+func (s *Store) advanceStalledPendingTodos() {
+	now := time.Now().UTC()
+
+	type advancedTodo struct{ taskID, todoID string }
+	var advanced []advancedTodo
+
+	s.mu.Lock()
+	for _, task := range s.tasks {
+		if task.Status != "in_progress" {
+			continue
+		}
+		todo := task.NextDispatchableTodo()
+		if todo == nil || todo.Status != "pending" {
+			continue
+		}
+		idx := findTodoIndex(task, todo.ID)
+		if idx < 0 || hasIncompletePredecessor(task, idx) {
+			continue
+		}
+		// Only act after a real dispatch attempt has aged out. Guards against
+		// racing the synchronous dispatch that follows task creation: a todo
+		// that was never attempted (DispatchAttempts == 0) is the reconciler's
+		// redispatch stage's job, not ours.
+		if todo.DispatchAttempts < 1 || todo.LastDispatchAt == nil {
+			continue
+		}
+		if now.Sub(*todo.LastDispatchAt) < dispatchReconcileGrace {
+			continue
+		}
+
+		todo.Status = "in_progress"
+		todo.StartedAt = &now
+		todo.AssignedAt = &now
+		// Baseline the hard-deadline clock at promotion time so the todo is not
+		// judged dead the instant it enters the monitoring window.
+		todo.LastProgressAt = &now
+		todo.LastActivityAt = &now
+
+		msg := fmt.Sprintf("todo auto-advanced after %s without an agent report: %s", dispatchReconcileGrace, todo.Title)
+		s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "system", "dispatch-reconciler", "派发器", "todo_auto_advanced", &msg, map[string]any{
+			"todo_id":           todo.ID,
+			"task_title":        task.Title,
+			"todo_title":        todo.Title,
+			"dispatch_attempts": todo.DispatchAttempts,
+		}, now)
+		s.publishTaskUnsafe(task.ID)
+		if err := s.persistTaskBundleUnsafe(task.ID); err != nil && s.log != nil {
+			s.log.Warn("dispatch reconcile: persist failed after auto-advance",
+				zap.String("task_id", task.ID), zap.String("todo_id", todo.ID), zap.Error(err))
+		}
+		advanced = append(advanced, advancedTodo{task.ID, todo.ID})
+	}
+	s.mu.Unlock()
+
+	if len(advanced) == 0 {
+		return
+	}
+	dispatch := s.dispatchHook
+	if dispatch == nil {
+		return
+	}
+	for _, c := range advanced {
+		if s.log != nil {
+			s.log.Warn("dispatch reconcile: auto-advanced stalled pending todo",
 				zap.String("task_id", c.taskID), zap.String("todo_id", c.todoID))
 		}
 		dispatch(context.Background(), c.taskID, c.todoID)
