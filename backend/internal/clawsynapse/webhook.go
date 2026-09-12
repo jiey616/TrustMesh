@@ -144,6 +144,20 @@ func (h *WebhookHandler) HandleWebhook(c *gin.Context) {
 	// notice) up front so they never reach the conversation or break parsing.
 	payload.Message = cleanAgentNoise(payload.Message)
 
+	// T0.6a 双读准备：单点统计入站内层信封的形状（观测专用，绝不拒绝）。
+	// 覆盖 HandleWebhook 的每一条入站消息，作为未来收紧解析时「legacy 手搓
+	// JSON 不能被误拒」的基线度量。
+	switch classifyEnvelopeShape(payload.Message) {
+	case envShapeProtocol:
+		metrics.Inc(metrics.EnvelopeProtocolTotal)
+	case envShapeLegacyJSON:
+		metrics.Inc(metrics.EnvelopeLegacyJSONTotal)
+	case envShapePlainText:
+		metrics.Inc(metrics.EnvelopePlainTextTotal)
+	case envShapeInvalidJSON:
+		metrics.Inc(metrics.EnvelopeInvalidJSONTotal)
+	}
+
 	switch strings.TrimSpace(payload.Type) {
 	case "chat.message", "chat.response":
 		// DEPRECATED meeting routing via chat.message — agents should migrate
@@ -298,15 +312,71 @@ func (h *WebhookHandler) handleChatMessage(c *gin.Context, webhook protocol.Webh
 	transport.WriteData(c, http.StatusOK, detail)
 }
 
+// envelopeShape classifies the SHAPE of an inbound inner message (the
+// WebhookPayload.Message string) for observability only. Classification never
+// rejects and never mutates state — it exists so the platform can measure how
+// much traffic still rides the legacy (hand-rolled JSON) path before anything
+// downstream ever becomes stricter (T0.6a).
+type envelopeShape int
+
+const (
+	envShapeProtocol    envelopeShape = iota // 合法协议信封（含 protocol 字段）
+	envShapeLegacyJSON                       // 合法 JSON、无 protocol（legacy 手搓）
+	envShapePlainText                        // 非 JSON 文本
+	envShapeInvalidJSON                      // 非法 JSON
+)
+
+// classifyEnvelopeShape 只做分类：不改行为、不拒绝、不做 I/O。
+//
+// 判定顺序：
+//   - 空串 / 非 JSON 且不以 '{' 或 '[' 开头 → 纯文本
+//   - 以 '{'/'[' 开头但 JSON 解析失败 → 非法 JSON
+//   - 合法 JSON 但首字符不是 '{'（数组/标量）→ 视为 legacy JSON（非协议信封）
+//   - 合法 JSON 对象且 protocol 字段含 "clawsynapse" → 协议信封
+//   - 其余合法 JSON 对象（无 protocol 字段）→ legacy 手搓 JSON
+//
+// 注意「分类 ≠ 拆包」：本函数只看有无 protocol 字段，不看 type。
+// {"protocol":"clawsynapse/1.0","type":"chat.message"} 分类为 envShapeProtocol，
+// 但它不是任务协议信封，unwrapTaskProtocolEnvelope 仍返回 false。
+func classifyEnvelopeShape(raw string) envelopeShape {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return envShapePlainText
+	}
+	if !json.Valid([]byte(s)) {
+		if s[0] == '{' || s[0] == '[' {
+			return envShapeInvalidJSON
+		}
+		return envShapePlainText
+	}
+	if s[0] != '{' {
+		return envShapeLegacyJSON
+	}
+	var probe struct {
+		Protocol string `json:"protocol"`
+	}
+	if err := json.Unmarshal([]byte(s), &probe); err != nil {
+		return envShapeInvalidJSON
+	}
+	if strings.Contains(probe.Protocol, "clawsynapse") {
+		return envShapeProtocol
+	}
+	return envShapeLegacyJSON
+}
+
 // unwrapTaskProtocolEnvelope detects a task-protocol envelope smuggled over
 // the chat channel (content is a JSON object carrying protocol + type + task
 // payload fields) and rewrites the webhook into the wrapped message type so
 // the dispatcher's handler can decode it. The envelope's payload fields
 // (task_id/todo_id/comment/result) live at its top level, which is exactly
 // what the payload structs unmarshal — unknown envelope keys are ignored.
+//
+// The "is this an envelope?" test is delegated to classifyEnvelopeShape so the
+// shape heuristic lives in one place; on top of it this function still applies
+// the task-protocol type whitelist (classification alone is never enough to
+// retag a message).
 func unwrapTaskProtocolEnvelope(webhook protocol.WebhookPayload) (protocol.WebhookPayload, bool) {
-	content := strings.TrimSpace(webhook.Message)
-	if !strings.HasPrefix(content, "{") {
+	if classifyEnvelopeShape(webhook.Message) != envShapeProtocol {
 		return webhook, false
 	}
 	var probe struct {
@@ -314,10 +384,7 @@ func unwrapTaskProtocolEnvelope(webhook protocol.WebhookPayload) (protocol.Webho
 		Type     string          `json:"type"`
 		Body     json.RawMessage `json:"body"`
 	}
-	if err := json.Unmarshal([]byte(content), &probe); err != nil {
-		return webhook, false
-	}
-	if !strings.Contains(probe.Protocol, "clawsynapse") {
+	if err := json.Unmarshal([]byte(strings.TrimSpace(webhook.Message)), &probe); err != nil {
 		return webhook, false
 	}
 	switch strings.TrimSpace(probe.Type) {
