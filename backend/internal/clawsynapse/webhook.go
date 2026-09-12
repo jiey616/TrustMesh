@@ -19,6 +19,7 @@ import (
 	"trustmesh/backend/internal/agentfile"
 	"trustmesh/backend/internal/embedding"
 	"trustmesh/backend/internal/knowledge"
+	"trustmesh/backend/internal/metrics"
 	"trustmesh/backend/internal/model"
 	"trustmesh/backend/internal/project"
 	"trustmesh/backend/internal/protocol"
@@ -1810,6 +1811,10 @@ func (h *WebhookHandler) dispatchNextTodo(ctx context.Context, task *model.TaskD
 	}
 
 	payload := h.buildTodoAssignedPayload(task, todo)
+	// T0.3: make the tenant trust assumption explicit and observable before we
+	// hand work to a node. Observe-only in Phase 0 — blocking here would break
+	// every existing shared-agent dispatch, so enforcement waits for T1.1.
+	h.observeDispatchOrgMismatch(task, todo)
 	if _, err := h.client.PublishWithRetry(ctx, todo.Assignee.NodeID, "todo.assigned", payload, task.ID, nil); err != nil {
 		if h.log != nil {
 			h.log.Error("sequential todo dispatch failed after retries",
@@ -1830,6 +1835,60 @@ func (h *WebhookHandler) dispatchNextTodo(ctx context.Context, task *model.TaskD
 		return task
 	}
 	return updatedTask
+}
+
+// dispatchOrgMismatch reports the assignee agent's tenant and whether it
+// disagrees with the task's tenant.
+//
+// This is deliberately the raw comparison the plan calls for
+// (`agent.OrgID == task.OrgID || task.OrgID == ""`), NOT the richer
+// authorization decision from store.agentCanWriteTaskUnsafe. The difference
+// matters: an agent whose owner is a member of the task's org is authorized
+// even when its own org_id is empty (store/scope.go condition 3). So a
+// mismatch flag here means "the agent carries no explicit org_id matching this
+// tenant" — i.e. a backfill gap — rather than "this dispatch is unauthorized".
+// That gap count is exactly the input T1.1 needs before it can enforce.
+//
+// Two cases are never a mismatch: a legacy task with no org_id (dispatch is
+// governed by the author's user identity) and an unknown/absent agent (a
+// different failure, surfaced by the dispatch itself).
+func (h *WebhookHandler) dispatchOrgMismatch(task *model.TaskDetail, todo *model.Todo) (agentOrg string, mismatched bool) {
+	if h == nil || h.store == nil || task == nil || todo == nil {
+		return "", false
+	}
+	if task.OrgID == "" {
+		return "", false
+	}
+	agentID := todo.Assignee.AgentID
+	if agentID == "" {
+		return "", false
+	}
+	agent, ok := h.store.GetAgentByIDUnsafe(agentID)
+	if !ok || agent == nil {
+		return "", false
+	}
+	return agent.OrgID, agent.OrgID != task.OrgID
+}
+
+// observeDispatchOrgMismatch records a tenant mismatch as a metric and a warn
+// log. It returns nothing, and its caller does not branch on it — Phase 0
+// observes; enforcement is T1.1 (T0.3 acceptance: "warns, does not block").
+func (h *WebhookHandler) observeDispatchOrgMismatch(task *model.TaskDetail, todo *model.Todo) {
+	agentOrg, mismatched := h.dispatchOrgMismatch(task, todo)
+	if !mismatched {
+		return
+	}
+	metrics.Inc(metrics.DispatchOrgMismatchTotal)
+	if h.log != nil {
+		h.log.Warn("dispatch tenant mismatch: assignee agent carries no matching org_id",
+			zap.String("task_id", task.ID),
+			zap.String("todo_id", todo.ID),
+			zap.String("task_org_id", task.OrgID),
+			zap.String("agent_org_id", agentOrg),
+			zap.String("agent_id", todo.Assignee.AgentID),
+			zap.String("agent_node_id", todo.Assignee.NodeID),
+		)
+	}
 }
 
 // recordDispatchFailureFor records a dispatch failure for a specific todo so the
