@@ -52,6 +52,18 @@ const (
 	// TodoStalledDuration histograms how long an in_progress todo had been
 	// silent when the timeout monitor first flagged it as stalled (T0.11①).
 	TodoStalledDuration = "todo_stalled_seconds"
+
+	// ShutdownFlushFailedTotal counts shutdown flushes that returned a non-nil
+	// error (Mongo unreachable, or the flush deadline expired). Any nonzero
+	// value means in-memory state written during a Mongo outage was NOT
+	// mirrored and is at risk on the next restart (T0.8).
+	ShutdownFlushFailedTotal = "shutdown_flush_failed_total"
+
+	// ShutdownFlushDuration histograms how long the bounded shutdown flush
+	// took. A value pinned at the configured SHUTDOWN_FLUSH_TIMEOUT means the
+	// flush hit its ceiling (likely a Mongo outage); a value near the ceiling
+	// on every restart means the deadline is too tight for the state size.
+	ShutdownFlushDuration = "shutdown_flush_seconds"
 )
 
 // histogramBounds are the upper bounds of the histogram buckets, ascending.
@@ -278,6 +290,20 @@ var AlertRules = []AlertRule{
 		Severity: "warning",
 		Summary:  "一小时内超时判失败的 todo 超过 5 个：执行节点或模型网关异常",
 	},
+	{
+		Name:     "ShutdownFlushFailed",
+		Metric:   ShutdownFlushFailedTotal,
+		Expr:     "increase(shutdown_flush_failed_total[1h]) > 0",
+		Severity: "critical",
+		Summary:  "停机落盘失败：Mongo 不可用或回写超出 SHUTDOWN_FLUSH_TIMEOUT，本次停机期间的内存写入未镜像，下次重启可能永久丢失，需人工核对",
+	},
+	{
+		Name:     "ShutdownFlushSlow",
+		Metric:   ShutdownFlushDuration,
+		Expr:     "histogram_quantile(0.95, shutdown_flush_seconds) > 25",
+		Severity: "warning",
+		Summary:  "停机落盘 p95 逼近 SHUTDOWN_FLUSH_TIMEOUT（默认 30s）：回写可能在到期前被截断，需评估调大超时或排查 Mongo 写入变慢",
+	},
 }
 
 // KnownCounterNames returns every declared counter/histogram name, sorted. Used
@@ -291,6 +317,8 @@ func KnownCounterNames() []string {
 		TodoTimeoutFailedTotal,
 		StepAdvanceDuration,
 		TodoStalledDuration,
+		ShutdownFlushFailedTotal,
+		ShutdownFlushDuration,
 	}
 	sort.Strings(names)
 	return names

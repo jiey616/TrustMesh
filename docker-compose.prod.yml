@@ -13,6 +13,9 @@ services:
     image: trustmesh/backend:${TAG:-latest}
     container_name: trustmesh-backend
     restart: unless-stopped
+    # 有界停机落盘：45s > 30s 回写预算 + 8s HTTP drain，避免编排层在落盘完成前
+    # SIGKILL，那会导致停机期间的内存写入必丢。
+    stop_grace_period: 45s
     depends_on:
       - mongo
       - qdrant

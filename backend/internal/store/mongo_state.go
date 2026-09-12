@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.uber.org/zap"
 	"trustmesh/backend/internal/config"
+	"trustmesh/backend/internal/metrics"
 	"trustmesh/backend/internal/model"
 )
 
@@ -84,10 +86,42 @@ func (s *Store) enableMongo(cfg config.Config, log *zap.Logger) error {
 		return err
 	}
 
+	// 启动快照自检：仅观测（记日志），不影响启动流程。
+	s.validateLoadedSnapshot()
+
 	if s.log != nil {
 		s.log.Info("mongo repository store enabled", zap.String("database", cfg.MongoDatabase))
 	}
 	return nil
+}
+
+// validateLoadedSnapshot 在 loadMongoState 之后做一致性自检，仅记日志（WARN），
+// 不影响启动。
+//
+// 目的：TrustMesh 是全内存状态机，若镜像加载实际失败或镜像为空，进程会以「空库」
+// 启动并在一段时间内静默地用新请求覆盖旧数据。这里把关键集合的计数打出来，并在
+// 关键集合全为空时告警，给运维一个可观测的信号；绝不可因自检失败而阻断启动。
+func (s *Store) validateLoadedSnapshot() {
+	s.mu.RLock()
+	users := len(s.users)
+	agents := len(s.agents)
+	projects := len(s.projects)
+	tasks := len(s.tasks)
+	s.mu.RUnlock()
+
+	if s.log == nil {
+		return
+	}
+	s.log.Info("mongo state loaded snapshot",
+		zap.Int("users", users),
+		zap.Int("agents", agents),
+		zap.Int("projects", projects),
+		zap.Int("tasks", tasks),
+	)
+	if users == 0 && agents == 0 && projects == 0 && tasks == 0 {
+		s.log.Warn("mongo state loaded but principal collections are empty",
+			zap.String("hint", "mirror may be empty or load failed silently; verify MONGO_DATABASE/MONGO_URI before trusting this node"))
+	}
 }
 
 func (s *Store) Close() error {
@@ -1159,4 +1193,175 @@ func (s *Store) deleteProjectFileUnsafe(fileID string) error {
 	defer cancel()
 	_, err := s.mongoProjectFiles.DeleteOne(ctx, bson.M{"_id": fileID})
 	return err
+}
+
+// FlushPersistAll 在停机时把全内存状态有界地回写 Mongo。
+//
+// 语义：TrustMesh 后端是「全内存状态机 + Mongo 仅作持久化镜像」。正常写入路径会
+// 即时落盘，但 Mongo 抖动 / 不可用期间产生的内存写入会滞留在内存里，进程重启后
+// 永久丢失。本函数在收到停机信号、HTTP 流量已 drain 之后、断开 Mongo 之前，做一次
+// 尽力而为的全量回写，补齐这段差距。
+//
+// 有界性（关键）：ctx 到期即提前返回（fail-fast），绝不无限挂起。若 Mongo 不可用，
+// 编排层最终会 SIGKILL，那反而必丢；因此宁可提前放弃，也不能拖到被强杀。单条写操作
+// 自身由 s.mongoContext()（= s.mongoTimeout）+ client SetTimeout 兜底，不会永久阻塞；
+// 但整轮 sweep 必须尊重传入的 ctx。
+//
+// 锁：全程持 s.mu，因为调用的是不带锁的 persistXxxUnsafe / replaceXxxUnsafe 助手。
+//
+// 返回：errors.Join 聚合各条写入错误；全部成功返回 nil；ctx 到期返回 ctx.Err() 并
+// 立即中断整轮 sweep（不继续后续实体）。
+func (s *Store) FlushPersistAll(ctx context.Context) error {
+	// 未启用 Mongo（或未连接）时没有镜像可回写，直接成功返回（no-op）。
+	if !s.mongoEnabled || s.mongoClient == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	start := time.Now()
+	var flushErr error
+	defer func() {
+		metrics.Observe(metrics.ShutdownFlushDuration, time.Since(start))
+		if flushErr != nil {
+			metrics.Inc(metrics.ShutdownFlushFailedTotal)
+		}
+	}()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var errs []error
+	// collect 聚合单个实体写入的错误：单条失败不能中断整轮 sweep。
+	collect := func(err error) {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	// finish 汇总并回写命名返回值，使上面的 defer 能看到最终结果。
+	finish := func() error {
+		flushErr = errors.Join(errs...)
+		return flushErr
+	}
+
+	// sweeps 是「一类实体」的回写闭包，按依赖无关的稳定顺序排列。
+	// 注意：每一类开始前由调用方做 ctx 有界性检查（见下方循环）。
+	sweeps := []func(){
+		func() { // users
+			for _, user := range s.users {
+				collect(s.persistUserUnsafe(user))
+			}
+		},
+		func() { // agents
+			for _, agent := range s.agents {
+				collect(s.persistAgentUnsafe(agent))
+			}
+		},
+		func() { // joinRequests
+			for _, jr := range s.joinRequests {
+				collect(s.persistJoinRequestUnsafe(jr))
+			}
+		},
+		func() { // projects
+			for _, project := range s.projects {
+				collect(s.persistProjectUnsafe(project))
+			}
+		},
+		func() { // agentChats
+			for _, chat := range s.agentChats {
+				collect(s.persistAgentChatUnsafe(chat))
+			}
+		},
+		func() { // tasks（含每个 task 的事件流）
+			for taskID := range s.tasks {
+				collect(s.persistTaskBundleUnsafe(taskID))
+			}
+		},
+		func() { // comments
+			for _, comments := range s.taskComments {
+				for i := range comments {
+					collect(s.persistCommentUnsafe(&comments[i]))
+				}
+			}
+		},
+		func() { // artifacts
+			for _, artifacts := range s.taskArtifacts {
+				for i := range artifacts {
+					collect(s.persistArtifactUnsafe(&artifacts[i]))
+				}
+			}
+		},
+		func() { // projectFiles
+			for _, pf := range s.projectFiles {
+				collect(s.persistProjectFileUnsafe(pf))
+			}
+		},
+		func() { // knowledgeDocs
+			for _, doc := range s.knowledgeDocs {
+				collect(s.persistKnowledgeDocUnsafe(doc))
+			}
+		},
+		func() { // workflowTemplates
+			for _, doc := range s.workflowTemplates {
+				collect(s.persistWorkflowTemplateUnsafe(doc))
+			}
+		},
+		func() { // organizations
+			for _, org := range s.organizations {
+				collect(s.persistOrganizationUnsafe(org))
+			}
+		},
+		func() { // orgMemberships
+			for _, m := range s.orgMemberships {
+				collect(s.persistMembershipUnsafe(m))
+			}
+		},
+		func() { // projectMembers（按项目整体替换）
+			for projectID, members := range s.projectMembers {
+				collect(s.replaceProjectMembersUnsafe(projectID, members))
+			}
+		},
+		func() { // opsIncidents
+			for _, inc := range s.opsIncidents {
+				collect(s.persistOpsIncidentUnsafe(inc))
+			}
+		},
+		func() { // llmConfigs（平台设置）
+			for _, cfg := range s.llmConfigs {
+				collect(s.persistLLMSettingUnsafe(cfg))
+			}
+		},
+		func() { // processedMessages（消息去重）
+			for key := range s.processedMessages {
+				collect(s.persistProcessedMessageUnsafe(key))
+			}
+		},
+		func() { // notifications（助手无返回值，内部自记日志）
+			for _, n := range s.notifications {
+				s.persistNotificationUnsafe(n)
+			}
+		},
+		func() { // externalApps
+			for _, app := range s.externalApps {
+				collect(s.persistExternalAppUnsafe(app))
+			}
+		},
+	}
+
+	for _, sweep := range sweeps {
+		// 有界性：每一类实体开始前检查一次，ctx 到期立即中断整轮 sweep。
+		// 到期直接返回 ctx.Err()（fail-fast 语义），不再继续后续实体。
+		if err := ctx.Err(); err != nil {
+			flushErr = err
+			return err
+		}
+		sweep()
+	}
+	// 循环结束后再看一次，覆盖「最后一类写完后恰好到期」的情形。
+	if err := ctx.Err(); err != nil {
+		flushErr = err
+		return err
+	}
+	return finish()
 }

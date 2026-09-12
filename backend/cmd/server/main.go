@@ -59,5 +59,17 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Error("graceful shutdown failed", zap.Error(err))
 	}
+
+	// 有界落盘：HTTP 流量已 drain、Mongo 尚未断开时，把全内存状态尽力回写一次。
+	// 使用独立于 ShutdownGrace 的预算（默认 30s），因为 Mongo 抖动的回写可能比
+	// HTTP drain 慢得多。ctx 到期即放弃（fail-fast），绝不无限挂起。
+	flushCtx, flushCancel := context.WithTimeout(context.Background(), cfg.ShutdownFlushTimeout)
+	defer flushCancel()
+	if err := application.FlushAll(flushCtx); err != nil {
+		log.Error("bounded shutdown flush failed; latest in-memory state may not be persisted", zap.Error(err))
+	} else {
+		log.Info("shutdown flush complete")
+	}
+
 	log.Info("server stopped")
 }

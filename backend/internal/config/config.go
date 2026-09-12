@@ -7,22 +7,26 @@ import (
 )
 
 type Config struct {
-	Port                string
-	JWTSecret           string
-	AccessTokenTTL      time.Duration
-	RefreshTokenTTL     time.Duration
-	LogLevel            string
-	AllowAllCORS        bool
-	ReadTimeout         time.Duration
-	WriteTimeout        time.Duration
-	IdleTimeout         time.Duration
-	ShutdownGrace       time.Duration
-	MongoEnabled        bool
-	MongoURI            string
-	MongoDatabase       string
-	MongoTimeout        time.Duration
-	ClawSynapseAPIURL   string
-	ClawSynapseTimeout  time.Duration
+	Port            string
+	JWTSecret       string
+	AccessTokenTTL  time.Duration
+	RefreshTokenTTL time.Duration
+	LogLevel        string
+	AllowAllCORS    bool
+	ReadTimeout     time.Duration
+	WriteTimeout    time.Duration
+	IdleTimeout     time.Duration
+	ShutdownGrace   time.Duration
+	// ShutdownFlushTimeout 是停机时「全内存状态回写 Mongo」的时间预算。
+	// 与 ShutdownGrace（HTTP drain）独立：Mongo 抖动下的回写通常更慢。
+	// ctx 到期即放弃回写（fail-fast），避免拖到编排层 SIGKILL 反而必丢。
+	ShutdownFlushTimeout time.Duration
+	MongoEnabled         bool
+	MongoURI             string
+	MongoDatabase        string
+	MongoTimeout         time.Duration
+	ClawSynapseAPIURL    string
+	ClawSynapseTimeout   time.Duration
 	// ClawSynapseAPIToken 是节点本地 API 的 Bearer token（clawsynapse
 	// v1.0.36+ 启用 requireBearer：首启生成 /var/lib/clawsynapse/api_token
 	// 并持久复用）。为空时不发送鉴权头（兼容旧版节点）。
@@ -80,24 +84,25 @@ type Config struct {
 
 func Load() Config {
 	return Config{
-		Port:                getEnv("PORT", "8080"),
-		JWTSecret:           getEnv("JWT_SECRET", "trustmesh-dev-secret"),
-		AccessTokenTTL:      getEnvDuration("ACCESS_TOKEN_TTL", 15*time.Minute),
-		RefreshTokenTTL:     getEnvDuration("REFRESH_TOKEN_TTL", 168*time.Hour),
-		LogLevel:            getEnv("LOG_LEVEL", "info"),
-		AllowAllCORS:        getEnvBool("ALLOW_ALL_CORS", true),
-		ReadTimeout:         getEnvDuration("READ_TIMEOUT", 10*time.Second),
-		WriteTimeout:        getEnvDuration("WRITE_TIMEOUT", 30*time.Second),
-		IdleTimeout:         getEnvDuration("IDLE_TIMEOUT", 120*time.Second),
-		ShutdownGrace:       getEnvDuration("SHUTDOWN_GRACE", 8*time.Second),
-		MongoEnabled:        getEnvBool("MONGO_ENABLED", true),
-		MongoURI:            getEnv("MONGO_URI", "mongodb://127.0.0.1:27017"),
-		MongoDatabase:       getEnv("MONGO_DATABASE", "trustmesh"),
-		MongoTimeout:        getEnvDuration("MONGO_TIMEOUT", 5*time.Second),
-		ClawSynapseAPIURL:   getEnv("CLAWSYNAPSE_API_URL", "http://127.0.0.1:18080"),
-		ClawSynapseTimeout:  getEnvDuration("CLAWSYNAPSE_TIMEOUT", 3*time.Second),
-		ClawSynapseAPIToken: getEnv("CLAWSYNAPSE_API_TOKEN", ""),
-		ClawSynapsePeerSync: getEnvDuration("CLAWSYNAPSE_PEER_SYNC_INTERVAL", 10*time.Second),
+		Port:                 getEnv("PORT", "8080"),
+		JWTSecret:            getEnv("JWT_SECRET", "trustmesh-dev-secret"),
+		AccessTokenTTL:       getEnvDuration("ACCESS_TOKEN_TTL", 15*time.Minute),
+		RefreshTokenTTL:      getEnvDuration("REFRESH_TOKEN_TTL", 168*time.Hour),
+		LogLevel:             getEnv("LOG_LEVEL", "info"),
+		AllowAllCORS:         getEnvBool("ALLOW_ALL_CORS", true),
+		ReadTimeout:          getEnvDuration("READ_TIMEOUT", 10*time.Second),
+		WriteTimeout:         getEnvDuration("WRITE_TIMEOUT", 30*time.Second),
+		IdleTimeout:          getEnvDuration("IDLE_TIMEOUT", 120*time.Second),
+		ShutdownGrace:        getEnvDuration("SHUTDOWN_GRACE", 8*time.Second),
+		ShutdownFlushTimeout: getEnvDuration("SHUTDOWN_FLUSH_TIMEOUT", 30*time.Second),
+		MongoEnabled:         getEnvBool("MONGO_ENABLED", true),
+		MongoURI:             getEnv("MONGO_URI", "mongodb://127.0.0.1:27017"),
+		MongoDatabase:        getEnv("MONGO_DATABASE", "trustmesh"),
+		MongoTimeout:         getEnvDuration("MONGO_TIMEOUT", 5*time.Second),
+		ClawSynapseAPIURL:    getEnv("CLAWSYNAPSE_API_URL", "http://127.0.0.1:18080"),
+		ClawSynapseTimeout:   getEnvDuration("CLAWSYNAPSE_TIMEOUT", 3*time.Second),
+		ClawSynapseAPIToken:  getEnv("CLAWSYNAPSE_API_TOKEN", ""),
+		ClawSynapsePeerSync:  getEnvDuration("CLAWSYNAPSE_PEER_SYNC_INTERVAL", 10*time.Second),
 
 		EmbeddingProvider:  getEnv("EMBEDDING_PROVIDER", "openai"),
 		EmbeddingModel:     getEnv("EMBEDDING_MODEL", "text-embedding-3-small"),
@@ -109,7 +114,7 @@ func Load() Config {
 
 		FilesStoragePath: getEnv("FILES_STORAGE_PATH", "/var/lib/trustmesh-files"),
 
-		ExternalURL:      getEnv("TRUSTMESH_EXTERNAL_URL", "http://127.0.0.1:8080"),
+		ExternalURL: getEnv("TRUSTMESH_EXTERNAL_URL", "http://127.0.0.1:8080"),
 		// Kept at 24h to match agentfile.defaultDownloadTTL: agent download links
 		// must outlast the slowest real step (video generation measured >1h).
 		// This value feeds ONLY agent download tokens; login tokens use

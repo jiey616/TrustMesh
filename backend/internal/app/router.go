@@ -453,3 +453,15 @@ func (a *App) Close() error {
 	}
 	return errors.Join(errs...)
 }
+
+// FlushAll 在停机时把全内存状态有界地回写 Mongo。nil-safe：a 或 a.Store 为 nil
+// 时返回 nil，方便在初始化失败等边界场景安全调用。
+//
+// 调用顺序约定：必须在 Close() 之前调用（Close 会断开 Mongo，之后落盘无从谈起）。
+// ctx 由调用方控制时间预算；到期时 Store 侧会 fail-fast 返回 ctx 错误。
+func (a *App) FlushAll(ctx context.Context) error {
+	if a == nil || a.Store == nil {
+		return nil
+	}
+	return a.Store.FlushPersistAll(ctx)
+}
