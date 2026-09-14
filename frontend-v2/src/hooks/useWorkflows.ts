@@ -60,6 +60,15 @@ export function useDeleteWorkflowTemplate() {
   })
 }
 
+export function useCurateWorkflowTemplate() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, curated }: { id: string; curated: boolean }) =>
+      workflowsApi.curateWorkflowTemplate(id, curated),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['workflow-templates'] }),
+  })
+}
+
 // ---------- 项目继承 / 同步 ----------
 
 export function useInheritWorkflowTemplate() {

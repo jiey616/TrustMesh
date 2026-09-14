@@ -109,6 +109,29 @@ func (h *WorkflowTemplateHandler) Delete(c *gin.Context) {
 	transport.WriteData(c, http.StatusOK, t)
 }
 
+type curateWorkflowRequest struct {
+	Curated bool `json:"curated"`
+}
+
+// Curate toggles the "策展" (curated) flag on a template. Only the owner may call.
+func (h *WorkflowTemplateHandler) Curate(c *gin.Context) {
+	sc, ok := currentScope(c)
+	if !ok {
+		return
+	}
+	var req curateWorkflowRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		transport.WriteError(c, transport.BadRequest("BAD_REQUEST", "invalid json body"))
+		return
+	}
+	t, appErr := h.store.SetWorkflowTemplateCurated(sc, c.Param("templateId"), req.Curated)
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
+	transport.WriteData(c, http.StatusOK, t)
+}
+
 // ---------- 从成功任务一键沉淀（T1.9） ----------
 
 type distillWorkflowRequest struct {

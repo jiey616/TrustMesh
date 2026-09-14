@@ -171,6 +171,7 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	authed.GET("/workflow-templates/:templateId", workflowTemplateHandler.Get)
 	authed.PATCH("/workflow-templates/:templateId", workflowTemplateHandler.Update)
 	authed.POST("/workflow-templates/:templateId/copy", workflowTemplateHandler.Copy)
+	authed.POST("/workflow-templates/:templateId/curate", workflowTemplateHandler.Curate)
 	authed.DELETE("/workflow-templates/:templateId", workflowTemplateHandler.Delete)
 	// T1.9: 从成功任务一键沉淀工作流模板（挂在 /tasks/:id 下，避开
 	// /workflow-templates/:templateId 通配段的兄弟节点冲突）。

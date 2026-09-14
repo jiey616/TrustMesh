@@ -567,6 +567,9 @@ export interface WorkflowTemplate {
   description?: string
   steps: WorkflowStep[]
   version: number
+  /** 策展标记：作者可把优质模板标为精选，模板库按 curated 优先排序 */
+  curated?: boolean
+  curated_at?: string
   created_at: string
   updated_at: string
 }

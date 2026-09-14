@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Button, Drawer, App, Tooltip, Empty, Typography, Tag } from 'antd'
+import { Button, Drawer, App, Tooltip, Empty, Typography, Tag, Switch } from 'antd'
 import {
   PlusOutlined,
   EditOutlined,
@@ -8,6 +8,8 @@ import {
   NodeIndexOutlined,
   ClockCircleOutlined,
   ApartmentOutlined,
+  StarFilled,
+  StarOutlined,
 } from '@ant-design/icons'
 import {
   useWorkflowTemplates,
@@ -15,6 +17,7 @@ import {
   useUpdateWorkflowTemplate,
   useCopyWorkflowTemplate,
   useDeleteWorkflowTemplate,
+  useCurateWorkflowTemplate,
 } from '@/hooks/useWorkflows'
 import { useAgents } from '@/hooks/useAgents'
 import { WorkflowCanvasEditor } from '@/components/project/WorkflowCanvasEditor'
@@ -42,6 +45,16 @@ export function WorkflowTemplatesPage() {
   const updateMutation = useUpdateWorkflowTemplate()
   const copyMutation = useCopyWorkflowTemplate()
   const deleteMutation = useDeleteWorkflowTemplate()
+  const curateMutation = useCurateWorkflowTemplate()
+  const [onlyCurated, setOnlyCurated] = useState(false)
+
+  const sortedTemplates = [...templates].sort((a, b) => {
+    const ac = a.curated ? 1 : 0
+    const bc = b.curated ? 1 : 0
+    if (ac !== bc) return bc - ac
+    return (b.created_at || '').localeCompare(a.created_at || '')
+  })
+  const visibleTemplates = onlyCurated ? sortedTemplates.filter((t) => t.curated) : sortedTemplates
 
   const [editing, setEditing] = useState<{ isNew: boolean; tpl: WorkflowTemplate } | null>(null)
   const [pending, setPending] = useState(false)
@@ -126,9 +139,13 @@ export function WorkflowTemplatesPage() {
         icon={<ApartmentOutlined />}
         subtitle="模板可被多个项目继承并二次修改；模板更新后，继承它的项目可手动同步"
         actions={
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({ isNew: true, tpl: emptyTemplate() })}>
-            新建模板
-          </Button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>只看精选</span>
+            <Switch size="small" checked={onlyCurated} onChange={setOnlyCurated} />
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({ isNew: true, tpl: emptyTemplate() })}>
+              新建模板
+            </Button>
+          </div>
         }
       />
 
@@ -144,7 +161,7 @@ export function WorkflowTemplatesPage() {
           </Empty>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: 12 }}>
-            {templates.map((tpl) => (
+            {visibleTemplates.map((tpl) => (
               <div
                 key={tpl.id}
                 className="glass-panel"
@@ -161,9 +178,24 @@ export function WorkflowTemplatesPage() {
                     {tpl.name || '未命名模板'}
                   </Text>
                   <Tag color="purple" style={{ marginInlineEnd: 0 }}>v{tpl.version}</Tag>
+                  {tpl.curated && <Tag color="gold" style={{ marginInlineEnd: 0 }}>精选</Tag>}
                   <span style={{ fontSize: 11, color: 'var(--text-tertiary)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-pill)', padding: '1px 8px', flexShrink: 0 }}>
                     {tpl.steps.length} 步
                   </span>
+                  <Tooltip title={tpl.curated ? '取消精选' : '标为精选'}>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={tpl.curated ? <StarFilled /> : <StarOutlined />}
+                      style={{ color: tpl.curated ? 'var(--warning)' : 'var(--text-tertiary)' }}
+                      loading={curateMutation.isPending && curateMutation.variables?.id === tpl.id}
+                      onClick={() => {
+                        curateMutation
+                          .mutateAsync({ id: tpl.id, curated: !tpl.curated })
+                          .catch((err: unknown) => message.error(err instanceof Error ? err.message : '操作失败'))
+                      }}
+                    />
+                  </Tooltip>
                   <Tooltip title="复制为新模板">
                     <Button type="text" size="small" icon={<CopyOutlined />} style={{ color: 'var(--text-tertiary)' }} onClick={() => handleCopy(tpl.id)} />
                   </Tooltip>

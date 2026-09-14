@@ -40,6 +40,14 @@ export async function deleteWorkflowTemplate(id: string) {
   return apiClient.delete(`workflow-templates/${id}`).json<ApiResponse<WorkflowTemplate>>()
 }
 
+// ---------- 策展标记（T1.9） ----------
+
+export async function curateWorkflowTemplate(id: string, curated: boolean) {
+  return apiClient
+    .post(`workflow-templates/${id}/curate`, { json: { curated } })
+    .json<ApiResponse<WorkflowTemplate>>()
+}
+
 // ---------- 项目继承 / 同步 ----------
 
 export async function inheritWorkflowTemplate(projectId: string, templateId: string) {

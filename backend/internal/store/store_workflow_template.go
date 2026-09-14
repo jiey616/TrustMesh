@@ -180,6 +180,32 @@ func (s *Store) DeleteWorkflowTemplate(sc Scope, templateID string) (*model.Work
 	return cloneWorkflowTemplate(t), nil
 }
 
+// SetWorkflowTemplateCurated toggles the "策展" (curated) flag on a template.
+// Only the template owner may curate their own template.
+func (s *Store) SetWorkflowTemplateCurated(sc Scope, templateID string, curated bool) (*model.WorkflowTemplate, *transport.AppError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.workflowTemplates[templateID]
+	if !ok {
+		return nil, transport.NotFound("workflow template not found")
+	}
+	if t.UserID != sc.UserID {
+		return nil, transport.Forbidden("only the template owner can curate it")
+	}
+	now := time.Now().UTC()
+	t.Curated = curated
+	if curated {
+		t.CuratedAt = now
+	} else {
+		t.CuratedAt = time.Time{}
+	}
+	t.UpdatedAt = now
+	if err := s.persistWorkflowTemplateUnsafe(t); err != nil {
+		return nil, mongoWriteError(err)
+	}
+	return cloneWorkflowTemplate(t), nil
+}
+
 // ---------- 从成功任务沉淀模板（T1.9 一键沉淀） ----------
 
 // DistillWorkflowTemplateFromTask 把一个「成功任务」一键沉淀为用户级全局工作流

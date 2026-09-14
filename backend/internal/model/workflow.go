@@ -79,8 +79,12 @@ type WorkflowTemplate struct {
 	Description string         `json:"description,omitempty" bson:"description,omitempty"`
 	Steps       []WorkflowStep `json:"steps" bson:"steps"`
 	Version     int            `json:"version" bson:"version"`
-	CreatedAt   time.Time      `json:"created_at" bson:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at" bson:"updated_at"`
+	// Curated 是「策展标记」：模板作者可把优质模板标为精选（curated=true），
+	// 模板库按 curated 优先排序展示。CuratedAt 记录最近一次标为精选的时间。
+	Curated   bool      `json:"curated,omitempty" bson:"curated,omitempty"`
+	CuratedAt time.Time `json:"curated_at,omitempty" bson:"curated_at,omitempty"`
+	CreatedAt time.Time `json:"created_at" bson:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" bson:"updated_at"`
 }
 
 // WorkflowRef records the slice of a project's primary workflow ("项目总流程")
