@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"testing"
@@ -76,7 +77,8 @@ func TestMeetingRehydrateAfterRestart(t *testing.T) {
 	}
 
 	// rehydrate 之后归属裁决必须仍然 fail-closed：别的租户不能读到它
-	orgB, appErr := s.CreateOrganization("u9", "Globex", "globex", model.OrgKindEnterprise)
+	// slug 用时间纳秒做后缀，避免同一 Mongo 库连跑两次时 ORG_SLUG_TAKEN（P2-3）。
+	orgB, appErr := s.CreateOrganization("u9", "Globex", fmt.Sprintf("globex-%d", time.Now().UnixNano()), model.OrgKindEnterprise)
 	if appErr != nil {
 		t.Fatalf("create orgB: %v", appErr)
 	}

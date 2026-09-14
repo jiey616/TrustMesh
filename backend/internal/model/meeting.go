@@ -66,6 +66,15 @@ type Meeting struct {
 	CreatedAt     time.Time             `json:"created_at" bson:"created_at"`
 	UpdatedAt     time.Time             `json:"updated_at" bson:"updated_at"`
 
+	// T2.1 乐观锁版本号：每次写路径 +1，UpdateOne 的 filter 带 {_id, version}，
+	// 防止并发写互相覆盖（丢失更新）。
+	//
+	// bson 刻意**不带** omitempty：否则 0 / 缺省值不落库，filter 里的
+	// version 会永远匹配不上，导致该会议任何更新都判定为冲突。
+	// 存量文档（T2.1 之前写入）没有这个字段，由启动时
+	// backfillMeetingVersions 统一补成 1。
+	Version int `json:"version" bson:"version"`
+
 	// T1.2 会话态镜像：纯派生自会议消息（PM 声明的 phase / 点名 target / agent 发言轮数），
 	// 让后端重启后仍能回答「会议进行到哪一步、上一次点到谁、纪要是否已上传」。
 	// 不改动任何编排语义（编排仍由主持人 agent 负责）；omitempty 保证对存量文档向后兼容，

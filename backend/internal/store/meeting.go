@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,8 +13,174 @@ import (
 
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/v2/bson"
-	"go.uber.org/zap"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 )
+
+// ─── T2.1：会议域「Mongo 权威」写序与乐观锁 ───
+//
+// 会议域自 T2.1 起改为 **Mongo 权威**：所有写路径一律「先落库成功，再改内存」。
+// Mongo 写失败或版本冲突时**直接返错、内存零副作用**，杜绝改造前
+// 「内存里有、库里没有，重启即丢且只留一条 warn」的问题。
+//
+// 已知代价：Mongo I/O 在 s.mu 持锁内执行，临界区被拉长（MONGO_TIMEOUT 当前 5s）。
+// 这是本批接受的权衡 —— 写序正确优先于吞吐；T2.5 再拆 per-aggregate 细粒度锁。
+
+// meetingVersionFloor 会议版本号的起始值：新建会议从 1 开始，
+// 「存量 version <= 0」的文档在载入 / 回填时也统一归一化为 1，
+// 保证乐观锁 filter（{_id, version}）永远有确定的基准值。
+const meetingVersionFloor = 1
+
+// meetingVersionConflictCode / meetingVersionConflictMessage 是所有版本冲突出口
+// 共用的业务码（HTTP 409）与文案：调用方按 code 判定「要不要重试」，文案不参与判定。
+const (
+	meetingVersionConflictCode    = "MEETING_VERSION_CONFLICT"
+	meetingVersionConflictMessage = "meeting was modified concurrently, please retry"
+)
+
+// meetingVersionConflict 构造统一形态的版本冲突错误。
+func meetingVersionConflict() *transport.AppError {
+	return transport.Conflict(meetingVersionConflictCode, meetingVersionConflictMessage)
+}
+
+// isMeetingVersionConflict 判定一个错误是否为版本冲突（调用方据此决定要不要重试）。
+func isMeetingVersionConflict(appErr *transport.AppError) bool {
+	return appErr != nil && appErr.Code == meetingVersionConflictCode
+}
+
+// normalizeMeetingVersion 把缺失 / 非法的 version 归一化为 meetingVersionFloor。
+//
+// 存量会议文档（T2.1 之前写入）没有 version 字段，解码后为 0；若不归一化，
+// 后续带 {_id, version: 0} filter 的更新永远匹配不上 —— 该会议会被永久锁死。
+// 归一化只在内存解码 / 载入路径上做，库内真值由 backfillMeetingVersions 补齐。
+func normalizeMeetingVersion(m *model.Meeting) {
+	if m == nil {
+		return
+	}
+	if m.Version <= 0 {
+		m.Version = meetingVersionFloor
+	}
+}
+
+// applyMeetingVersionedUpdateLocked 在持锁内对会议执行一次带乐观锁的 Mongo 更新。
+//
+// 契约（调用方必须遵守）：
+//   - filter = {_id: m.ID, version: cur}，$set 自动追加 version: cur+1；
+//   - Mongo 报错         → mongoWriteError(500)，调用方须立即返回，**不得改任何内存字段**；
+//   - 未命中             → 见下方 healZeroVersionMeetingLocked：先排除「存量 version<=0
+//     文档」这种可自愈的形态，仍然不行才 409 MEETING_VERSION_CONFLICT；
+//   - 成功               → 内存对象的 Version 推进到 cur+1，调用方再写其余内存字段。
+//
+// 为什么 ModifiedCount == 0 就能判定「未命中」：$set 里 version 恒从 cur 变成 cur+1，
+// 因此「命中」必然「修改」，ModifiedCount == 0 ⟺ filter 未命中。
+func (s *Store) applyMeetingVersionedUpdateLocked(m *model.Meeting, set bson.M) *transport.AppError {
+	normalizeMeetingVersion(m)
+	cur := m.Version
+	next := cur + 1
+	if set == nil {
+		set = bson.M{}
+	}
+	set["version"] = next
+
+	if !s.mongoEnabled || s.mongoMeetings == nil {
+		// 纯内存模式（Mongo 未启用）：没有权威库可比，仍然推进版本以保持内存自洽。
+		m.Version = next
+		return nil
+	}
+
+	// Mongo 写在持锁内，会拉长临界区 —— 本批接受，T2.5 再拆细粒度锁。
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+	res, err := s.mongoMeetings.UpdateOne(ctx, bson.M{"_id": m.ID, "version": cur}, bson.M{"$set": set})
+	if err != nil {
+		return mongoWriteError(err)
+	}
+	if res != nil && res.ModifiedCount > 0 {
+		m.Version = next
+		return nil
+	}
+	// 未命中除了「真实并发落后」，还有一种**一旦发生就永久锁死**的存量形态
+	// （库内 version<=0 而内存已被归一化成 1），必须自愈 —— 见下面的注释。
+	if appErr := s.healZeroVersionMeetingLocked(m, set, cur); appErr != nil {
+		return appErr
+	}
+	m.Version = next
+	return nil
+}
+
+// healZeroVersionMeetingLocked 处理 filter 未命中的**存量兼容**分支（P1）。
+//
+// 未命中（ModifiedCount == 0）有两种成因，必须区分：
+//  1. 真实并发落后：库内 version 是合法的（> 0）但已被别的写方推进 → 维持 409，
+//     不允许掩盖，否则就退化成「后写静默覆盖先写」，正是乐观锁要消灭的问题；
+//  2. 存量非法文档：version 缺失 / 显式 0 / null / 负数。这类文档一旦被命中，
+//     **每次**更新都会 409，而且**重启也救不回来** —— 启动时的一次性回填覆盖不到
+//     滚动发布期间由旧镜像（无 Version 字段）新建出来的文档，等于该会议永久锁死。
+//
+// 对 ② 做一次性自愈：先把库内 version 修成内存认定的 cur（此刻库内的值本来就是非法的，
+// 因此这次修不用带 version filter），再重试一次正常的版本化更新。
+//
+// 这是纯存量兼容修复，**不改变并发语义**：唯一被放宽的是「version <= 0」这种明确
+// 非法的历史取值，正常写路径永远不会在库里留下 <= 0 的版本。
+func (s *Store) healZeroVersionMeetingLocked(m *model.Meeting, set bson.M, cur int) *transport.AppError {
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+
+	var doc struct {
+		Version int `bson:"version"`
+	}
+	if err := s.mongoMeetings.FindOne(ctx, bson.M{"_id": m.ID}).Decode(&doc); err != nil {
+		// 文档不存在（或读取失败）→ 不是版本问题，维持冲突语义。
+		return meetingVersionConflict()
+	}
+	if doc.Version > 0 {
+		// 合法但已落后 → 真实并发冲突，如实上报。
+		return meetingVersionConflict()
+	}
+
+	// 存量非法值：先修成 cur，再按正常路径重试一次。
+	if _, err := s.mongoMeetings.UpdateOne(ctx, bson.M{"_id": m.ID}, bson.M{"$set": bson.M{"version": cur}}); err != nil {
+		return mongoWriteError(err)
+	}
+	retry, err := s.mongoMeetings.UpdateOne(ctx, bson.M{"_id": m.ID, "version": cur}, bson.M{"$set": set})
+	if err != nil {
+		return mongoWriteError(err)
+	}
+	if retry == nil || retry.ModifiedCount == 0 {
+		return meetingVersionConflict()
+	}
+	return nil
+}
+
+// retryOnceAfterVersionRefreshLocked 版本冲突时，把内存 version 刷到库内最新值后重试一次。
+// 返回 true 表示重试成功，调用方按成功路径继续。
+//
+// 只适用于「$set 里所有业务字段都由本次输入整体派生」的写入（目前只有会话态）：
+// participants / last_phase / last_target / speaker_turns / last_activity_at / updated_at
+// 全部由**当前这条消息**算出并整体覆盖，因此只刷新 version 再写一次，不会吞掉别的写方
+// 留下的「本条消息之外」的语义；被放弃的只是并发方对同一批派生字段的写入，而这些字段
+// 本来就会在下一条消息到达时被重新派生。
+//
+// 非冲突错误、以及刷新之后仍然冲突，都会如实返回 false，由调用方上交原错误 ——
+// 这条路径不会把真实冲突伪装成成功。
+func (s *Store) retryOnceAfterVersionRefreshLocked(appErr *transport.AppError, m *model.Meeting, set bson.M) bool {
+	if !isMeetingVersionConflict(appErr) || s.mongoMeetings == nil {
+		return false
+	}
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+	var doc struct {
+		Version int `bson:"version"`
+	}
+	if err := s.mongoMeetings.FindOne(ctx, bson.M{"_id": m.ID}).Decode(&doc); err != nil {
+		return false
+	}
+	if doc.Version <= 0 || doc.Version == m.Version {
+		// <= 0 属存量非法形态，已由 healing 路径处理；与内存相同说明不是落后。
+		return false
+	}
+	m.Version = doc.Version
+	return s.applyMeetingVersionedUpdateLocked(m, set) == nil
+}
 
 // ─── Meeting CRUD ───
 
@@ -32,17 +199,19 @@ func (s *Store) CreateMeeting(sc Scope, m *model.Meeting) (*model.Meeting, *tran
 	if m.Status == "" {
 		m.Status = model.MeetingWaiting
 	}
+	m.Version = meetingVersionFloor
 
-	s.meetings[m.ID] = m
-	s.projectMeetings[m.ProjectID] = append(s.projectMeetings[m.ProjectID], m.ID)
-
-	if s.mongoEnabled {
+	// T2.1：先落库，成功才写内存 —— 失败时 s.meetings / s.projectMeetings 完全不变。
+	if s.mongoEnabled && s.mongoMeetings != nil {
 		ctx, cancel := s.mongoContext()
 		defer cancel()
 		if _, err := s.mongoMeetings.InsertOne(ctx, m); err != nil {
 			return nil, mongoWriteError(err)
 		}
 	}
+
+	s.meetings[m.ID] = m
+	s.projectMeetings[m.ProjectID] = append(s.projectMeetings[m.ProjectID], m.ID)
 
 	return m, nil
 }
@@ -68,6 +237,8 @@ func (s *Store) GetMeeting(sc Scope, meetingID string) (*model.Meeting, *transpo
 		defer cancel()
 		var mm model.Meeting
 		if err := s.mongoMeetings.FindOne(ctx, bson.M{"_id": meetingID}).Decode(&mm); err == nil {
+			// T2.1：存量文档没有 version 字段 → 归一化为 1，否则后续更新必然冲突。
+			normalizeMeetingVersion(&mm)
 			s.mu.Lock()
 			s.meetings[meetingID] = &mm
 			s.projectMeetings[mm.ProjectID] = append(s.projectMeetings[mm.ProjectID], mm.ID)
@@ -119,6 +290,8 @@ func (s *Store) ListMeetingsByStatus(sc Scope, status model.MeetingStatus) []*mo
 				s.mu.Lock()
 				kept := make([]*model.Meeting, 0, len(out))
 				for _, m := range out {
+					// T2.1：存量文档没有 version 字段 → 归一化为 1（同上）。
+					normalizeMeetingVersion(m)
 					if _, exists := s.meetings[m.ID]; !exists {
 						s.meetings[m.ID] = m
 						s.projectMeetings[m.ProjectID] = append(s.projectMeetings[m.ProjectID], m.ID)
@@ -145,18 +318,17 @@ func (s *Store) UpdateMeetingStatus(sc Scope, meetingID string, status model.Mee
 		return transport.NotFound("meeting not found")
 	}
 	prevStatus := m.Status
-	m.Status = status
-	m.UpdatedAt = time.Now().UTC()
+	updatedAt := time.Now().UTC()
 
-	if s.mongoEnabled {
-		ctx, cancel := s.mongoContext()
-		defer cancel()
-		filter := bson.M{"_id": meetingID}
-		update := bson.M{"$set": bson.M{"status": status, "updated_at": m.UpdatedAt}}
-		if _, err := s.mongoMeetings.UpdateOne(ctx, filter, update); err != nil {
-			return mongoWriteError(err)
-		}
+	// T2.1：先落库（带版本锁），成功才改内存。失败 / 冲突 → 直接返错，内存零副作用。
+	if appErr := s.applyMeetingVersionedUpdateLocked(m, bson.M{
+		"status":     status,
+		"updated_at": updatedAt,
+	}); appErr != nil {
+		return appErr
 	}
+	m.Status = status
+	m.UpdatedAt = updatedAt
 
 	// 办公室 SSE：会议状态变化时向前端推送，这样 3D 办公室才能驱动数字员工走过去开会。
 	if prevStatus != status {
@@ -214,51 +386,25 @@ func (s *Store) AddMeetingMessage(sc Scope, msg *model.MeetingMessage) (*model.M
 	}
 	msg.CreatedAt = time.Now().UTC()
 
-	s.meetingMessages[msg.ID] = msg
-	s.meetingMessageIndex[msg.MeetingID] = append(s.meetingMessageIndex[msg.MeetingID], msg.ID)
-
 	// 取出会议对象，后续既要更新参会状态，也要推送 SSE。
 	var meeting *model.Meeting
 	if m, ok := s.meetings[msg.MeetingID]; ok {
 		meeting = m
 	}
 
-	if meeting != nil {
-		// Mark the participant as joined once they actually speak. Participants are
-		// created in "invited" state; this keeps the participant roster accurate
-		// without relying on a separate join handshake.
-		if msg.SenderType == "agent" && msg.SenderID != "" {
-			for i := range meeting.Participants {
-				if meeting.Participants[i].AgentID == msg.SenderID && meeting.Participants[i].Status == "invited" {
-					meeting.Participants[i].Status = "joined"
-					break
-				}
-			}
-		}
+	// T2.1 写序（三步全在持锁内，任一步失败 → 立即返错、内存零副作用）：
+	//   ① 先落库消息本身；
+	//   ② 再落库会话态（带版本锁）；
+	//   ③ 两次 Mongo 写都成功后，才统一写内存（消息 map / 索引 + 会话态派生字段）。
+	//
+	// 为什么是「先消息、后会话态」而不是反过来：若先更新会话态（Mongo 里 version +1）
+	// 再插消息、而插消息失败，内存 version 没跟上 → 之后所有带 version filter 的更新
+	// 都会 ModifiedCount == 0 → **该会议被永久锁死**。先插消息可规避这个锁死面。
+	// 代价：② 失败时消息已在库里而内存未变，属**可接受残差** —— 会话态是纯派生量，
+	// 可由 backfillMeetingSessionUnsafe 按历史消息重算，重启后也能读回。
 
-		// T1.2 会话态 write-through：把本条消息的会话语义（phase/target/发言轮数/
-		// 最后活动时间）镜到会议记录上并**立即落库**。消息本身早就写入，
-		// 这一步保证重启后不仅能读回记录，还知道「会议进行到哪、上一次点到谁」。
-		applyMeetingSessionFromMessageUnsafe(meeting, msg)
-
-		if s.mongoEnabled {
-			ctx, cancel := s.mongoContext()
-			upd := bson.M{"$set": bson.M{
-				"participants":     meeting.Participants,
-				"last_phase":       meeting.LastPhase,
-				"last_target":      meeting.LastTarget,
-				"speaker_turns":    meeting.SpeakerTurns,
-				"last_activity_at": meeting.LastActivityAt,
-				"updated_at":       meeting.UpdatedAt,
-			}}
-			if _, e := s.mongoMeetings.UpdateOne(ctx, bson.M{"_id": meeting.ID}, upd); e != nil {
-				s.log.Warn("failed to persist meeting session state", zap.String("meeting_id", meeting.ID), zap.Error(e))
-			}
-			cancel()
-		}
-	}
-
-	if s.mongoEnabled {
+	// ① 消息落库
+	if s.mongoEnabled && s.mongoMeetingMessages != nil {
 		ctx, cancel := s.mongoContext()
 		defer cancel()
 		if _, err := s.mongoMeetingMessages.InsertOne(ctx, msg); err != nil {
@@ -266,32 +412,105 @@ func (s *Store) AddMeetingMessage(sc Scope, msg *model.MeetingMessage) (*model.M
 		}
 	}
 
+	// ② 会话态落库：先在**副本**上算出派生值，落库成功后才合回内存，
+	//    保证本步失败时内存仍是旧值。
+	var draft *model.Meeting
+	if meeting != nil {
+		snap := *meeting
+		// Participants 是切片，必须深拷一层，否则「invited → joined」会直接改到内存对象。
+		snap.Participants = append([]model.MeetingParticipant(nil), meeting.Participants...)
+		// Mark the participant as joined once they actually speak. Participants are
+		// created in "invited" state; this keeps the participant roster accurate
+		// without relying on a separate join handshake.
+		if msg.SenderType == "agent" && msg.SenderID != "" {
+			for i := range snap.Participants {
+				if snap.Participants[i].AgentID == msg.SenderID && snap.Participants[i].Status == "invited" {
+					snap.Participants[i].Status = "joined"
+					break
+				}
+			}
+		}
+		// T1.2 会话态 write-through：由本条消息在**副本**上派生会话语义（phase/target/
+		// 发言轮数/最后活动时间），深拷 Participants，落库成功后才合回内存。
+		snap = deriveMeetingSession(snap, msg)
+		draft = &snap
+
+		// 会话态更新失败不再只 warn（T2.1）：静默丢会话态会让重启后「续开」判断失真。
+		sessionSet := bson.M{
+			"participants":     draft.Participants,
+			"last_phase":       draft.LastPhase,
+			"last_target":      draft.LastTarget,
+			"speaker_turns":    draft.SpeakerTurns,
+			"last_activity_at": draft.LastActivityAt,
+			"updated_at":       draft.UpdatedAt,
+		}
+		if appErr := s.applyMeetingVersionedUpdateLocked(meeting, sessionSet); appErr != nil {
+			// P2：会话态写冲突时，把内存 version 刷到库内最新值后重试一次。
+			// 安全前提：上面的 $set 字段（participants/last_phase/last_target/
+			// speaker_turns/last_activity_at/updated_at）全部由**当前这条消息**派生且整体
+			// 覆盖，只刷新 version 再写一次不会吞掉别的写方留下的「本条消息之外」的语义；
+			// 真实并发落后时 retryOnceAfterVersionRefreshLocked 会如实返回 false，原错误上交。
+			if !s.retryOnceAfterVersionRefreshLocked(appErr, meeting, sessionSet) {
+				return nil, appErr
+			}
+		}
+	}
+
+	// ③ 全部 Mongo 写成功 → 写内存
+	s.meetingMessages[msg.ID] = msg
+	s.meetingMessageIndex[msg.MeetingID] = append(s.meetingMessageIndex[msg.MeetingID], msg.ID)
+	if meeting != nil && draft != nil {
+		meeting.Participants = draft.Participants
+		meeting.LastPhase = draft.LastPhase
+		meeting.LastTarget = draft.LastTarget
+		meeting.SpeakerTurns = draft.SpeakerTurns
+		meeting.LastActivityAt = draft.LastActivityAt
+		meeting.UpdatedAt = draft.UpdatedAt
+	}
+
 	// 办公室 SSE：任何会议发言（用户/数字员工/系统）都推送，3D 办公室显示说话人气泡。
+	// 仅成功路径推送（失败不推）。
 	s.publishMeetingMessageUnsafe(meeting, msg)
 
 	return msg, nil
 }
 
-// applyMeetingSessionFromMessageUnsafe 把一条会议消息的会话语义镜像到会议记录上（T1.2）。
+// deriveMeetingSession 纯函数：由一条会议消息派生出会议记录上的会话语义（T1.2），
+// 返回**新的副本**，绝不就地改写输入。调用方可安全拿返回值去落库、成功后再合回内存，
+// 失败时输入对象保持原样 —— 这是 T2.1「Mongo 失败零内存副作用」的关键保证之一。
 //
-// 纯派生，不改变任何编排语义：phase / target 取该消息的值（空值不覆盖，避免用户或系统
-// 消息把主持人刚声明的阶段清空）；SpeakerTurns 仅对 agent 发言累加；LastActivityAt 取
-// 消息时间。调用方必须持有写锁。
-func applyMeetingSessionFromMessageUnsafe(m *model.Meeting, msg *model.MeetingMessage) {
-	if m == nil || msg == nil {
-		return
+// 派生规则（与历史行为一致）：phase / target 取该消息的值（空值不覆盖，避免用户或系统
+// 消息把主持人刚声明的阶段清空）；SpeakerTurns 仅对 agent 发言累加；LastActivityAt /
+// UpdatedAt 取消息时间。Participants 是切片，必须深拷一层，否则「invited → joined」会
+// 直接改到调用方手里那份内存对象上 —— QA 反向验证曾证明这一点，见
+// TestDeriveMeetingSessionDoesNotMutateInput。
+func deriveMeetingSession(meeting model.Meeting, msg *model.MeetingMessage) model.Meeting {
+	if msg == nil {
+		return meeting
 	}
 	if msg.Phase != "" {
-		m.LastPhase = msg.Phase
+		meeting.LastPhase = msg.Phase
 	}
 	if msg.Target != "" {
-		m.LastTarget = msg.Target
+		meeting.LastTarget = msg.Target
 	}
 	if msg.SenderType == "agent" {
-		m.SpeakerTurns++
+		meeting.SpeakerTurns++
 	}
-	m.LastActivityAt = msg.CreatedAt
-	m.UpdatedAt = msg.CreatedAt
+	meeting.LastActivityAt = msg.CreatedAt
+	meeting.UpdatedAt = msg.CreatedAt
+
+	// 深拷 Participants：invited → joined 只改副本，不动输入。
+	meeting.Participants = append([]model.MeetingParticipant(nil), meeting.Participants...)
+	if msg.SenderType == "agent" && msg.SenderID != "" {
+		for i := range meeting.Participants {
+			if meeting.Participants[i].AgentID == msg.SenderID && meeting.Participants[i].Status == "invited" {
+				meeting.Participants[i].Status = "joined"
+				break
+			}
+		}
+	}
+	return meeting
 }
 
 func (s *Store) publishMeetingMessageUnsafe(m *model.Meeting, msg *model.MeetingMessage) {
@@ -331,6 +550,8 @@ func (s *Store) ListMeetingMessages(sc Scope, meetingID string) ([]*model.Meetin
 			defer cancel()
 			var mm model.Meeting
 			if err := s.mongoMeetings.FindOne(ctx, bson.M{"_id": meetingID}).Decode(&mm); err == nil {
+				// T2.1：存量文档没有 version 字段 → 归一化为 1（同 GetMeeting）。
+				normalizeMeetingVersion(&mm)
 				s.mu.Lock()
 				s.meetings[meetingID] = &mm
 				s.projectMeetings[mm.ProjectID] = append(s.projectMeetings[mm.ProjectID], mm.ID)
@@ -370,18 +591,17 @@ func (s *Store) UpdateMeetingSummary(sc Scope, meetingID, summaryFileID string) 
 	if !ok || !s.meetingVisible(sc, m) {
 		return transport.NotFound("meeting not found")
 	}
-	m.SummaryFileID = summaryFileID
-	m.UpdatedAt = time.Now().UTC()
+	updatedAt := time.Now().UTC()
 
-	if s.mongoEnabled {
-		ctx, cancel := s.mongoContext()
-		defer cancel()
-		filter := bson.M{"_id": meetingID}
-		update := bson.M{"$set": bson.M{"summary_file_id": summaryFileID, "updated_at": m.UpdatedAt}}
-		if _, err := s.mongoMeetings.UpdateOne(ctx, filter, update); err != nil {
-			return mongoWriteError(err)
-		}
+	// T2.1：先落库（带版本锁），成功才改内存。
+	if appErr := s.applyMeetingVersionedUpdateLocked(m, bson.M{
+		"summary_file_id": summaryFileID,
+		"updated_at":      updatedAt,
+	}); appErr != nil {
+		return appErr
 	}
+	m.SummaryFileID = summaryFileID
+	m.UpdatedAt = updatedAt
 	return nil
 }
 
@@ -395,19 +615,19 @@ func (s *Store) UpdateMeetingMinutes(sc Scope, meetingID, minutes, minutesFileID
 	if !ok || !s.meetingVisible(sc, m) {
 		return transport.NotFound("meeting not found")
 	}
+	updatedAt := time.Now().UTC()
+
+	// T2.1：先落库（带版本锁），成功才改内存。
+	if appErr := s.applyMeetingVersionedUpdateLocked(m, bson.M{
+		"minutes":         minutes,
+		"minutes_file_id": minutesFileID,
+		"updated_at":      updatedAt,
+	}); appErr != nil {
+		return appErr
+	}
 	m.Minutes = minutes
 	m.MinutesFileID = minutesFileID
-	m.UpdatedAt = time.Now().UTC()
-
-	if s.mongoEnabled {
-		ctx, cancel := s.mongoContext()
-		defer cancel()
-		filter := bson.M{"_id": meetingID}
-		update := bson.M{"$set": bson.M{"minutes": minutes, "minutes_file_id": minutesFileID, "updated_at": m.UpdatedAt}}
-		if _, err := s.mongoMeetings.UpdateOne(ctx, filter, update); err != nil {
-			return mongoWriteError(err)
-		}
-	}
+	m.UpdatedAt = updatedAt
 	return nil
 }
 
@@ -565,17 +785,77 @@ func (s *Store) AddMeetingTodo(sc Scope, meetingID string, todo model.MeetingTod
 	}
 	todo.ID = uuid.NewString()
 	todo.Status = "pending"
-	m.Todos = append(m.Todos, todo)
-	m.UpdatedAt = time.Now().UTC()
+	// 先构造新切片再落库：绝不先改 m.Todos，否则失败会留下内存副作用。
+	todos := append(append([]model.MeetingTodoItem(nil), m.Todos...), todo)
+	updatedAt := time.Now().UTC()
 
-	if s.mongoEnabled {
-		ctx, cancel := s.mongoContext()
-		defer cancel()
-		filter := bson.M{"_id": meetingID}
-		update := bson.M{"$set": bson.M{"todos": m.Todos, "updated_at": m.UpdatedAt}}
-		if _, err := s.mongoMeetings.UpdateOne(ctx, filter, update); err != nil {
-			return nil, mongoWriteError(err)
+	// T2.1：先落库（带版本锁），成功才改内存。
+	if appErr := s.applyMeetingVersionedUpdateLocked(m, bson.M{
+		"todos":      todos,
+		"updated_at": updatedAt,
+	}); appErr != nil {
+		return nil, appErr
+	}
+	m.Todos = todos
+	m.UpdatedAt = updatedAt
+	return m, nil
+}
+
+// ─── 双写校验（T2.1 过渡期） ───
+
+// VerifyMeetingConsistency 校验内存会议缓存与 Mongo 文档是否一致（T2.1 双写过渡期）。
+//
+// 返回 (检查条数, 不一致条数, 错误)。生产可调用、**无副作用**：只在 RLock 下取一份
+// 内存快照，然后逐条 FindOne 比对，不写任何集合。
+// 过渡期应当恒为 mismatched == 0；非 0 表示内存与 Mongo 已经分叉，需要人工介入。
+// Mongo 未启用时返回 (0, 0, nil) —— 没有第二份数据可比。
+func (s *Store) VerifyMeetingConsistency() (int, int, error) {
+	if !s.mongoEnabled || s.mongoMeetings == nil {
+		return 0, 0, nil
+	}
+
+	s.mu.RLock()
+	snapshot := make([]model.Meeting, 0, len(s.meetings))
+	for _, m := range s.meetings {
+		if m != nil {
+			snapshot = append(snapshot, *m)
 		}
 	}
-	return m, nil
+	s.mu.RUnlock()
+
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+
+	mismatched := 0
+	for i := range snapshot {
+		want := snapshot[i]
+		var got model.Meeting
+		err := s.mongoMeetings.FindOne(ctx, bson.M{"_id": want.ID}).Decode(&got)
+		if err != nil {
+			if errors.Is(err, mongo.ErrNoDocuments) {
+				// 内存有、库里没有 —— 正是改造前「重启即丢」的分叉形态。
+				mismatched++
+				continue
+			}
+			return len(snapshot), mismatched, err
+		}
+		if !meetingSnapshotMatches(want, got) {
+			mismatched++
+		}
+	}
+	return len(snapshot), mismatched, nil
+}
+
+// meetingSnapshotMatches 判定一份内存快照与 Mongo 文档的关键字段是否一致。
+// 只比写路径会改动的字段；todos 只比条数（数组深比会引入排序 / 时间的噪声）。
+func meetingSnapshotMatches(want, got model.Meeting) bool {
+	return want.Status == got.Status &&
+		want.Version == got.Version &&
+		want.SummaryFileID == got.SummaryFileID &&
+		want.MinutesFileID == got.MinutesFileID &&
+		want.Minutes == got.Minutes &&
+		want.LastPhase == got.LastPhase &&
+		want.LastTarget == got.LastTarget &&
+		want.SpeakerTurns == got.SpeakerTurns &&
+		len(want.Todos) == len(got.Todos)
 }

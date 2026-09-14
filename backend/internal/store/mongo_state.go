@@ -342,6 +342,9 @@ func (s *Store) loadMongoState() error {
 	if err != nil {
 		return err
 	}
+	// T2.1 存量兼容：先把「无 version 字段」的存量会议文档补成 1，再载入 ——
+	// 否则带 {_id, version} 乐观锁 filter 的更新永远匹配不上 → 生产全量写失败。
+	s.backfillMeetingVersions()
 	meetings, projectMeetings, err := s.loadMeetings()
 	if err != nil {
 		return err
@@ -1097,10 +1100,48 @@ func (s *Store) loadMeetings() (map[string]*model.Meeting, map[string][]string, 
 	}
 	for i := range meetings {
 		m := &meetings[i]
+		// T2.1：存量文档没有 version 字段，解码后为 0 → 归一化为 1，
+		// 与库内（启动时已 backfill）保持一致，避免乐观锁 filter 失配。
+		normalizeMeetingVersion(m)
 		items[m.ID] = m
 		projectIdx[m.ProjectID] = append(projectIdx[m.ProjectID], m.ID)
 	}
 	return items, projectIdx, nil
+}
+
+// backfillMeetingVersions 为「存量无合法 version」的会议文档补 version=1（T2.1）。
+//
+// 为什么要补：T2.1 起所有会议更新都带 {_id, version} 乐观锁 filter；存量文档解码后
+// version 为 0（库里根本没这个字段），filter 永远匹配不上 → 该会议任何更新都判冲突，
+// 等于生产全量写失败。
+//
+// filter 用 {"version": {"$not": {"$gt": 0}}} 而非 {"version": {"$exists": false}}：
+// 后者漏掉了「显式 0 / null / 负数」以及**滚动发布期间由旧镜像（无 Version 字段）新建、
+// 但本实例回填启动时点已过**的文档 —— 这类文档对当前进程同样永久不可写。一次性把
+// 缺失 / null / 0 / 负数全部归一，避免永久锁死。
+//
+// 幂等：重复执行无副作用。失败只告警不阻断启动 —— 载入路径上的 normalizeMeetingVersion
+// 会把内存侧归一化，最坏退化成「更新报冲突」，而 applyMeetingVersionedUpdateLocked 的
+// healZeroVersionMeetingLocked 还能在写入时再自愈一次，不会静默丢数据。
+func (s *Store) backfillMeetingVersions() {
+	if !s.mongoEnabled || s.mongoMeetings == nil {
+		return
+	}
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+	res, err := s.mongoMeetings.UpdateMany(ctx,
+		bson.M{"version": bson.M{"$not": bson.M{"$gt": 0}}},
+		bson.M{"$set": bson.M{"version": meetingVersionFloor}},
+	)
+	if err != nil {
+		if s.log != nil {
+			s.log.Warn("failed to backfill meeting version field", zap.Error(err))
+		}
+		return
+	}
+	if s.log != nil && res != nil && res.ModifiedCount > 0 {
+		s.log.Info("backfilled meeting version field", zap.Int64("meetings", res.ModifiedCount))
+	}
 }
 
 func (s *Store) loadMeetingMessages() (map[string]*model.MeetingMessage, map[string][]string, error) {
