@@ -38,7 +38,7 @@ import { FloatingOrbs } from '@/components/FloatingOrbs'
 import { AssistantFab } from '@/components/assistant/AssistantFab'
 import { GradientText } from '@/components/GradientText'
 import { ThemeSwitch } from '@/components/ThemeSwitch'
-import { useTheme } from '@/theme/ThemeProvider'
+import { useTheme } from '@/theme/useTheme'
 import { motion } from 'framer-motion'
 import { hasPlacement, type ProjectWorkStatus } from '@/types'
 

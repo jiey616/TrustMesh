@@ -85,6 +85,22 @@ export function ProjectBoardPage() {
   // task 参数（刷新后回到默认视图）。用 ref 记录已消费的 id，防止
   // StrictMode 双调用 / 参数尚未清完时重复触发；参数清空后重置 ref，
   // 同一任务可再次通过深链打开（如关闭工作台后重复点击节点）。
+  const [taskSelectionState, setTaskSelectionState] = useState<TaskSelectionState>({
+    observedTasks: undefined,
+    prevStatusMap: {},
+    autoSelectedTaskId: null,
+  })
+
+  // 标签页切换：同步到 URL（刷新 / 分享后回到同一个外部平台 tab）
+  const handleTabChange = (k: string) => {
+    const tab = k as ProjectTab
+    setActiveTab(tab)
+    const next = new URLSearchParams(searchParams)
+    if (tab === 'tasks') next.delete('tab')
+    else next.set('tab', tab)
+    setSearchParams(next, { replace: true })
+  }
+
   const consumedUrlTask = useRef<string | null>(null)
   useEffect(() => {
     if (!urlTaskId) {
@@ -99,8 +115,11 @@ export function ProjectBoardPage() {
     )
     setWorkspace({ kind: 'task', taskId: urlTaskId })
     // 工作流面板常驻在 Tabs 上方：当前不在任务 tab 时必须切回去，
-    // 否则工作台打开了用户也看不到
-    if (activeTab !== 'tasks') handleTabChange('tasks')
+    // 否则工作台打开了用户也看不到。tab 切换延迟到 effect 提交之后执行，
+    // 避免在 effect 中同步调用 setState 触发级联渲染（react-hooks/set-state-in-effect）。
+    if (activeTab !== 'tasks') {
+      setTimeout(() => setActiveTab('tasks'), 0)
+    }
     const next = new URLSearchParams(searchParams)
     next.delete('task')
     setSearchParams(next, { replace: true })
@@ -117,12 +136,6 @@ export function ProjectBoardPage() {
       ),
     [externalApps],
   )
-
-  const [taskSelectionState, setTaskSelectionState] = useState<TaskSelectionState>({
-    observedTasks: undefined,
-    prevStatusMap: {},
-    autoSelectedTaskId: null,
-  })
 
   // Auto-select a task that has just transitioned into `in_progress`
   if (tasks !== taskSelectionState.observedTasks) {
@@ -223,15 +236,6 @@ export function ProjectBoardPage() {
       ),
     })),
   ]
-
-  const handleTabChange = (k: string) => {
-    const tab = k as ProjectTab
-    setActiveTab(tab)
-    const next = new URLSearchParams(searchParams)
-    if (tab === 'tasks') next.delete('tab')
-    else next.set('tab', tab)
-    setSearchParams(next, { replace: true })
-  }
 
   const activeAppId = activeTab.startsWith(APP_TAB_PREFIX)
     ? activeTab.slice(APP_TAB_PREFIX.length)

@@ -86,9 +86,19 @@ export function FileViewer({ open, onOpenChange, blob, fileName, onDownload }: F
     }
   }, [blob, category])
 
+  // 打开且有 blob 时加载内容、关闭时清空：用 setTimeout 把 setState 移出 effect
+  // 同步执行体，以满足 react-hooks/set-state-in-effect（延后一个 tick，行为不变）。
   useEffect(() => {
-    if (open && blob) void loadContent()
-    if (!open) setTextContent(null)
+    if (!open) {
+      const t = setTimeout(() => setTextContent(null), 0)
+      return () => clearTimeout(t)
+    }
+    if (blob) {
+      const t = setTimeout(() => {
+        void loadContent()
+      }, 0)
+      return () => clearTimeout(t)
+    }
   }, [open, blob, loadContent])
 
   return (

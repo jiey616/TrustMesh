@@ -1,7 +1,5 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useState,
@@ -9,19 +7,11 @@ import {
 } from 'react'
 import { ConfigProvider } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
-import { themes, toCssVars, type ThemeName, type ThemeTokens } from './tokens'
+import { themes, toCssVars, type ThemeName } from './tokens'
 import { buildAntdTheme } from './antdTheme'
+import { ThemeContext, type ThemeContextValue } from './useTheme'
 
 const STORAGE_KEY = 'trustmesh-theme'
-
-interface ThemeContextValue {
-  theme: ThemeName
-  tokens: ThemeTokens
-  setTheme: (t: ThemeName) => void
-  toggleTheme: () => void
-}
-
-const ThemeContext = createContext<ThemeContextValue | null>(null)
 
 function readStoredTheme(): ThemeName {
   try {
@@ -82,10 +72,4 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       </ConfigProvider>
     </ThemeContext.Provider>
   )
-}
-
-export function useTheme(): ThemeContextValue {
-  const ctx = useContext(ThemeContext)
-  if (!ctx) throw new Error('useTheme 必须在 ThemeProvider 内使用')
-  return ctx
 }

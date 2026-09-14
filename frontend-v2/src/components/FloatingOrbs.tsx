@@ -4,7 +4,7 @@
  */
 import { motion } from 'framer-motion'
 import type { CSSProperties } from 'react'
-import { useTheme } from '@/theme/ThemeProvider'
+import { useTheme } from '@/theme/useTheme'
 
 interface Orb {
   size: number

@@ -445,7 +445,10 @@ export function AgentDetailPage() {
         <Tabs
           activeKey={activeTab}
           onChange={setActiveTab}
-          items={tabItems.map(({ children: _children, ...rest }) => rest)}
+          items={tabItems.map(({ children: _children, ...rest }) => {
+            void _children
+            return rest
+          })}
           size="small"
           style={{ marginTop: 2, marginBottom: -8 }}
         />

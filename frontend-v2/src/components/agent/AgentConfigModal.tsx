@@ -24,6 +24,17 @@ export function AgentConfigModal({ open, onClose, agent }: Props) {
   const [capInput, setCapInput] = useState('')
   const [capabilities, setCapabilities] = useState<string[]>([])
 
+  // 能力列表 / 输入随「打开的 agent」重置：用渲染期调整代替在 effect 里 setState，
+  // 以满足 react-hooks/set-state-in-effect。表单字段仍在 effect 中回填（非 React state）。
+  const [lastOpenAgentId, setLastOpenAgentId] = useState<string | null>(null)
+  if (open && agent && agent.id !== lastOpenAgentId) {
+    setLastOpenAgentId(agent.id)
+    setCapabilities([...(agent.capabilities ?? [])])
+    setCapInput('')
+  } else if (!open && lastOpenAgentId !== null) {
+    setLastOpenAgentId(null)
+  }
+
   useEffect(() => {
     if (open && agent) {
       form.setFieldsValue({
@@ -31,8 +42,6 @@ export function AgentConfigModal({ open, onClose, agent }: Props) {
         role: agent.role,
         description: agent.description,
       })
-      setCapabilities([...(agent.capabilities ?? [])])
-      setCapInput('')
     }
   }, [open, agent, form])
 

@@ -13,7 +13,7 @@ import type { PreviewPlugin } from '@open-file-viewer/core'
 import { FileViewer as OFVFileViewer } from '@open-file-viewer/react'
 import '@open-file-viewer/core/style.css'
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.mjs?url'
-import { useTheme } from '@/theme/ThemeProvider'
+import { useTheme } from '@/theme/useTheme'
 
 interface OpenFileViewerProps {
   blob: Blob

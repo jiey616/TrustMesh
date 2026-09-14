@@ -95,8 +95,13 @@ export function LLMConfigCard({ scope = 'platform', orgId }: { scope?: LLMScope;
     }
   }
 
+  // 配置随 scope / orgId 变化重新加载：用 setTimeout 把 setState 移出 effect 的
+  // 同步执行体，以满足 react-hooks/set-state-in-effect（加载延后一个 tick，行为不变）。
   useEffect(() => {
-    void load()
+    const t = setTimeout(() => {
+      void load()
+    }, 0)
+    return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, orgId])
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Modal, Form, Input, Select, App, Typography } from 'antd'
 import { useCreateTask } from '@/hooks/useTasks'
 import { useProjects, useProject } from '@/hooks/useProjects'
@@ -44,9 +44,13 @@ export function CreateTaskModal({ open, onClose, projectId: fixedProjectId, defa
     project && project.primary_workflow_index >= 0 && Array.isArray(project.workflows)
       ? project.workflows[project.primary_workflow_index]
       : undefined
-  useEffect(() => {
+  // 切换项目时清空步骤段选择：渲染期调整代替 effect 内 setState，
+  // 以满足 react-hooks/set-state-in-effect。
+  const [lastStepRangeProject, setLastStepRangeProject] = useState<string | number | undefined>(undefined)
+  if (effectiveProjectId !== lastStepRangeProject) {
+    setLastStepRangeProject(effectiveProjectId)
     setStepRange(null)
-  }, [effectiveProjectId])
+  }
   const rangeValue = stepRange ?? (primaryWf ? { from: 0, to: primaryWf.steps.length - 1 } : null)
   const stepOptions = (primaryWf?.steps ?? []).map((s, i) => ({
     value: i,

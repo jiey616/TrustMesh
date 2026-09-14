@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Button, Typography, Space, Spin, App, Empty } from 'antd'
 import {
@@ -48,21 +48,25 @@ export function MeetingRoomPage() {
     return m
   }, [meeting])
 
+  // 用 ref 守护「只自动开始一次」，把 setAutoStarted 挪到异步回调里，
+  // 避免 react-hooks/set-state-in-effect（同步在 effect 体内 setState）。
+  const startedRef = useRef(false)
   useEffect(() => {
-    if (meeting && meeting.status === 'waiting' && !autoStarted && meetingId) {
-      setAutoStarted(true)
+    if (meeting && meeting.status === 'waiting' && !autoStarted && !startedRef.current && meetingId) {
+      startedRef.current = true
       startMeeting(meetingId)
         .then(() => {
           refetch()
           message.success('会议已开始')
+          setAutoStarted(true)
         })
         .catch(() => {
+          startedRef.current = false
           message.error('自动开始失败，请手动点击')
           setAutoStarted(false)
         })
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meeting?.status, autoStarted, meetingId])
+  }, [meeting, meetingId, autoStarted])
 
   const handleSend = async (text: string) => {
     if (!text.trim() || !meetingId) return

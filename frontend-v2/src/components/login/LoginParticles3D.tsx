@@ -1,7 +1,7 @@
 import { useMemo, useRef } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { useTheme } from '@/theme/ThemeProvider'
+import { useTheme } from '@/theme/useTheme'
 
 /* ------------------------------------------------------------------
  * 登录页 3D 粒子网络球体
@@ -117,6 +117,23 @@ function torusRing(count: number, radius: number, tilt: number) {
   return positions
 }
 
+/** 外层稀疏星尘：在模块加载时一次性生成，避免在渲染期调用 Math.random
+ * （react-hooks/purity 会拒绝渲染期副作用）。球面均匀采样。
+ */
+const STAR_FIELD_POSITIONS = (() => {
+  const count = 420
+  const positions = new Float32Array(count * 3)
+  for (let i = 0; i < count; i++) {
+    const r = 2.4 + Math.random() * 1.9
+    const theta = Math.random() * Math.PI * 2
+    const phi = Math.acos(2 * Math.random() - 1)
+    positions[i * 3] = r * Math.sin(phi) * Math.cos(theta)
+    positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta) * 0.7
+    positions[i * 3 + 2] = r * Math.cos(phi)
+  }
+  return positions
+})()
+
 function ParticleSphere({ palette }: { palette: ParticlePalette }) {
   const groupRef = useRef<THREE.Group>(null)
   const starRef = useRef<THREE.Points>(null)
@@ -125,19 +142,7 @@ function ParticleSphere({ palette }: { palette: ParticlePalette }) {
   const dotTex = useMemo(() => makeSoftDotTexture(), [])
 
   const sphere = useMemo(() => fibonacciSphere(1500, 1.15, palette.inner), [palette])
-  const starField = useMemo(() => {
-    const count = 420
-    const positions = new Float32Array(count * 3)
-    for (let i = 0; i < count; i++) {
-      const r = 2.4 + Math.random() * 1.9
-      const theta = Math.random() * Math.PI * 2
-      const phi = Math.acos(2 * Math.random() - 1)
-      positions[i * 3] = r * Math.sin(phi) * Math.cos(theta)
-      positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta) * 0.7
-      positions[i * 3 + 2] = r * Math.cos(phi)
-    }
-    return positions
-  }, [])
+  const starField = STAR_FIELD_POSITIONS
 
   const rings = useMemo(() => {
     return [1.65, 2.0, 2.35].map((radius, i) => ({

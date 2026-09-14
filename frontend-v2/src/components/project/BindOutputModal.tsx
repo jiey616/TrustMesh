@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Alert, Input, Modal, Select, Tag } from 'antd'
 import { useBindStepOutput, useWorkflowProgress } from '@/hooks/useProjects'
 import { useProjectFiles } from '@/hooks/useProjectFiles'
@@ -73,20 +73,26 @@ export function BindOutputModal({
   const notDispatched = !!step && (step.status === 'unassigned' || !step.task_id)
 
   // 每次打开重置：锁定步骤时直接选中，否则清空让用户自己选。
-  useEffect(() => {
-    if (!open) return
+  // 用渲染期调整代替在 effect 里 setState，以满足 react-hooks/set-state-in-effect。
+  const [openResetKey, setOpenResetKey] = useState<string | null>(null)
+  if (open && `${lockedStepIndex}` !== openResetKey) {
+    setOpenResetKey(`${lockedStepIndex}`)
     setStepIndex(lockedStepIndex)
     setOutputName('')
     setPickedFileId(undefined)
-  }, [open, lockedStepIndex])
+  } else if (!open && openResetKey !== null) {
+    setOpenResetKey(null)
+  }
 
   // 步骤只有一个声明输出位时直接预选，少一次点击。
-  useEffect(() => {
-    if (stepIndex === undefined) return
-    const d = steps[stepIndex]?.declared_outputs ?? []
-    setOutputName(d.length === 1 ? d[0] : '')
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepIndex, steps.length])
+  const [lastStepIndex, setLastStepIndex] = useState<number | undefined>(undefined)
+  if (stepIndex !== lastStepIndex) {
+    setLastStepIndex(stepIndex)
+    if (stepIndex !== undefined) {
+      const d = steps[stepIndex]?.declared_outputs ?? []
+      setOutputName(d.length === 1 ? d[0] : '')
+    }
+  }
 
   const trimmed = outputName.trim()
   const willReplace = !!trimmed && occupied.has(trimmed)

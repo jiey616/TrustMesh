@@ -995,7 +995,10 @@ function NextFlowBanner({ task, onTaskCreated }: { task: TaskDetail; onTaskCreat
     () => new Map((projectTasks ?? []).map((t) => [t.id, t.status])),
     [projectTasks],
   )
-  const run: WorkflowStepProgress[] = useMemo(() => {
+  // 用普通派生计算替代手动 useMemo：本项目启用了 React Compiler，手动记忆化的依赖
+  //（[sameWf, progress, ref, task.id, boundStatusById]）与编译器推断的依赖（task）
+  // 不一致会触发 preserve-manual-memoization；交给编译器处理即可。
+  const run: WorkflowStepProgress[] = (() => {
     if (!sameWf || !progress?.steps?.length || !ref) return []
     const byIndex = new Map(progress.steps.map((s) => [s.index, s]))
     // 从切片起点逐格确认本任务连续 done 到哪一步
@@ -1018,7 +1021,7 @@ function NextFlowBanner({ task, onTaskCreated }: { task: TaskDetail; onTaskCreat
       out.push(s)
     }
     return out
-  }, [sameWf, progress, ref, task.id, boundStatusById])
+  })()
 
   if (task.status !== 'done' || run.length === 0) return null
 
@@ -1086,13 +1089,6 @@ function NextFlowBanner({ task, onTaskCreated }: { task: TaskDetail; onTaskCreat
 }
 
 export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closable = true, onOpenTask }: Props) {
-  // Draft (new task) mode
-  if (!taskId && projectId) {
-    return (
-      <DraftTaskWorkspace projectId={projectId} onClose={onClose} onTaskCreated={onTaskCreated} closable={closable} onOpenTask={onOpenTask} />
-    )
-  }
-
   const { message } = App.useApp()
   const { data: task, isLoading } = useTask(taskId)
   const { data: events } = useTaskEvents(taskId)
@@ -1124,6 +1120,16 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
   useEffect(() => {
     feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: 'smooth' })
   }, [task?.messages?.length, task?.todos?.length, events?.length, pendingUIBlocks])
+
+  // Draft（新建任务）模式：提前返回必须放在「所有 Hook 之后」，否则其后的 Hook 会被
+  // rules-of-hooks 判定为「条件调用」。draft 分支下 useTask 等以 taskId=undefined 运行，
+  // 内部 enabled: !!id 自我保护，不会真正发起请求；父组件用独立 key 渲染两个分支，
+  // 组件实例不会跨越提前返回边界。
+  if (!taskId && projectId) {
+    return (
+      <DraftTaskWorkspace projectId={projectId} onClose={onClose} onTaskCreated={onTaskCreated} closable={closable} onOpenTask={onOpenTask} />
+    )
+  }
 
   const handleSendPlanning = async (content: string, attachments?: ChatAttachment[]): Promise<boolean> => {
     if (!taskId) return false

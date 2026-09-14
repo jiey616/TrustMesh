@@ -1,6 +1,6 @@
 import { Tooltip } from 'antd'
 import { BulbOutlined, MoonOutlined } from '@ant-design/icons'
-import { useTheme } from '../theme/ThemeProvider'
+import { useTheme } from '../theme/useTheme'
 
 /**
  * 主题切换器。两套皮肤：深色 console（TrustMesh）↔ 近白（Quiet Signal）。

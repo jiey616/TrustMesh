@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { Row, Col, Card, Tag, Typography, Input, Empty, Skeleton, Button } from 'antd'
 import { ShopOutlined, SearchOutlined, ReloadOutlined } from '@ant-design/icons'
@@ -111,10 +111,14 @@ export function MarketPage() {
   const activeDept = searchParams.get('dept') ?? ''
 
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
-  // 切换部门或搜索词后回到第一页
-  useEffect(() => {
+  // 切换部门或搜索词后回到第一页：渲染期调整代替 effect 内 setState，
+  // 以满足 react-hooks/set-state-in-effect。
+  const [lastPageKey, setLastPageKey] = useState<string | null>(null)
+  const pageKey = `${activeDept}|${debouncedQuery}`
+  if (pageKey !== lastPageKey) {
+    setLastPageKey(pageKey)
     setVisibleCount(PAGE_SIZE)
-  }, [activeDept, debouncedQuery])
+  }
 
   const { data: depts, isLoading: deptsLoading, isError } = useMarketDepts()
   const { data: roles, isLoading: rolesLoading, refetch } = useMarketRoles({
