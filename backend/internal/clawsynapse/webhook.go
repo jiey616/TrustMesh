@@ -1617,6 +1617,20 @@ var strictDispatchOrgGate = os.Getenv("TRUSTMESH_STRICT_DISPATCH_ORG_GATE") == "
 // TRUSTMESH_STRICT_PROTOCOL_SCHEMA_GATE=true 并重启容器开启强校验——无需重新
 // 构建（go build）。包级变量而非 const：测试需要翻转它，运维也能在紧急时改这
 // 一行（或摘掉环境变量重启）一键回退到双读模式。
+//
+// 🚨🚨 生产禁止翻转（2026-09-14 实测定论，详见 docs/known-product-gaps-2026-09-15.md）：
+// requiresProtocolEnvelope 当前覆盖的 11 类消息，其生产者（skills/tm-task-plan、
+// tm-task-exec）实测**全部仍在输出裸 JSON** —— 全仓唯一构造 `{"protocol":...}` 的
+// 地方只有测试文件。一旦置为 true，这 11 类 task/todo 消息会被**整体 422**，
+// 爆炸半径与 2026-09-02 transfer 事故同级且更广。
+//
+// 翻转前置条件（缺一不可）：
+//   ① 迁移 tm-task-plan / tm-task-exec 生产者技能改用协议信封 —— 注意本地技能 ≠
+//      容器 / hermes-data 卷里 agent 实际加载的版本，必须按运行时逐一证伪；
+//   ② 按 type 归因（warn 日志带 type 字段）确认 protocol_schema_warned_total 归零。
+//
+// 在此之前：**保持不设置该环境变量**（默认 OFF），本门禁只作为
+// 「机制 + 计数 + 一行回退」存在，不得作为已可启用的能力对外承诺。
 var strictProtocolSchemaGate = os.Getenv("TRUSTMESH_STRICT_PROTOCOL_SCHEMA_GATE") == "true"
 
 // strictDeliverableQualityGate 控制「产出物客观缺陷」是否硬拒（T1.10）。
