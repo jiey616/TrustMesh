@@ -153,35 +153,51 @@ func TestTodoCompleteLegacyStringResultAccepted(t *testing.T) {
 }
 
 // TestTodoCompleteMissingResultWarnsWhenGateOff：strictProduceGate=false 时，
-// 无产出声明仍放行 200，但计数告警 +1。
+// 无产出声明（缺 result，或 summary/output/content 纯空白——T0.12a 的语义缺口）
+// 仍放行 200，todo done，但 AgentProduceWarnedTotal +1 且 AgentProduceRejectedTotal 不变。
 func TestTodoCompleteMissingResultWarnsWhenGateOff(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	metrics.Reset()
-	t.Cleanup(metrics.Reset)
 	withStrictProduceGate(t, false)
 
-	s, _, taskID, devNode := newTransferTestFixture(t)
-	h := NewWebhookHandler(WebhookDeps{Store: s})
+	cases := []struct {
+		name    string
+		message string
+	}{
+		{"缺 result", `{"task_id":"%s","todo_id":"TD_01"}`},
+		{"summary 纯空格", `{"task_id":"%s","todo_id":"TD_01","result":{"summary":"   "}}`},
+		{"output 制表符换行", `{"task_id":"%s","todo_id":"TD_01","result":{"output":"\t\n"}}`},
+		{"content 纯空格 backfill", `{"task_id":"%s","todo_id":"TD_01","content":"   "}`},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			metrics.Reset()
+			t.Cleanup(metrics.Reset)
 
-	w := postWebhookJSON(t, h, protocol.WebhookPayload{
-		Type:       "todo.complete",
-		From:       devNode,
-		SessionKey: taskID,
-		Message:    `{"task_id":"` + taskID + `","todo_id":"TD_01"}`,
-		Metadata:   map[string]any{},
-	})
+			s, _, taskID, devNode := newTransferTestFixture(t)
+			h := NewWebhookHandler(WebhookDeps{Store: s})
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("soft mode must accept, status=%d body=%s", w.Code, w.Body.String())
-	}
-	if got := todoStatusOf(t, taskID, "TD_01", h); got != "done" {
-		t.Fatalf("TD_01 status = %q, want done (soft mode lets it through)", got)
-	}
-	if n := metrics.Count(metrics.AgentProduceWarnedTotal); n != 1 {
-		t.Fatalf("AgentProduceWarnedTotal = %d, want 1", n)
-	}
-	if n := metrics.Count(metrics.AgentProduceRejectedTotal); n != 0 {
-		t.Fatalf("AgentProduceRejectedTotal = %d, want 0", n)
+			w := postWebhookJSON(t, h, protocol.WebhookPayload{
+				Type:       "todo.complete",
+				From:       devNode,
+				SessionKey: taskID,
+				Message:    fmt.Sprintf(c.message, taskID),
+				Metadata:   map[string]any{},
+			})
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("soft mode must accept, status=%d body=%s", w.Code, w.Body.String())
+			}
+			if got := todoStatusOf(t, taskID, "TD_01", h); got != "done" {
+				t.Fatalf("TD_01 status = %q, want done (soft mode lets it through)", got)
+			}
+			if n := metrics.Count(metrics.AgentProduceWarnedTotal); n != 1 {
+				t.Fatalf("AgentProduceWarnedTotal = %d, want 1", n)
+			}
+			if n := metrics.Count(metrics.AgentProduceRejectedTotal); n != 0 {
+				t.Fatalf("AgentProduceRejectedTotal = %d, want 0 (soft mode must not reject)", n)
+			}
+		})
 	}
 }
 
