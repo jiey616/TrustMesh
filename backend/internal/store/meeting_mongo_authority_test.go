@@ -341,16 +341,21 @@ func TestMeetingVersionConflictOnStaleVersion(t *testing.T) {
 	}
 }
 
-// TestAddMeetingMessageSessionStateFailureLeavesMemoryUntouched 覆盖「分步失败」：
-// 消息 InsertOne 成功、但会话态 UpdateOne 失败（这里用陈旧版本触发冲突）时，
-// 必须返错且内存**完全**未被改动（含消息 map、participants、LastPhase、SpeakerTurns）。
+// TestAddMeetingMessageSelfHealLeavesNoResidueInMongo 覆盖「会话态写冲突」的**自愈后**不变式。
 //
-// 注：这是 T2.1 明确接受的残差 —— 消息已在库里而内存未变；会话态是纯派生量，
-// 可由 backfillMeetingSessionUnsafe 按历史消息重算，重启后同样能读回。
-func TestAddMeetingMessageSessionStateFailureLeavesMemoryUntouched(t *testing.T) {
+// 背景：早先的断言是「会话态写冲突必须返错」（T2.1 初期形态）。P2 自愈修复
+// （retryOnceAfterVersionRefreshLocked：刷新内存 version 后重试一次）上线后，该场景会
+// **成功**而不是返错 —— 因为 $set 的会话态字段全部由当前这条消息派生并整体覆盖，
+// 刷新 version 再写一次不会吞掉别的写方留下的语义（见 TestQAAddMeetingMessageSelfHealsOnVersionConflict）。
+//
+// 若沿用「必须返错」的旧断言，这条用例会稳定变红（且是断言过期、不是产品缺陷）——
+// 正是这种「只有活库才跑得到」的用例最容易漏更新，故在此改成断言更本质的性质：
+// 自愈之后**内存与 Mongo 无残差**，不会出现「消息已落库、会话态没跟上」的分叉。
+func TestAddMeetingMessageSelfHealLeavesNoResidueInMongo(t *testing.T) {
 	s := newLiveMongoStore(t)
+	sc := Scope{UserID: "u1"}
 
-	created, appErr := s.CreateMeeting(Scope{UserID: "u1"}, &model.Meeting{Title: "会话态分步失败"})
+	created, appErr := s.CreateMeeting(sc, &model.Meeting{Title: "自愈无残差"})
 	if appErr != nil {
 		t.Fatalf("create meeting: %v", appErr)
 	}
@@ -358,10 +363,10 @@ func TestAddMeetingMessageSessionStateFailureLeavesMemoryUntouched(t *testing.T)
 	created.Participants = []model.MeetingParticipant{{AgentID: "ag-1", AgentName: "编剧", Status: "invited"}}
 	s.mu.Unlock()
 
-	// 内存 version=1、库内 version=5 → 消息能插进去，会话态更新命中 0 条。
+	// 内存 version=1、库内 version=5 → 会话态首写冲突 → 触发自愈（刷新 version + 重试）。
 	bumpMeetingVersionInMongo(t, s, created.ID, 5)
 
-	_, appErr = s.AddMeetingMessage(Scope{UserID: "u1"}, &model.MeetingMessage{
+	if _, appErr := s.AddMeetingMessage(sc, &model.MeetingMessage{
 		MeetingID:  created.ID,
 		SenderType: "agent",
 		SenderID:   "ag-1",
@@ -369,28 +374,37 @@ func TestAddMeetingMessageSessionStateFailureLeavesMemoryUntouched(t *testing.T)
 		Phase:      "speak",
 		Target:     "host",
 		Content:    "我的观点",
-	})
-	if appErr == nil {
-		t.Fatal("session-state write failure must surface as an error (no silent drop)")
+	}); appErr != nil {
+		t.Fatalf("session-state conflict must self-heal via version refresh + retry, got %+v", appErr)
 	}
 
+	// 内存侧：消息入索引、会话态推进、版本追上并推进库内（5 → 6）。
 	s.mu.RLock()
-	msgs := len(s.meetingMessages)
-	idx := len(s.meetingMessageIndex[created.ID])
+	inMem := len(s.meetingMessageIndex[created.ID])
 	s.mu.RUnlock()
-	if msgs != 0 || idx != 0 {
-		t.Fatalf("message maps mutated after failed session write: len(messages)=%d, len(index)=%d", msgs, idx)
+	if inMem != 1 {
+		t.Fatalf("message index after self-heal = %d, want 1", inMem)
+	}
+	got := readMeeting(t, s, created.ID)
+	if got.LastPhase != "speak" || got.LastTarget != "host" {
+		t.Fatalf("session state after self-heal: phase=%q target=%q", got.LastPhase, got.LastTarget)
+	}
+	if got.Version != 6 {
+		t.Fatalf("version after self-heal = %d, want 6", got.Version)
 	}
 
-	got := readMeeting(t, s, created.ID)
-	if got.LastPhase != "" || got.LastTarget != "" || got.SpeakerTurns != 0 {
-		t.Fatalf("session state mutated after failed write: phase=%q target=%q turns=%d", got.LastPhase, got.LastTarget, got.SpeakerTurns)
+	// Mongo 侧：会话态必须已被同一次提交写下去 —— 这才是「无残差」的判据。
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var persisted model.Meeting
+	if err := s.mongoMeetings.FindOne(ctx, bson.M{"_id": created.ID}).Decode(&persisted); err != nil {
+		t.Fatalf("read meeting back from mongo: %v", err)
 	}
-	if len(got.Participants) != 1 || got.Participants[0].Status != "invited" {
-		t.Fatalf("participants mutated after failed write: %+v", got.Participants)
+	if persisted.LastPhase != "speak" || persisted.LastTarget != "host" {
+		t.Fatalf("session state not persisted (residue): phase=%q target=%q", persisted.LastPhase, persisted.LastTarget)
 	}
-	if got.Version != meetingVersionFloor {
-		t.Fatalf("version must not advance after failed write: %d, want %d", got.Version, meetingVersionFloor)
+	if persisted.Version != 6 {
+		t.Fatalf("mongo version after self-heal = %d, want 6", persisted.Version)
 	}
 }
 
