@@ -4,3 +4,38 @@ backend/data/
 backend/server
 # 本地密钥/环境覆盖（含 CLAWSYNAPSE_API_TOKEN）
 .env
+
+# --- tooling / session debris (do NOT commit) ---
+_*.txt
+__artifacts__/
+*.png
+deploy/.tmp/
+backups/
+backup/
+backup.zip
+backend-test.tar
+tmp/
+# IDE / agent tool dirs
+.codebuddy/
+.dsh-reef/
+.playwright-cli/
+.zcode/
+.workbuddy/
+# scratch yaml from recovery / verification sessions
+aftersync.yaml
+lg.yaml
+syncdiff.yaml
+# root-level session scratch (NEVER source; /*.ext matches repo-root only, not subdirs like docs/ or deploy/)
+/*.txt
+/*.sh
+/*.bin
+/*.docx
+/*.json
+/*.html
+/*.md
+/_midx_backup.bin
+/_t19_backup/
+frontend-v2/tsc_*.txt
+frontend-v2/tsc_result*.txt
+# hardcoded-secret scratch (deliberately never committed)
+examples/external-platform-sso/minimal-platform/realtest.py
