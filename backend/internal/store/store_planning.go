@@ -165,13 +165,14 @@ func (s *Store) AppendTaskMessage(sc Scope, taskID, content string, uiResponse *
 	}
 
 	now := time.Now().UTC()
-	msg := model.TaskMessage{ID: uuid.NewString(), Role: "user", Content: content, UIResponse: uiResponse, Attachments: attachments, CreatedAt: now}
-	task.Messages = append(task.Messages, msg)
-	task.UpdatedAt = now
-	task.Version++
-
-	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
-		return nil, mongoWriteError(err)
+	// T2.2：用 mutateTaskUnsafe 包装，Mongo 提交失败时内存零副作用。
+	if appErr := s.mutateTaskUnsafe(task.ID, func(task *model.TaskDetail) *transport.AppError {
+		msg := model.TaskMessage{ID: uuid.NewString(), Role: "user", Content: content, UIResponse: uiResponse, Attachments: attachments, CreatedAt: now}
+		task.Messages = append(task.Messages, msg)
+		task.UpdatedAt = now
+		return nil
+	}); appErr != nil {
+		return nil, appErr
 	}
 	s.publishTaskUnsafe(task.ID)
 
@@ -222,18 +223,19 @@ func (s *Store) AppendPMTaskReply(nodeID, taskID, content string, uiBlocks []mod
 
 	now := time.Now().UTC()
 	s.markAgentSeenUnsafe(pmAgent.ID, now)
-	msg := model.TaskMessage{ID: uuid.NewString(), Role: "pm_agent", Content: content, UIBlocks: uiBlocks, CreatedAt: now}
-	task.Messages = append(task.Messages, msg)
-	task.UpdatedAt = now
-	task.Version++
+	// T2.2：用 mutateTaskUnsafe 包装，Mongo 提交失败时内存零副作用。
+	if appErr := s.mutateTaskUnsafe(task.ID, func(task *model.TaskDetail) *transport.AppError {
+		msg := model.TaskMessage{ID: uuid.NewString(), Role: "pm_agent", Content: content, UIBlocks: uiBlocks, CreatedAt: now}
+		task.Messages = append(task.Messages, msg)
+		task.UpdatedAt = now
 
-	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, "", "agent", pmAgent.ID, pmAgent.Name, "planning_reply", &content, map[string]any{
-		"task_id":   task.ID,
-		"ui_blocks": uiBlocks,
-	}, now)
-
-	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
-		return nil, mongoWriteError(err)
+		s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, "", "agent", pmAgent.ID, pmAgent.Name, "planning_reply", &content, map[string]any{
+			"task_id":   task.ID,
+			"ui_blocks": uiBlocks,
+		}, now)
+		return nil
+	}); appErr != nil {
+		return nil, appErr
 	}
 	if err := s.persistAgentGraphUnsafe(pmAgent.ID); err != nil {
 		return nil, mongoWriteError(err)
@@ -363,24 +365,26 @@ func (s *Store) FinalizePlanByPMNode(nodeID, messageID string, in TaskPlanReadyI
 	}
 
 	// Update task: planning → review (awaiting user approval)
-	task.Title = in.Title
-	task.Description = in.Description
-	task.DeliverScope = in.DeliverScope
-	task.Status = "review"
-	task.Todos = todos
-	task.UpdatedAt = now
-	task.Version++
+	// T2.2：用 mutateTaskUnsafe 包装，Mongo 提交失败时内存零副作用；
+	// 幂等记账（rememberProcessedMessage）属于跨集合状态，留在提交成功后。
+	if appErr := s.mutateTaskUnsafe(task.ID, func(task *model.TaskDetail) *transport.AppError {
+		task.Title = in.Title
+		task.Description = in.Description
+		task.DeliverScope = in.DeliverScope
+		task.Status = "review"
+		task.Todos = todos
+		task.UpdatedAt = now
 
-	taskTitle := task.Title
-	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, "", "agent", pmAgent.ID, pmAgent.Name, "task_plan_ready", &taskTitle, map[string]any{
-		"task_title": task.Title,
-		"todo_count": len(todos),
-	}, now)
-
-	s.rememberProcessedMessageUnsafe(processedMessageKey("task.plan_ready", nodeID, messageID), "task.plan_ready", task.ID)
-	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
-		return nil, mongoWriteError(err)
+		taskTitle := task.Title
+		s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, "", "agent", pmAgent.ID, pmAgent.Name, "task_plan_ready", &taskTitle, map[string]any{
+			"task_title": task.Title,
+			"todo_count": len(todos),
+		}, now)
+		return nil
+	}); appErr != nil {
+		return nil, appErr
 	}
+	s.rememberProcessedMessageUnsafe(processedMessageKey("task.plan_ready", nodeID, messageID), "task.plan_ready", task.ID)
 	if err := s.persistAgentGraphUnsafe(pmAgent.ID); err != nil {
 		return nil, mongoWriteError(err)
 	}
@@ -411,7 +415,6 @@ func (s *Store) ApprovePlan(sc Scope, taskID string) (*model.TaskDetail, *transp
 	now := time.Now().UTC()
 	task.Status = "pending"
 	task.UpdatedAt = now
-	task.Version++
 
 	taskTitle := task.Title
 	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, "", "user", sc.UserID, "", "task_approved", &taskTitle, map[string]any{
@@ -459,7 +462,6 @@ func (s *Store) RejectPlan(sc Scope, taskID, feedback string) (*model.TaskDetail
 	task.Messages = append(task.Messages, msg)
 	task.Status = "planning"
 	task.UpdatedAt = now
-	task.Version++
 
 	taskTitle := task.Title
 	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, "", "user", sc.UserID, "", "task_plan_rejected", &taskTitle, map[string]any{

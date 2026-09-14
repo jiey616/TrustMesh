@@ -145,19 +145,22 @@ func (s *Store) RecordTodoDispatch(sc Scope, taskID, todoID string) (*model.Task
 		userName = u.Name
 	}
 	message := fmt.Sprintf("手动派发给 %s", todo.Assignee.Name)
-	s.recordTodoDispatchUnsafe(task, todo, "user", sc.UserID, userName, &message, map[string]any{
-		"todo_id":           todo.ID,
-		"assignee_agent_id": todo.Assignee.AgentID,
-		"manual":            true,
-	}, now)
-	if todo.Status == "pending" {
-		todo.Status = "in_progress"
-		todo.StartedAt = &now
-		todo.AssignedAt = &now
-	}
-	s.updateTaskStatusUnsafe(task, now)
-	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
-		return nil, mongoWriteError(err)
+	if appErr := s.mutateTaskUnsafe(task.ID, func(task *model.TaskDetail) *transport.AppError {
+		td := &task.Todos[todoIdx]
+		s.recordTodoDispatchUnsafe(task, td, "user", sc.UserID, userName, &message, map[string]any{
+			"todo_id":           td.ID,
+			"assignee_agent_id": td.Assignee.AgentID,
+			"manual":            true,
+		}, now)
+		if td.Status == "pending" {
+			td.Status = "in_progress"
+			td.StartedAt = &now
+			td.AssignedAt = &now
+		}
+		s.updateTaskStatusUnsafe(task, now)
+		return nil
+	}); appErr != nil {
+		return nil, appErr
 	}
 	s.refreshAgentExecutionStatusUnsafe(todo.Assignee.AgentID, now)
 	if err := s.persistAgentGraphUnsafe(todo.Assignee.AgentID); err != nil {
@@ -205,28 +208,31 @@ func (s *Store) RecordSequentialTodoDispatch(taskID, todoID string) (*model.Task
 	}
 
 	now := time.Now().UTC()
-	// P-01: record a successful dispatch so a later stall is distinguishable
-	// from "never dispatched", and clear any previous failure trace.
-	todo.DispatchAttempts++
-	todo.LastDispatchAt = &now
-	todo.LastDispatchErr = nil
-	message := fmt.Sprintf("按顺序派发给 %s", todo.Assignee.Name)
-	s.recordTodoDispatchUnsafe(task, todo, "system", "system", "System", &message, map[string]any{
-		"todo_id":           todo.ID,
-		"assignee_agent_id": todo.Assignee.AgentID,
-		"dispatch_mode":     "sequential",
-		"manual":            false,
-	}, now)
-	if todo.Status == "pending" {
-		todo.Status = "in_progress"
-		todo.StartedAt = &now
-		todo.AssignedAt = &now
-		// T0.11②: measure "step N completed -> step N+1 started" latency.
-		observeStepAdvanceUnsafe(task, todoIdx, now)
-	}
-	s.updateTaskStatusUnsafe(task, now)
-	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
-		return nil, mongoWriteError(err)
+	if appErr := s.mutateTaskUnsafe(task.ID, func(task *model.TaskDetail) *transport.AppError {
+		td := &task.Todos[todoIdx]
+		// P-01: record a successful dispatch so a later stall is distinguishable
+		// from "never dispatched", and clear any previous failure trace.
+		td.DispatchAttempts++
+		td.LastDispatchAt = &now
+		td.LastDispatchErr = nil
+		message := fmt.Sprintf("按顺序派发给 %s", td.Assignee.Name)
+		s.recordTodoDispatchUnsafe(task, td, "system", "system", "System", &message, map[string]any{
+			"todo_id":           td.ID,
+			"assignee_agent_id": td.Assignee.AgentID,
+			"dispatch_mode":     "sequential",
+			"manual":            false,
+		}, now)
+		if td.Status == "pending" {
+			td.Status = "in_progress"
+			td.StartedAt = &now
+			td.AssignedAt = &now
+			// T0.11②: measure "step N completed -> step N+1 started" latency.
+			observeStepAdvanceUnsafe(task, todoIdx, now)
+		}
+		s.updateTaskStatusUnsafe(task, now)
+		return nil
+	}); appErr != nil {
+		return nil, appErr
 	}
 	s.refreshAgentExecutionStatusUnsafe(todo.Assignee.AgentID, now)
 	if err := s.persistAgentGraphUnsafe(todo.Assignee.AgentID); err != nil {
@@ -378,6 +384,7 @@ func (s *Store) CreateTaskByPMNodeWithMessageID(nodeID, messageID string, in Tas
 
 	s.rememberProcessedMessageUnsafe(processedMessageKey("task.create", nodeID, messageID), "task.create", task.ID)
 	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
+		delete(s.tasks, task.ID)
 		return nil, mongoWriteError(err)
 	}
 	if err := s.persistAgentGraphUnsafe(pmAgent.ID); err != nil {
@@ -547,6 +554,7 @@ func (s *Store) CreateTaskByUser(sc Scope, in UserTaskCreateInput) (*model.TaskD
 	s.addEventUnsafe(sc.UserID, project.ID, task.ID, "", "user", sc.UserID, "", "task_created", &taskTitle, map[string]any{"task_title": task.Title}, now)
 
 	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
+		delete(s.tasks, task.ID)
 		return nil, mongoWriteError(err)
 	}
 	s.publishTaskUnsafe(task.ID)
@@ -559,7 +567,6 @@ func (s *Store) recordTodoDispatchUnsafe(task *model.TaskDetail, todo *model.Tod
 	metadata["todo_title"] = todo.Title
 	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, actorType, actorID, actorName, "todo_assigned", message, metadata, now)
 	task.UpdatedAt = now
-	task.Version++
 }
 
 // RecordSequentialDispatchFailure records a failed sequential dispatch so the
@@ -587,30 +594,31 @@ func (s *Store) RecordSequentialDispatchFailure(taskID, todoID, errMsg string) *
 	if idx < 0 {
 		return transport.NotFound("todo not found")
 	}
-	todo := &task.Todos[idx]
-
 	now := time.Now().UTC()
-	todo.DispatchAttempts++
-	todo.LastDispatchAt = &now
-	msg := errMsg
-	todo.LastDispatchErr = &msg
+	if appErr := s.mutateTaskUnsafe(task.ID, func(task *model.TaskDetail) *transport.AppError {
+		td := &task.Todos[idx]
+		td.DispatchAttempts++
+		td.LastDispatchAt = &now
+		msg := errMsg
+		td.LastDispatchErr = &msg
 
-	// 通知节流：后台对账每 2 分钟补派一次，若持续失败会无限推通知。
-	// 只在前 3 次尝试落事件 + 通知，之后静默记录（字段仍在更新，便于观测）。
-	if todo.DispatchAttempts <= 3 {
-		content := fmt.Sprintf("自动派发失败：%s（第 %d 次，将由后台对账自动重试）", todo.Title, todo.DispatchAttempts)
-		s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID,
-			"system", "dispatcher", "派发器", "todo_dispatch_failed", &content,
-			map[string]any{
-				"todo_id":       todo.ID,
-				"todo_title":    todo.Title,
-				"attempts":      todo.DispatchAttempts,
-				"error":         errMsg,
-				"assignee_name": todo.Assignee.Name,
-			}, now)
-	}
-	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
-		return mongoWriteError(err)
+		// 通知节流：后台对账每 2 分钟补派一次，若持续失败会无限推通知。
+		// 只在前 3 次尝试落事件 + 通知，之后静默记录（字段仍在更新，便于观测）。
+		if td.DispatchAttempts <= 3 {
+			content := fmt.Sprintf("自动派发失败：%s（第 %d 次，将由后台对账自动重试）", td.Title, td.DispatchAttempts)
+			s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, td.ID,
+				"system", "dispatcher", "派发器", "todo_dispatch_failed", &content,
+				map[string]any{
+					"todo_id":       td.ID,
+					"todo_title":    td.Title,
+					"attempts":      td.DispatchAttempts,
+					"error":         errMsg,
+					"assignee_name": td.Assignee.Name,
+				}, now)
+		}
+		return nil
+	}); appErr != nil {
+		return appErr
 	}
 	s.publishTaskUnsafe(task.ID)
 	return nil
@@ -723,31 +731,34 @@ func (s *Store) UpdateTodoProgressByNode(nodeID string, in TodoProgressInput) (*
 
 	now := time.Now().UTC()
 	s.markAgentSeenUnsafe(agent.ID, now)
-	if todo.Status == "pending" {
-		todo.Status = "in_progress"
-		todo.StartedAt = &now
-		todo.AssignedAt = &now
-		todo.CanceledAt = nil
-		todo.CancelReason = nil
-		started := fmt.Sprintf("todo started: %s", todo.Title)
-		s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "agent", agent.ID, agent.Name, "todo_started", &started, map[string]any{"todo_id": todo.ID, "task_title": task.Title, "todo_title": todo.Title}, now)
-	}
-	// Any progress report keeps the todo alive: the timeout monitor uses
-	// LastActivityAt so long-running tasks that keep reporting are not
-	// spuriously reset/retried. It is also a PRODUCTIVE-progress signal for the
-	// hard-deadline gate (P-03).
-	todo.LastActivityAt = &now
-	todo.LastProgressAt = &now
-	todo.RemindCount = 0
-	todo.RemindAt = nil
-	// T0.11③: a real progress report breaks the compliance streak.
-	s.clearAutoAdvanceStreakUnsafe(task.ID, agent.ID)
-	progress := in.Message
-	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "agent", agent.ID, agent.Name, "todo_progress", &progress, map[string]any{"todo_id": todo.ID, "task_title": task.Title, "todo_title": todo.Title}, now)
+	if appErr := s.mutateTaskUnsafe(task.ID, func(task *model.TaskDetail) *transport.AppError {
+		td := &task.Todos[todoIdx]
+		if td.Status == "pending" {
+			td.Status = "in_progress"
+			td.StartedAt = &now
+			td.AssignedAt = &now
+			td.CanceledAt = nil
+			td.CancelReason = nil
+			started := fmt.Sprintf("todo started: %s", td.Title)
+			s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, td.ID, "agent", agent.ID, agent.Name, "todo_started", &started, map[string]any{"todo_id": td.ID, "task_title": task.Title, "todo_title": td.Title}, now)
+		}
+		// Any progress report keeps the todo alive: the timeout monitor uses
+		// LastActivityAt so long-running tasks that keep reporting are not
+		// spuriously reset/retried. It is also a PRODUCTIVE-progress signal for the
+		// hard-deadline gate (P-03).
+		td.LastActivityAt = &now
+		td.LastProgressAt = &now
+		td.RemindCount = 0
+		td.RemindAt = nil
+		// T0.11③: a real progress report breaks the compliance streak.
+		s.clearAutoAdvanceStreakUnsafe(task.ID, agent.ID)
+		progress := in.Message
+		s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, td.ID, "agent", agent.ID, agent.Name, "todo_progress", &progress, map[string]any{"todo_id": td.ID, "task_title": task.Title, "todo_title": td.Title}, now)
 
-	s.updateTaskStatusUnsafe(task, now)
-	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
-		return nil, mongoWriteError(err)
+		s.updateTaskStatusUnsafe(task, now)
+		return nil
+	}); appErr != nil {
+		return nil, appErr
 	}
 	s.refreshAgentExecutionStatusUnsafe(agent.ID, now)
 	if err := s.persistAgentGraphUnsafe(agent.ID); err != nil {
@@ -812,81 +823,90 @@ func (s *Store) CompleteTodoByNodeWithMessageID(nodeID, messageID string, in Tod
 
 	now := time.Now().UTC()
 	s.markAgentSeenUnsafe(agent.ID, now)
-	if todo.StartedAt == nil {
-		todo.StartedAt = &now
-	}
-	todo.Status = "done"
-	todo.CompletedAt = &now
-	todo.LastActivityAt = &now
-	todo.LastProgressAt = &now // P-03
-	todo.RemindCount = 0
-	todo.RemindAt = nil
-	// T0.11③: completing a step proves the agent is reporting; break the streak.
-	s.clearAutoAdvanceStreakUnsafe(task.ID, agent.ID)
-	todo.FailedAt = nil
-	todo.CanceledAt = nil
-	todo.Error = nil
-	todo.CancelReason = nil
-	todo.Result = model.TodoResult{
-		Summary:     strings.TrimSpace(in.Result.Summary),
-		Output:      strings.TrimSpace(in.Result.Output),
-		Metadata:    copyMap(in.Result.Metadata),
-		ActionItems: normalizeActionItems(in.Result.ActionItems, now),
-	}
-	// Surface the agent's returned deliverable in the task conversation.
-	// The result text is already persisted on todo.Result, but the user only
-	// sees task.messages (user + pm_agent roles) — so execution output was
-	// invisible and the task looked like it "completed with no deliverable".
-	// Appending it here makes the returned content show up in the thread.
-	deliverableContent := todo.Result.Output
-	if strings.TrimSpace(deliverableContent) == "" {
-		deliverableContent = todo.Result.Summary
-	}
-	if strings.TrimSpace(deliverableContent) != "" {
-		task.Messages = append(task.Messages, model.TaskMessage{
-			ID:        uuid.NewString(),
-			Role:      "agent",
-			Content:   fmt.Sprintf("**%s** 完成了「%s」：\n\n%s", agent.Name, todo.Title, deliverableContent),
-			CreatedAt: now,
-		})
-	}
-	completed := fmt.Sprintf("todo completed: %s", todo.Title)
-	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "agent", agent.ID, agent.Name, "todo_completed", &completed, map[string]any{"todo_id": todo.ID, "task_title": task.Title, "todo_title": todo.Title}, now)
-
-	// ── Review gate / rework trigger ──────────────────────────────
-	// 1) ReturnPrevious: this todo is a review-style todo whose verdict is
-	//    that its predecessor (order-1) failed. Cascade-reset the predecessor
-	//    and every later todo (including this one) back to pending, then the
-	//    predecessor is re-dispatched and the chain re-runs.
 	var reworked *model.Todo
-	if in.ReturnPrevious {
-		reason := strings.TrimSpace(in.ReworkReason)
-		if reason == "" {
-			reason = "数字员工判定前序产出不合格，退回重做"
+	if appErr := s.mutateTaskUnsafe(task.ID, func(task *model.TaskDetail) *transport.AppError {
+		if todo.StartedAt == nil {
+			todo.StartedAt = &now
 		}
-		var reworkErr *transport.AppError
-		// Agent review-style todo: its verdict audits the predecessor.
-		reworked, reworkErr = s.triggerReworkUnsafe(task, todoIdx-1, reason)
-		if reworkErr != nil {
-			return nil, nil, reworkErr
+		todo.Status = "done"
+		todo.CompletedAt = &now
+		todo.LastActivityAt = &now
+		todo.LastProgressAt = &now // P-03
+		todo.RemindCount = 0
+		todo.RemindAt = nil
+		// T0.11③: completing a step proves the agent is reporting; break the streak.
+		s.clearAutoAdvanceStreakUnsafe(task.ID, agent.ID)
+		todo.FailedAt = nil
+		todo.CanceledAt = nil
+		todo.Error = nil
+		todo.CancelReason = nil
+		todo.Result = model.TodoResult{
+			Summary:     strings.TrimSpace(in.Result.Summary),
+			Output:      strings.TrimSpace(in.Result.Output),
+			Metadata:    copyMap(in.Result.Metadata),
+			ActionItems: normalizeActionItems(in.Result.ActionItems, now),
 		}
-	} else if in.NeedReview || todo.NeedReview {
-		// 2) NeedReview: completed todo awaits human/PM approval. Status stays
-		//    "done" (terminal execution state) but the review gate blocks
-		//    dispatch of later todos until approved.
-		//    todo.NeedReview is inherited from the workflow step at plan time.
-		todo.ReviewStatus = model.ReviewPending
-		msg := fmt.Sprintf("todo awaiting review: %s", todo.Title)
-		s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "agent", agent.ID, agent.Name, "todo_awaiting_review", &msg, map[string]any{"todo_id": todo.ID, "task_title": task.Title, "todo_title": todo.Title}, now)
-	} else {
-		// 3) Plain completion: ensure any stale review gate is cleared.
-		todo.ReviewStatus = ""
-		todo.ReviewReason = nil
-	}
+		// Surface the agent's returned deliverable in the task conversation.
+		// The result text is already persisted on todo.Result, but the user only
+		// sees task.messages (user + pm_agent roles) — so execution output was
+		// invisible and the task looked like it "completed with no deliverable".
+		// Appending it here makes the returned content show up in the thread.
+		deliverableContent := todo.Result.Output
+		if strings.TrimSpace(deliverableContent) == "" {
+			deliverableContent = todo.Result.Summary
+		}
+		if strings.TrimSpace(deliverableContent) != "" {
+			task.Messages = append(task.Messages, model.TaskMessage{
+				ID:        uuid.NewString(),
+				Role:      "agent",
+				Content:   fmt.Sprintf("**%s** 完成了「%s」：\n\n%s", agent.Name, todo.Title, deliverableContent),
+				CreatedAt: now,
+			})
+		}
+		completed := fmt.Sprintf("todo completed: %s", todo.Title)
+		s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "agent", agent.ID, agent.Name, "todo_completed", &completed, map[string]any{"todo_id": todo.ID, "task_title": task.Title, "todo_title": todo.Title}, now)
 
-	s.updateTaskStatusUnsafe(task, now)
+		// ── Review gate / rework trigger ──────────────────────────────
+		// 1) ReturnPrevious: this todo is a review-style todo whose verdict is
+		//    that its predecessor (order-1) failed. Cascade-reset the predecessor
+		//    and every later todo (including this one) back to pending, then the
+		//    predecessor is re-dispatched and the chain re-runs.
+		if in.ReturnPrevious {
+			reason := strings.TrimSpace(in.ReworkReason)
+			if reason == "" {
+				reason = "数字员工判定前序产出不合格，退回重做"
+			}
+			// Agent review-style todo: its verdict audits the predecessor.
+			rw, reworkErr := s.triggerReworkUnsafe(task, todoIdx-1, reason)
+			reworked = rw
+			if reworkErr != nil {
+				return reworkErr
+			}
+		} else if in.NeedReview || todo.NeedReview {
+			// 2) NeedReview: completed todo awaits human/PM approval. Status stays
+			//    "done" (terminal execution state) but the review gate blocks
+			//    dispatch of later todos until approved.
+			//    todo.NeedReview is inherited from the workflow step at plan time.
+			todo.ReviewStatus = model.ReviewPending
+			msg := fmt.Sprintf("todo awaiting review: %s", todo.Title)
+			s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "agent", agent.ID, agent.Name, "todo_awaiting_review", &msg, map[string]any{"todo_id": todo.ID, "task_title": task.Title, "todo_title": todo.Title}, now)
+		} else {
+			// 3) Plain completion: ensure any stale review gate is cleared.
+			todo.ReviewStatus = ""
+			todo.ReviewReason = nil
+		}
+
+		s.updateTaskStatusUnsafe(task, now)
+		return nil
+	}); appErr != nil {
+		return nil, nil, appErr
+	}
 	s.rememberProcessedMessageUnsafe(processedMessageKey("todo.complete", nodeID, messageID), "todo.complete", task.ID)
-	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
+	s.refreshAgentExecutionStatusUnsafe(agent.ID, now)
+	if err := s.persistAgentGraphUnsafe(agent.ID); err != nil {
+		return nil, nil, mongoWriteError(err)
+	}
+	if err := s.persistProcessedMessageUnsafe(processedMessageKey("todo.complete", nodeID, messageID)); err != nil {
 		return nil, nil, mongoWriteError(err)
 	}
 	s.refreshAgentExecutionStatusUnsafe(agent.ID, now)
@@ -951,37 +971,42 @@ func (s *Store) AskTodoByNode(nodeID string, in TodoAskInput) (*model.TaskDetail
 	now := time.Now().UTC()
 	s.markAgentSeenUnsafe(agent.ID, now)
 
-	qid := in.QuestionID
-	if qid == "" {
-		qid = "q_" + newID()
-	}
-	q := model.TodoQuestion{
-		ID:       qid,
-		Question: in.Question,
-		Options:  in.Options,
-		Required: in.Required,
-		AskedAt:  now,
-	}
-	todo.Questions = append(todo.Questions, q)
-	todo.Status = model.TodoStatusWaitingUser
-	todo.LastActivityAt = &now
-	todo.RemindCount = 0
-	todo.RemindAt = nil
+	var q model.TodoQuestion
+	// T2.2：用 mutateTaskUnsafe 包装，Mongo 提交失败时内存零副作用。
+	if appErr := s.mutateTaskUnsafe(task.ID, func(task *model.TaskDetail) *transport.AppError {
+		td := &task.Todos[todoIdx]
+		qid := in.QuestionID
+		if qid == "" {
+			qid = "q_" + newID()
+		}
+		q = model.TodoQuestion{
+			ID:       qid,
+			Question: in.Question,
+			Options:  in.Options,
+			Required: in.Required,
+			AskedAt:  now,
+		}
+		td.Questions = append(td.Questions, q)
+		td.Status = model.TodoStatusWaitingUser
+		td.LastActivityAt = &now
+		td.RemindCount = 0
+		td.RemindAt = nil
 
-	msg := fmt.Sprintf("agent asked user: %s", q.Question)
-	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "agent", agent.ID, agent.Name, "todo_ask_received", &msg, map[string]any{
-		"question_id": q.ID,
-		"todo_id":     todo.ID,
-		"question":    q.Question,
-		"options":     q.Options,
-		"required":    q.Required,
-		"task_title":  task.Title,
-		"todo_title":  todo.Title,
-	}, now)
+		msg := fmt.Sprintf("agent asked user: %s", q.Question)
+		s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, td.ID, "agent", agent.ID, agent.Name, "todo_ask_received", &msg, map[string]any{
+			"question_id": q.ID,
+			"todo_id":     td.ID,
+			"question":    q.Question,
+			"options":     q.Options,
+			"required":    q.Required,
+			"task_title":  task.Title,
+			"todo_title":  td.Title,
+		}, now)
 
-	s.updateTaskStatusUnsafe(task, now)
-	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
-		return nil, nil, mongoWriteError(err)
+		s.updateTaskStatusUnsafe(task, now)
+		return nil
+	}); appErr != nil {
+		return nil, nil, appErr
 	}
 	s.refreshAgentExecutionStatusUnsafe(agent.ID, now)
 	if err := s.persistAgentGraphUnsafe(agent.ID); err != nil {
@@ -1034,54 +1059,58 @@ func (s *Store) AnswerTodo(sc Scope, taskID, todoID, questionID, answer, answere
 	}
 
 	now := time.Now().UTC()
-	q.Answer = answer
-	q.AnsweredBy = answeredBy
-	q.AnsweredAt = &now
-	q.TimedOut = timedOut
-	// Resume the parked todo.
-	if todo.Status == model.TodoStatusWaitingUser {
-		todo.Status = "in_progress"
-	}
-	todo.LastActivityAt = &now
-	todo.RemindCount = 0
-	todo.RemindAt = nil
-
-	source := "user"
-	if timedOut {
-		source = "system"
-	}
-	msg := fmt.Sprintf("question answered: %s", q.Question)
-	// 事件 actor：用户路径=当前操作者（org 成员协作时记录真实操作者）；系统路径回落任务主人
-	eventActor := sc.UserID
-	if eventActor == "" && sc.System {
-		eventActor = task.UserID
-	}
-	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, source, eventActor, answeredBy, "todo_answer_received", &msg, map[string]any{"question_id": q.ID, "todo_id": todo.ID, "task_title": task.Title, "todo_title": todo.Title}, now)
-
-	// Mark the original ask event answered so the timeline renders a readonly
-	// state after refresh (the ask event itself stays as history).
-	for i := range s.taskEvents[task.ID] {
-		ev := &s.taskEvents[task.ID][i]
-		if ev.EventType != "todo_ask_received" {
-			continue
+	// T2.2：用 mutateTaskUnsafe 包装，Mongo 提交失败时内存零副作用。
+	if appErr := s.mutateTaskUnsafe(task.ID, func(task *model.TaskDetail) *transport.AppError {
+		td := &task.Todos[todoIdx]
+		q.Answer = answer
+		q.AnsweredBy = answeredBy
+		q.AnsweredAt = &now
+		q.TimedOut = timedOut
+		// Resume the parked todo.
+		if td.Status == model.TodoStatusWaitingUser {
+			td.Status = "in_progress"
 		}
-		qid, _ := ev.Metadata["question_id"].(string)
-		if qid != q.ID {
-			continue
-		}
-		if ev.Metadata == nil {
-			ev.Metadata = map[string]any{}
-		}
-		ev.Metadata["answer"] = answer
-		ev.Metadata["answered_by"] = answeredBy
-		ev.Metadata["answered_at"] = now
-		ev.Metadata["timed_out"] = timedOut
-		break
-	}
+		td.LastActivityAt = &now
+		td.RemindCount = 0
+		td.RemindAt = nil
 
-	s.updateTaskStatusUnsafe(task, now)
-	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
-		return nil, nil, mongoWriteError(err)
+		source := "user"
+		if timedOut {
+			source = "system"
+		}
+		msg := fmt.Sprintf("question answered: %s", q.Question)
+		// 事件 actor：用户路径=当前操作者（org 成员协作时记录真实操作者）；系统路径回落任务主人
+		eventActor := sc.UserID
+		if eventActor == "" && sc.System {
+			eventActor = task.UserID
+		}
+		s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, td.ID, source, eventActor, answeredBy, "todo_answer_received", &msg, map[string]any{"question_id": q.ID, "todo_id": td.ID, "task_title": task.Title, "todo_title": td.Title}, now)
+
+		// Mark the original ask event answered so the timeline renders a readonly
+		// state after refresh (the ask event itself stays as history).
+		for i := range s.taskEvents[task.ID] {
+			ev := &s.taskEvents[task.ID][i]
+			if ev.EventType != "todo_ask_received" {
+				continue
+			}
+			qid, _ := ev.Metadata["question_id"].(string)
+			if qid != q.ID {
+				continue
+			}
+			if ev.Metadata == nil {
+				ev.Metadata = map[string]any{}
+			}
+			ev.Metadata["answer"] = answer
+			ev.Metadata["answered_by"] = answeredBy
+			ev.Metadata["answered_at"] = now
+			ev.Metadata["timed_out"] = timedOut
+			break
+		}
+
+		s.updateTaskStatusUnsafe(task, now)
+		return nil
+	}); appErr != nil {
+		return nil, nil, appErr
 	}
 	s.publishTaskUnsafe(task.ID)
 	return s.copyTaskWithArtifactsUnsafe(task), q, nil
@@ -1200,27 +1229,32 @@ func (s *Store) FailTodoByNodeWithMessageID(nodeID, messageID string, in TodoFai
 
 	now := time.Now().UTC()
 	s.markAgentSeenUnsafe(agent.ID, now)
-	if todo.StartedAt == nil {
-		todo.StartedAt = &now
-	}
-	todo.Status = "failed"
-	todo.CompletedAt = nil
-	todo.FailedAt = &now
-	todo.LastActivityAt = &now
-	todo.RemindCount = 0
-	todo.RemindAt = nil
-	todo.CanceledAt = nil
-	errCopy := in.Error
-	todo.Error = &errCopy
-	todo.CancelReason = nil
-	failed := fmt.Sprintf("todo failed: %s", todo.Title)
-	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "agent", agent.ID, agent.Name, "todo_failed", &failed, map[string]any{"todo_id": todo.ID, "error": in.Error, "task_title": task.Title, "todo_title": todo.Title}, now)
+	// T2.2：用 mutateTaskUnsafe 包装，Mongo 提交失败时内存零副作用；
+	// 幂等记账（rememberProcessedMessage）属于跨集合状态，留在提交成功后。
+	if appErr := s.mutateTaskUnsafe(task.ID, func(task *model.TaskDetail) *transport.AppError {
+		td := &task.Todos[todoIdx]
+		if td.StartedAt == nil {
+			td.StartedAt = &now
+		}
+		td.Status = "failed"
+		td.CompletedAt = nil
+		td.FailedAt = &now
+		td.LastActivityAt = &now
+		td.RemindCount = 0
+		td.RemindAt = nil
+		td.CanceledAt = nil
+		errCopy := in.Error
+		td.Error = &errCopy
+		td.CancelReason = nil
+		failed := fmt.Sprintf("todo failed: %s", td.Title)
+		s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, td.ID, "agent", agent.ID, agent.Name, "todo_failed", &failed, map[string]any{"todo_id": td.ID, "error": in.Error, "task_title": task.Title, "todo_title": td.Title}, now)
 
-	s.updateTaskStatusUnsafe(task, now)
-	s.rememberProcessedMessageUnsafe(processedMessageKey("todo.fail", nodeID, messageID), "todo.fail", task.ID)
-	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
-		return nil, mongoWriteError(err)
+		s.updateTaskStatusUnsafe(task, now)
+		return nil
+	}); appErr != nil {
+		return nil, appErr
 	}
+	s.rememberProcessedMessageUnsafe(processedMessageKey("todo.fail", nodeID, messageID), "todo.fail", task.ID)
 	s.refreshAgentExecutionStatusUnsafe(agent.ID, now)
 	if err := s.persistAgentGraphUnsafe(agent.ID); err != nil {
 		return nil, mongoWriteError(err)
@@ -1386,12 +1420,21 @@ func (s *Store) CancelTask(sc Scope, in TaskCancelInput) (*model.TaskDetail, *tr
 		userName = u.Name
 	}
 
-	affectedAgents, cancelNotices := s.cancelTaskUnsafe(task, "user", sc.UserID, userName, in.Reason, now)
-	taskVersion := task.Version
-	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
+	// T2.2：用 mutateTaskUnsafe 包装，Mongo 提交失败时内存零副作用。
+	// 注意：版本号由提交原语统一推进，taskVersion 必须在**提交成功后**取，
+	// 此时才是通知节点用的权威版本（cancel 前任务可能未经任何持久化，
+	// 内存 version 0 → 归一化 1 → 提交推进到 2）。
+	var affectedAgents map[string]struct{}
+	var cancelNotices []model.TodoCancelNotice
+	if appErr := s.mutateTaskUnsafe(task.ID, func(task *model.TaskDetail) *transport.AppError {
+		affectedAgents, cancelNotices = s.cancelTaskUnsafe(task, "user", sc.UserID, userName, in.Reason, now)
+		return nil
+	}); appErr != nil {
 		s.mu.Unlock()
-		return nil, mongoWriteError(err)
+		return nil, appErr
 	}
+	taskVersion := task.Version
+
 	for agentID := range affectedAgents {
 		s.refreshAgentExecutionStatusUnsafe(agentID, now)
 		if err := s.persistAgentGraphUnsafe(agentID); err != nil {
@@ -1516,7 +1559,6 @@ func (s *Store) addCommentUnsafe(task *model.TaskDetail, todoID, actorType, acto
 	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todoID, actorType, actorID, actorName, "task_comment", &content, metadata, at)
 
 	task.UpdatedAt = at
-	task.Version++
 	return comment
 }
 
@@ -1582,7 +1624,6 @@ func (s *Store) updateTaskStatusUnsafe(task *model.TaskDetail, now time.Time) {
 	if task.Status == "canceled" {
 		task.Result = aggregateTaskResult(task.Todos, task.Status)
 		task.UpdatedAt = now
-		task.Version++
 		return
 	}
 	prev := task.Status
@@ -1591,7 +1632,6 @@ func (s *Store) updateTaskStatusUnsafe(task *model.TaskDetail, now time.Time) {
 	task.Status = next
 	task.Result = result
 	task.UpdatedAt = now
-	task.Version++
 	if prev != next {
 		msg := fmt.Sprintf("task status changed: %s -> %s", prev, next)
 		s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, "", "system", "system", "System", "task_status_changed", &msg, map[string]any{"from": prev, "to": next, "task_title": task.Title}, now)
@@ -1789,7 +1829,6 @@ func (s *Store) cancelTaskUnsafe(task *model.TaskDetail, actorType, actorID, act
 	task.CancelReason = reasonPtr
 	task.Result = aggregateTaskResult(task.Todos, task.Status)
 	task.UpdatedAt = now
-	task.Version++
 
 	msg := fmt.Sprintf("task status changed: %s -> canceled", prev)
 	if reason != "" {
@@ -1888,7 +1927,6 @@ func (s *Store) AppendTodo(sc Scope, taskID string, in TodoModifyInput) (*model.
 	}
 	task.Todos = append(task.Todos, todo)
 	task.UpdatedAt = now
-	task.Version++
 
 	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "user", sc.UserID, getAgentName(s, sc.UserID), "todo_appended", &in.Title, map[string]any{
 		"todo_id":    todo.ID,
@@ -1967,7 +2005,6 @@ func (s *Store) InsertTodo(sc Scope, taskID, beforeTodoID string, in TodoModifyI
 	}
 
 	task.UpdatedAt = now
-	task.Version++
 
 	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "user", sc.UserID, getAgentName(s, sc.UserID), "todo_appended", &in.Title, map[string]any{
 		"todo_id":    todo.ID,
@@ -2031,7 +2068,6 @@ func (s *Store) UpdateTodo(sc Scope, taskID, todoID string, in TodoModifyInput) 
 	}
 
 	task.UpdatedAt = now
-	task.Version++
 
 	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todoID, "user", sc.UserID, getAgentName(s, sc.UserID), "todo_updated", nil, map[string]any{
 		"todo_id":    todoID,
@@ -2084,7 +2120,6 @@ func (s *Store) RemoveTodo(sc Scope, taskID, todoID string) (*model.TaskDetail, 
 	}
 
 	task.UpdatedAt = now
-	task.Version++
 
 	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todoID, "user", sc.UserID, getAgentName(s, sc.UserID), "todo_removed", &todoTitle, map[string]any{
 		"todo_id":    todoID,
@@ -2142,7 +2177,6 @@ func (s *Store) ReorderTodos(sc Scope, taskID string, todoIDs []string) (*model.
 
 	task.Todos = reordered
 	task.UpdatedAt = now
-	task.Version++
 
 	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, "", "user", sc.UserID, getAgentName(s, sc.UserID), "todos_reordered", nil, map[string]any{
 		"count": len(todoIDs),

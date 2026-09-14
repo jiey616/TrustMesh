@@ -314,7 +314,6 @@ func (s *Store) resetArchivedProjectTasksUnsafe(project *model.Project, now time
 
 		task.Result = aggregateTaskResult(task.Todos, task.Status)
 		task.UpdatedAt = now
-		task.Version++
 
 		if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
 			return nil, err

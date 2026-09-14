@@ -160,6 +160,11 @@ type Store struct {
 	mongoTimeout           time.Duration
 	log                    *zap.Logger
 
+	// persistFailForTest 是仅供测试使用的强制失败开关（生产零成本）：
+	// 置 true 时 persistTaskBundleUnsafe / persistTaskUnsafe 直接返回错误，
+	// 用于验证「Mongo 写入失败时内存零副作用」。生产路径永不置位。
+	persistFailForTest bool
+
 	userSubscribers map[string]map[chan model.UserStreamEvent]struct{}
 }
 
@@ -441,11 +446,68 @@ func copyMap(in map[string]any) map[string]any {
 	return out
 }
 
+// mongoWriteError 把底层持久化错误包装成统一的 *transport.AppError。
+//
+// 关键：若 err 本身已是 *transport.AppError（例如 applyTaskVersionedReplaceLocked
+// 返回的 TASK_VERSION_CONFLICT / 其内部的 mongoWriteError），**原样透传**，绝不二次
+// 包成 INTERNAL_ERROR —— 否则版本冲突的 409 业务码会被「吞掉」成 500，调用方无法
+// 据此重试。这与 T2.1 会议域的处理一致（会议域的写路径直接返回 *transport.AppError，
+// 不经过本函数）。
 func mongoWriteError(err error) *transport.AppError {
+	if err == nil {
+		return nil
+	}
+	if ae, ok := err.(*transport.AppError); ok {
+		// typed-nil 防御：接口非 nil 但内部指针为 nil。调用方都在「err != nil」分支里，
+		// 期望拿到一个真实错误，因此这里必须返回可用的 500，而不是 nil。
+		if ae == nil {
+			return &transport.AppError{
+				Status:  500,
+				Code:    "INTERNAL_ERROR",
+				Message: "failed to persist state",
+			}
+		}
+		return ae
+	}
 	return &transport.AppError{
 		Status:  500,
 		Code:    "INTERNAL_ERROR",
 		Message: "failed to persist state",
 		Details: map[string]any{"cause": err.Error()},
 	}
+}
+
+// mutateTaskUnsafe 是任务域核心写路径的**零副作用提交包装器**（T2.2，参考会议域的
+// write-through 思路）：
+//
+//  1. 先按 taskID 取内存对象并深拷贝一份快照；
+//  2. 在持锁内执行 fn(task) 就地改写内存（fn 必须直接改入参 task，不要重新从
+//     s.tasks 取值，否则快照回滚会失效）；
+//  3. 若 fn 返回错误 → 用快照还原 s.tasks[taskID]，立即返回（fn 内的任何改动作废）；
+//  4. 若 fn 成功 → 调用权威提交原语 persistTaskBundleUnsafe（带乐观锁的版本化 Mongo 写）；
+//  5. 若 persist 失败 → 用快照还原 s.tasks[taskID]，返回错误（内存零副作用）。
+//
+// 关键不变量：调用方在锁内、且本函数返回前要么内存与 Mongo 都已推进，要么二者都回滚到
+// 进入前的快照。任何「先改内存、后 persist」的调用点都可安全替换为对本包装器的调用。
+//
+// 注意：fn 内若还改动了 task 之外的集合（如 s.taskComments / s.taskEvents），那些集合
+// 的回滚不在本包装器职责内（与会议域 AddMeetingMessage 同款「可调残留」取舍）。
+func (s *Store) mutateTaskUnsafe(taskID string, fn func(*model.TaskDetail) *transport.AppError) *transport.AppError {
+	task, ok := s.tasks[taskID]
+	if !ok {
+		return transport.NotFound("task not found")
+	}
+	snapshot := copyTask(task)
+	if appErr := fn(task); appErr != nil {
+		s.tasks[taskID] = snapshot
+		return appErr
+	}
+	if pErr := s.persistTaskBundleUnsafe(taskID); pErr != nil {
+		s.tasks[taskID] = snapshot
+		if ae, ok := pErr.(*transport.AppError); ok {
+			return ae
+		}
+		return mongoWriteError(pErr)
+	}
+	return nil
 }

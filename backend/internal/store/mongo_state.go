@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"trustmesh/backend/internal/config"
 	"trustmesh/backend/internal/metrics"
 	"trustmesh/backend/internal/model"
+	"trustmesh/backend/internal/transport"
 )
 
 type processedMessageRecord struct {
@@ -306,6 +308,9 @@ func (s *Store) loadMongoState() error {
 	if err != nil {
 		return err
 	}
+	// T2.2 存量兼容：先把「无 version 字段」的存量任务文档补成 1，再载入 ——
+	// 否则带 {_id, version} 乐观锁 filter 的更新永远匹配不上 → 生产全量写失败。
+	s.backfillTaskVersions()
 	tasks, projectTasks, err := s.loadTasks()
 	if err != nil {
 		return err
@@ -642,6 +647,9 @@ func (s *Store) loadTasks() (map[string]*model.TaskDetail, map[string][]string, 
 	})
 	for i := range tasks {
 		task := tasks[i]
+		// T2.2：存量文档没有 version 字段，解码后为 0 → 归一化为 1，
+		// 与库内（启动时已 backfill）保持一致，避免乐观锁 filter 失配。
+		normalizeTaskVersion(&task)
 		items[task.ID] = copyTask(&task)
 		projectTasks[task.ProjectID] = append(projectTasks[task.ProjectID], task.ID)
 	}
@@ -848,13 +856,23 @@ func (s *Store) persistAgentChatUnsafe(chat *model.AgentChat) error {
 	return err
 }
 func (s *Store) persistTaskUnsafe(task *model.TaskDetail) error {
-	if !s.mongoEnabled || s.mongoTasks == nil || task == nil {
+	if task == nil {
 		return nil
 	}
-	ctx, cancel := s.mongoContext()
-	defer cancel()
-	_, err := s.mongoTasks.ReplaceOne(ctx, bson.M{"_id": task.ID}, copyTask(task), options.Replace().SetUpsert(true))
-	return err
+	// T2.2：委托给带乐观锁的版本化替换（权威提交原语）。persistAgentGraphUnsafe 等
+	// 直接调用点也会因此自动获得版本锁保护。
+	//
+	// 注意：本函数返回 error（interface），而 applyTaskVersionedReplaceLocked 返回
+	// *transport.AppError。**不能**直接 `return s.applyTaskVersionedReplaceLocked(task)`——
+	// 成功时它返回的是「nil 指针」，装进 error 接口后 **非 nil**（Go typed-nil 陷阱），
+	// 调用方会误判为失败（曾导致 CreateTaskByPMNode 返回 (nil, nil)）。必须显式判空。
+	if s.persistFailForTest {
+		return fmt.Errorf("injected task persist failure")
+	}
+	if appErr := s.applyTaskVersionedReplaceLocked(task); appErr != nil {
+		return appErr
+	}
+	return nil
 }
 
 func (s *Store) persistTaskEventsUnsafe(taskID string) error {
@@ -944,15 +962,267 @@ func (s *Store) persistAgentGraphUnsafe(agentID string) error {
 	return nil
 }
 
+// persistTaskBundleUnsafe 是任务域的**权威提交原语**（T2.2）：
+//
+//	① 先对任务文档做带乐观锁的版本化 Mongo 全量替换并确认（applyTaskVersionedReplaceLocked）；
+//	② 成功后才由调用方（mutateTaskUnsafe / 各写路径）落实内存；失败则**不产生内存副作用**。
+//	③ 任务文档落库成功后，再持久化事件流（persistTaskEventsUnsafe）。事件是派生量、
+//	   可经 history 重算，单条失败仅告警、不阻断本次提交（与会议域 T2.1 同理）。
+//
+// 注意：本函数不在持锁语义之外；调用方必须已在 s.mu 持锁内（*Unsafe 约定）。
 func (s *Store) persistTaskBundleUnsafe(taskID string) error {
+	if s.persistFailForTest {
+		return fmt.Errorf("injected task persist failure")
+	}
 	task, ok := s.tasks[taskID]
 	if !ok {
 		return nil
 	}
-	if err := s.persistTaskUnsafe(task); err != nil {
-		return err
+	if appErr := s.applyTaskVersionedReplaceLocked(task); appErr != nil {
+		return appErr
 	}
-	return s.persistTaskEventsUnsafe(taskID)
+	if err := s.persistTaskEventsUnsafe(taskID); err != nil {
+		if s.log != nil {
+			s.log.Warn("failed to persist task events (derived, re-syncable)",
+				zap.String("task_id", taskID), zap.Error(err))
+		}
+	}
+	return nil
+}
+
+// ─── T2.2：任务域「Mongo 权威」写序与乐观锁 ───
+//
+// 任务域自 T2.2 起改为 **Mongo 权威**：所有写路径一律「先落库成功，再改内存」——
+// 通过 persistTaskBundleUnsafe 统一提交原语实现。与会议域 T2.1 同理，Mongo 写
+// 失败或版本冲突时**直接返错、内存零副作用**。
+//
+// 已知代价同 T2.1：Mongo I/O 在 s.mu 持锁内执行，临界区被拉长（MONGO_TIMEOUT 5s）。
+
+// taskVersionFloor 任务版本号起始值：新建任务从 1 开始；
+// 「存量 version <= 0」的文档在载入 / 回填时统一归一化为 1，
+// 保证乐观锁 filter（{_id, version}）永远有确定的基准值。
+const taskVersionFloor = 1
+
+// taskVersionConflictCode / taskVersionConflictMessage 是版本冲突出口共用的业务码
+// （HTTP 409）与文案；调用方按 code 判定「要不要重试」，文案不参与判定。
+const (
+	taskVersionConflictCode    = "TASK_VERSION_CONFLICT"
+	taskVersionConflictMessage = "task was modified concurrently, please retry"
+)
+
+// taskVersionConflict 构造统一形态的版本冲突错误。
+func taskVersionConflict() *transport.AppError {
+	return transport.Conflict(taskVersionConflictCode, taskVersionConflictMessage)
+}
+
+// isTaskVersionConflict 判定一个错误是否为版本冲突（调用方据此决定要不要重试）。
+func isTaskVersionConflict(appErr *transport.AppError) bool {
+	return appErr != nil && appErr.Code == taskVersionConflictCode
+}
+
+// normalizeTaskVersion 把缺失 / 非法的 version 归一化为 taskVersionFloor。
+//
+// 存量任务文档（T2.2 之前写入）没有 version 字段，解码后为 0；若不归一化，
+// 后续带 {_id, version} filter 的更新永远匹配不上 —— 该任务会被永久锁死。
+// 归一化只在内存解码 / 载入路径上做，库内真值由 backfillTaskVersions 补齐。
+func normalizeTaskVersion(task *model.TaskDetail) {
+	if task == nil {
+		return
+	}
+	if task.Version < 1 {
+		task.Version = taskVersionFloor
+	}
+}
+
+// applyTaskVersionedReplaceLocked 在持锁内对任务执行一次带乐观锁的 Mongo 全量替换。
+//
+// 契约（调用方必须遵守）：
+//   - filter = {_id: task.ID, version: cur}，全量 ReplaceOne 且 Upsert(true)；
+//   - Mongo 报错         → mongoWriteError(500)，调用方须立即返回，**不得改任何内存字段**；
+//   - 未命中（ModifiedCount==0 且 UpsertedCount==0）→ 见下方 healZeroVersionTaskLocked：
+//     先排除「存量 version<=0 文档」这种可自愈形态，仍然不行才 409 TASK_VERSION_CONFLICT；
+//   - 成功               → 内存对象的 Version 推进到 cur+1，调用方再写其余内存字段。
+//
+// 为什么 ModifiedCount==0 就能判定「未命中」：$set 里 version 恒从 cur 变成 cur+1，
+// 因此「命中」必然「修改」，ModifiedCount==0 ⟺ filter 未命中。
+func (s *Store) applyTaskVersionedReplaceLocked(task *model.TaskDetail) *transport.AppError {
+	normalizeTaskVersion(task)
+	cur := task.Version
+	next := cur + 1
+
+	// 纯内存模式（Mongo 未启用）：没有权威库可比，仍然推进版本以保持内存自洽。
+	if !s.mongoEnabled || s.mongoTasks == nil {
+		task.Version = next
+		return nil
+	}
+
+	doc := copyTask(task)
+	doc.Version = next
+
+	// Mongo 写在持锁内，会拉长临界区 —— 本批接受，T2.5 再拆细粒度锁。
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+	res, err := s.mongoTasks.ReplaceOne(ctx, bson.M{"_id": task.ID, "version": cur}, doc, options.Replace().SetUpsert(true))
+	// Upsert 的 filter 含 _id：当文档已存在但 version 与 cur 不匹配时（真实并发落后，
+	// 或滚动发布期间由旧镜像（无 Version 字段）写出的存量 version<=0 文档），服务端
+	// **不会**返回 ModifiedCount==0，而是尝试插入一个同 _id 的新文档 → E11000 duplicate
+	// key。必须把这种错误并入「未命中」分支（heal / 409 conflict），否则版本冲突会被
+	// 误报成 500，且 heal 分支永远不可达。
+	if err != nil && !mongo.IsDuplicateKeyError(err) {
+		return mongoWriteError(err)
+	}
+	if err == nil && res != nil && (res.ModifiedCount > 0 || res.UpsertedCount > 0) {
+		task.Version = next
+		return nil
+	}
+
+	// 未命中除了「真实并发落后」，还有一种**一旦发生就永久锁死**的存量形态
+	// （库内 version<=0 而内存已被归一化成 1），必须自愈 —— 见下面的注释。
+	if appErr := s.healZeroVersionTaskLocked(task, cur); appErr != nil {
+		return appErr
+	}
+	task.Version = next
+	return nil
+}
+
+// healZeroVersionTaskLocked 处理 filter 未命中的**存量兼容**分支（P1）。
+//
+// 未命中（ModifiedCount == 0）有两种成因，必须区分：
+//  1. 真实并发落后：库内 version 是合法的（> 0）但已被别的写方推进 → 维持 409，
+//     不允许掩盖，否则就退化成「后写静默覆盖先写」，正是乐观锁要消灭的问题；
+//  2. 存量非法文档：version 缺失 / 显式 0 / null / 负数。这类文档一旦被命中，
+//     **每次**更新都会 409，而且**重启也救不回来** —— 启动时的一次性回填覆盖不到
+//     滚动发布期间由旧镜像（无 Version 字段）新建出来的文档，等于该任务永久锁死。
+//
+// 对 ② 做一次性自愈：先把库内 version 修成内存认定的 cur（此刻库内的值本来就是非法的，
+// 因此这次修不用带 version filter），再重试一次正常的版本化替换。
+//
+// 这是纯存量兼容修复，**不改变并发语义**：唯一被放宽的是「version <= 0」这种明确
+// 非法的历史取值，正常写路径永远不会在库里留下 <= 0 的版本。
+func (s *Store) healZeroVersionTaskLocked(task *model.TaskDetail, cur int) *transport.AppError {
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+
+	var doc struct {
+		Version int `bson:"version"`
+	}
+	if err := s.mongoTasks.FindOne(ctx, bson.M{"_id": task.ID}).Decode(&doc); err != nil {
+		// 文档不存在（或读取失败）→ 不是版本问题，维持冲突语义。
+		return taskVersionConflict()
+	}
+	if doc.Version > 0 {
+		// 合法但已落后 → 真实并发冲突，如实上报。
+		return taskVersionConflict()
+	}
+
+	// 存量非法值：先修成 cur，再按正常路径重试一次。
+	if _, err := s.mongoTasks.UpdateOne(ctx, bson.M{"_id": task.ID}, bson.M{"$set": bson.M{"version": cur}}); err != nil {
+		return mongoWriteError(err)
+	}
+	retryDoc := copyTask(task)
+	retryDoc.Version = cur + 1
+	retry, err := s.mongoTasks.ReplaceOne(ctx, bson.M{"_id": task.ID, "version": cur}, retryDoc, options.Replace().SetUpsert(true))
+	if err != nil {
+		return mongoWriteError(err)
+	}
+	if retry == nil || (retry.ModifiedCount == 0 && retry.UpsertedCount == 0) {
+		return taskVersionConflict()
+	}
+	return nil
+}
+
+// backfillTaskVersions 为「存量无合法 version」的任务文档补 version=1（T2.2）。
+//
+// 为什么要补：T2.2 起所有任务更新都带 {_id, version} 乐观锁 filter；存量文档解码后
+// version 为 0（库里根本没这个字段），filter 永远匹配不上 → 该任务任何更新都判冲突，
+// 等于生产全量写失败。
+//
+// filter 用 {"version": {"$not": {"$gt": 0}}} 而非 {"version": {"$exists": false}}：
+// 后者漏掉了「显式 0 / null / 负数」以及**滚动发布期间由旧镜像（无 Version 字段）新建、
+// 但本实例回填启动时点已过**的文档 —— 这类文档对当前进程同样永久不可写。一次性把
+// 缺失 / null / 0 / 负数全部归一，避免永久锁死。
+//
+// 幂等：重复执行无副作用。失败只告警不阻断启动 —— 载入路径上的 normalizeTaskVersion
+// 会把内存侧归一化，最坏退化成「更新报冲突」，而 applyTaskVersionedReplaceLocked 的
+// healZeroVersionTaskLocked 还能在写入时再自愈一次，不会静默丢数据。
+func (s *Store) backfillTaskVersions() {
+	if !s.mongoEnabled || s.mongoTasks == nil {
+		return
+	}
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+	res, err := s.mongoTasks.UpdateMany(ctx,
+		bson.M{"version": bson.M{"$not": bson.M{"$gt": 0}}},
+		bson.M{"$set": bson.M{"version": taskVersionFloor}},
+	)
+	if err != nil {
+		if s.log != nil {
+			s.log.Warn("failed to backfill task version field", zap.Error(err))
+		}
+		return
+	}
+	if s.log != nil && res != nil && res.ModifiedCount > 0 {
+		s.log.Info("backfilled task version field", zap.Int64("tasks", res.ModifiedCount))
+	}
+}
+
+// ─── 双写校验（T2.2 过渡期） ───
+
+// VerifyTaskConsistency 校验内存任务缓存与 Mongo 文档是否一致（T2.2 双写过渡期）。
+//
+// 返回 (检查条数, 不一致条数, 错误)。生产可调用、**无副作用**：只在 RLock 下取一份
+// 内存快照，然后逐条 FindOne 比对，不写任何集合。
+// 过渡期应当恒为 mismatched == 0；非 0 表示内存与 Mongo 已经分叉，需要人工介入。
+// Mongo 未启用时返回 (0, 0, nil) —— 没有第二份数据可比。
+func (s *Store) VerifyTaskConsistency() (int, int, error) {
+	if !s.mongoEnabled || s.mongoTasks == nil {
+		return 0, 0, nil
+	}
+
+	s.mu.RLock()
+	snapshot := make([]model.TaskDetail, 0, len(s.tasks))
+	for _, t := range s.tasks {
+		if t != nil {
+			snapshot = append(snapshot, *t)
+		}
+	}
+	s.mu.RUnlock()
+
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+
+	mismatched := 0
+	for i := range snapshot {
+		want := snapshot[i]
+		var got model.TaskDetail
+		err := s.mongoTasks.FindOne(ctx, bson.M{"_id": want.ID}).Decode(&got)
+		if err != nil {
+			if errors.Is(err, mongo.ErrNoDocuments) {
+				// 内存有、库里没有 —— 正是改造前「重启即丢」的分叉形态。
+				mismatched++
+				continue
+			}
+			return len(snapshot), mismatched, err
+		}
+		if !taskSnapshotMatches(want, got) {
+			mismatched++
+		}
+	}
+	return len(snapshot), mismatched, nil
+}
+
+// taskSnapshotMatches 判定一份内存快照与 Mongo 文档的关键字段是否一致。
+//
+// 只比写路径会改动的**稳定**字段；todos 只比条数（数组深比会引入排序 / 时间的噪声）。
+// 刻意**不比 UpdatedAt**：BSON Date 只有毫秒精度，而内存 time.Now() 带纳秒，序列化落库
+// 再读回必然截断到毫秒 → `Equal` 恒判不等，会制造假 mismatch（会议域 T2.1 的
+// meetingSnapshotMatches 同样刻意避开时间字段）。
+func taskSnapshotMatches(want, got model.TaskDetail) bool {
+	return want.Status == got.Status &&
+		want.Version == got.Version &&
+		want.Title == got.Title &&
+		want.ProjectID == got.ProjectID &&
+		len(want.Todos) == len(got.Todos)
 }
 
 func (s *Store) loadComments() (map[string][]model.Comment, error) {

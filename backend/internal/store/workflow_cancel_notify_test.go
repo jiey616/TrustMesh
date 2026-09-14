@@ -60,8 +60,10 @@ func TestCancelTaskNotifiesAssigneeNodes(t *testing.T) {
 	if call.taskID != "task-cancel-1" {
 		t.Fatalf("hook taskID = %q, want task-cancel-1", call.taskID)
 	}
-	if call.version != 1 {
-		t.Fatalf("hook version = %d, want 1 (task.Version incremented once by cancel)", call.version)
+	// T2.2：版本号由提交原语统一推进。测试任务初始 Version=0（未经过任何持久化），
+	// 取消时归一化为 1，再由版本化提交推进到 2，hook 收到的是提交成功后的权威版本 2。
+	if call.version != 2 {
+		t.Fatalf("hook version = %d, want 2 (task.Version advances 0->normalize 1->persist 2 on cancel)", call.version)
 	}
 	if len(call.notices) != 2 {
 		t.Fatalf("notices = %+v, want exactly TD_01+TD_02", call.notices)
