@@ -14,6 +14,7 @@ import {
   SwapOutlined,
   FileTextOutlined,
   RobotOutlined,
+  SaveOutlined,
   UserOutlined,
   FileDoneOutlined,
   DownloadOutlined,
@@ -30,6 +31,7 @@ import {
   useTasks,
   useAppendTaskMessage,
   useAddTaskComment,
+  useDistillTaskWorkflowTemplate,
 } from '@/hooks/useTasks'
 import { useProject, useWorkflowProgress } from '@/hooks/useProjects'
 import { useAgents } from '@/hooks/useAgents'
@@ -1097,6 +1099,7 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
   const cancelTask = useCancelTask()
   const appendMessage = useAppendTaskMessage()
   const addComment = useAddTaskComment()
+  const distill = useDistillTaskWorkflowTemplate()
   const [showCancel, setShowCancel] = useState(false)
   const [resultOpen, setResultOpen] = useState(false)
   const [todoOpen, setTodoOpen] = useState(false)
@@ -1165,6 +1168,17 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
       setShowCancel(false)
     } catch {
       message.error('取消失败')
+    }
+  }
+
+  const handleDistill = async () => {
+    if (!taskId) return
+    try {
+      const res = await distill.mutateAsync({ taskId })
+      const name = (res.data as { name?: string } | undefined)?.name
+      message.success(name ? `已沉淀为模板「${name}」` : '已沉淀为工作流模板')
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '沉淀失败')
     }
   }
 
@@ -1245,6 +1259,17 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
             </Badge>
           )}
           <Button size="small" icon={<FileDoneOutlined />} title="查看交付成果" onClick={() => setResultOpen(true)} />
+          {task.status === 'done' && (
+            <Button
+              size="small"
+              icon={<SaveOutlined />}
+              title="把该任务的实际执行步骤沉淀为可复用的全局工作流模板"
+              loading={distill.isPending}
+              onClick={handleDistill}
+            >
+              沉淀为模板
+            </Button>
+          )}
           <Button type="text" icon={<CloseOutlined />} onClick={onClose} />
         </Space>
       </div>

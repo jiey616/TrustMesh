@@ -229,3 +229,13 @@ function invalidateTask(qc: ReturnType<typeof useQueryClient>, taskId: string) {
   qc.invalidateQueries({ queryKey: ['tasks', 'detail', taskId, 'comments'] })
   qc.invalidateQueries({ queryKey: ['projects'] })
 }
+
+export function useDistillTaskWorkflowTemplate() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ taskId, name, description }: { taskId: string; name?: string; description?: string }) =>
+      tasksApi.distillTaskWorkflowTemplate(taskId, { name, description }),
+    // 沉淀会新建一个全局模板 → 让模板列表页立即刷新
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['workflow-templates'] }),
+  })
+}

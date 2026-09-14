@@ -1,5 +1,5 @@
 import { apiClient } from './client'
-import type { ApiResponse, ApiListResponse, TaskDetail, TaskListItem, TaskPriority, Workflow, Event, Comment, AppendTaskMessageRequest, AddTaskCommentInput, TaskArtifact, ChatAttachment } from '@/types'
+import type { ApiResponse, ApiListResponse, TaskDetail, TaskListItem, TaskPriority, Workflow, Event, Comment, AppendTaskMessageRequest, AddTaskCommentInput, TaskArtifact, ChatAttachment, WorkflowTemplate } from '@/types'
 
 export interface CreateTaskInput {
   title: string
@@ -131,4 +131,15 @@ export async function bindArtifactOutput(
   return apiClient
     .post(`tasks/${taskId}/todos/${todoId}/outputs/bind`, { json: input })
     .json<ApiResponse<TaskArtifact>>()
+}
+
+// T1.9：把一个已完成任务一键沉淀为全局工作流模板。
+// 后端挂在 /tasks/:id/distill-template；body 可选，缺省时模板名回退为任务标题。
+export async function distillTaskWorkflowTemplate(
+  taskId: string,
+  input?: { name?: string; description?: string },
+) {
+  return apiClient
+    .post(`tasks/${taskId}/distill-template`, { json: input ?? {} })
+    .json<ApiResponse<WorkflowTemplate>>()
 }
