@@ -3,10 +3,10 @@ package model
 import "time"
 
 type AgentChatMessage struct {
-	ID              string    `json:"id" bson:"id"`
-	SenderType      string    `json:"sender_type" bson:"sender_type"`
-	Direction       string    `json:"direction" bson:"direction"`
-	Content         string    `json:"content" bson:"content"`
+	ID              string           `json:"id" bson:"id"`
+	SenderType      string           `json:"sender_type" bson:"sender_type"`
+	Direction       string           `json:"direction" bson:"direction"`
+	Content         string           `json:"content" bson:"content"`
 	Status          string           `json:"status" bson:"status"`
 	RemoteMessageID string           `json:"remote_message_id,omitempty" bson:"remote_message_id,omitempty"`
 	Attachments     []ChatAttachment `json:"attachments,omitempty" bson:"attachments,omitempty"`
@@ -38,7 +38,7 @@ type AgentChatSessionSummary struct {
 
 type AgentChat struct {
 	ID          string             `bson:"_id"`
-	OrgID string `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属
+	OrgID       string             `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属
 	UserID      string             `bson:"user_id"`
 	AgentID     string             `bson:"agent_id"`
 	AgentNodeID string             `bson:"agent_node_id"`

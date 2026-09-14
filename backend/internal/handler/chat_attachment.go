@@ -223,7 +223,6 @@ func EnrichAgentChatDetailURLs(detail *model.AgentChatDetail, externalURL string
 	}
 }
 
-
 // EnrichAttachmentURLs fills the URL field of any attachment on the given
 // messages' attachments using fresh signed tokens. The input messages must be
 // owned copies (not store-internal live objects).

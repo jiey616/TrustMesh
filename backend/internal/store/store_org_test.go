@@ -500,6 +500,7 @@ func TestFinalizePlanByPMNodeAssigneeScope(t *testing.T) {
 		t.Fatal("cross-org assignee must be rejected")
 	}
 }
+
 // ---------- 阶段 2-2 写路径：新建任务的租户落点 ----------
 
 // TestCreateTaskOwnerOrg 新建任务必须挂到「活跃租户」，
@@ -582,6 +583,7 @@ func TestCreateTaskOwnerOrg(t *testing.T) {
 		_ = err
 	}
 }
+
 // ---------- 阶段 2-3：Agent / AgentChat 归属收敛 ----------
 
 // seedAgentFixture 构造 orgA(u1 拥有，u2 成员) 与 orgB(u9 拥有) 各一个 agent，
@@ -1093,7 +1095,6 @@ func TestBindArtifactOutputScoped(t *testing.T) {
 	}
 }
 
-
 // ─── 阶段 2-5b：Meeting + Comment 归属收敛 ───
 
 func seedMeetingFixture(s *Store, orgA, orgB *model.Organization) {
@@ -1531,6 +1532,7 @@ func TestExternalAppScopedVisibility(t *testing.T) {
 		t.Fatalf("u1 without org ctx should see own app, got %d", len(got))
 	}
 }
+
 // 仪表盘活动流的租户隔离：企业空间只看本租户活动，个人空间退回 user 维度。
 func TestDashboardActivityFeedOrgScoped(t *testing.T) {
 	s := New()

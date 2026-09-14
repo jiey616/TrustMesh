@@ -86,8 +86,8 @@ func (s *Store) runOpsScanOnce(rt opsRuntime) {
 	now := time.Now().UTC()
 	s.mu.Lock()
 
-	hits := make(map[string]bool)  // dedupeKey → 本轮命中
-	var newIncidents []string      // 本轮新建工单 → 解锁后触发干预
+	hits := make(map[string]bool) // dedupeKey → 本轮命中
+	var newIncidents []string     // 本轮新建工单 → 解锁后触发干预
 
 	for _, task := range s.tasks {
 		// 与 timeout monitor 同款口径：只盯执行态任务。

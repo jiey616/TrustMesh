@@ -6,21 +6,21 @@ import "time"
 // Files can be user uploads or agent artifacts auto-indexed from transfer.received.
 // When IsFolder is true, the record represents a user-created directory.
 type ProjectFile struct {
-	ID          string    `json:"id" bson:"_id"`
-	ProjectID   string    `json:"project_id" bson:"project_id"`
-	OrgID       string    `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属（阶段 0 仅加字段）
-	ParentID    string    `json:"parent_id,omitempty" bson:"parent_id,omitempty"`
-	TaskID      string    `json:"task_id,omitempty" bson:"task_id,omitempty"`
-	AgentID     string    `json:"agent_id,omitempty" bson:"agent_id,omitempty"`
-	AgentName   string    `json:"agent_name,omitempty" bson:"agent_name,omitempty"`
-	FileName    string    `json:"file_name" bson:"file_name"`
-	FileSize    int64     `json:"file_size" bson:"file_size"`
-	MimeType    string    `json:"mime_type" bson:"mime_type"`
-	LocalPath   string    `json:"-" bson:"local_path"`
-	Source      string    `json:"source" bson:"source"`           // "user_upload" | "agent_artifact" | "meeting_minutes"
-	IsFolder    bool      `json:"is_folder" bson:"is_folder"`
-	TransferID  string    `json:"transfer_id,omitempty" bson:"transfer_id,omitempty"`
-	MeetingID   string    `json:"meeting_id,omitempty" bson:"meeting_id,omitempty"`
+	ID         string `json:"id" bson:"_id"`
+	ProjectID  string `json:"project_id" bson:"project_id"`
+	OrgID      string `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属（阶段 0 仅加字段）
+	ParentID   string `json:"parent_id,omitempty" bson:"parent_id,omitempty"`
+	TaskID     string `json:"task_id,omitempty" bson:"task_id,omitempty"`
+	AgentID    string `json:"agent_id,omitempty" bson:"agent_id,omitempty"`
+	AgentName  string `json:"agent_name,omitempty" bson:"agent_name,omitempty"`
+	FileName   string `json:"file_name" bson:"file_name"`
+	FileSize   int64  `json:"file_size" bson:"file_size"`
+	MimeType   string `json:"mime_type" bson:"mime_type"`
+	LocalPath  string `json:"-" bson:"local_path"`
+	Source     string `json:"source" bson:"source"` // "user_upload" | "agent_artifact" | "meeting_minutes"
+	IsFolder   bool   `json:"is_folder" bson:"is_folder"`
+	TransferID string `json:"transfer_id,omitempty" bson:"transfer_id,omitempty"`
+	MeetingID  string `json:"meeting_id,omitempty" bson:"meeting_id,omitempty"`
 	// Kind carries the artifact file-nature for agent_artifact uploads:
 	// "deliverable" (declared outputName, bound to a workflow step output)
 	// or "process". Empty for user uploads / legacy records.
@@ -83,20 +83,20 @@ type BreadcrumbNode struct {
 // VirtualFolder represents a synthetic folder node that is not persisted as a
 // real ProjectFile record. Used for artifact hierarchy (task/agent grouping).
 type VirtualFolder struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	ItemCount int   `json:"item_count,omitempty"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	ItemCount int    `json:"item_count,omitempty"`
 }
 
 // BrowseFilesResult contains the contents of a single folder level plus breadcrumbs.
 // VirtualFolders are synthetic paths (e.g. __artifacts__ / __task__<id> / __agent__<id><aid>)
 // that organise agent artifacts into a browsable hierarchy.
 type BrowseFilesResult struct {
-	ParentID      string           `json:"parent_id"`
-	VirtualFolders []VirtualFolder `json:"virtual_folders,omitempty"`
-	Folders       []ProjectFile    `json:"folders"`
-	Files         []ProjectFile    `json:"files"`
-	Breadcrumbs   []BreadcrumbNode `json:"breadcrumbs"`
+	ParentID       string           `json:"parent_id"`
+	VirtualFolders []VirtualFolder  `json:"virtual_folders,omitempty"`
+	Folders        []ProjectFile    `json:"folders"`
+	Files          []ProjectFile    `json:"files"`
+	Breadcrumbs    []BreadcrumbNode `json:"breadcrumbs"`
 }
 
 // ---- Artifact grouping (by Task → Agent) ----

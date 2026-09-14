@@ -174,3 +174,88 @@ func TestMeetingVisibilityAfterSimulatedRehydrate(t *testing.T) {
 		t.Fatalf("cross-org message was appended, msgCount = %d", msgCount)
 	}
 }
+
+// T1.2 会议会话态（write-through）：AddMeetingMessage 必须把消息的
+// phase / target / 发言轮数 / 最后活动时间镜像到会议记录上，供重启后「续开」判断
+// 「会议进行到哪、上一次点到谁」。
+func TestMeetingSessionStateMirrorsMessages(t *testing.T) {
+	s := New()
+	created, appErr := s.CreateMeeting(Scope{UserID: "u1"}, &model.Meeting{Title: "会话态", Agenda: "议程"})
+	if appErr != nil {
+		t.Fatalf("create meeting: %v", appErr)
+	}
+
+	post := func(msg model.MeetingMessage) {
+		t.Helper()
+		if _, err := s.AddMeetingMessage(Scope{UserID: "u1"}, &msg); err != nil {
+			t.Fatalf("add message %q: %v", msg.Content, err)
+		}
+	}
+
+	post(model.MeetingMessage{MeetingID: created.ID, SenderType: "user", SenderID: "u1", Content: "开始会议"})
+	post(model.MeetingMessage{MeetingID: created.ID, SenderType: "agent", SenderID: "host", SenderName: "PM", Phase: "init", Target: "all", Content: "广播议程"})
+	post(model.MeetingMessage{MeetingID: created.ID, SenderType: "agent", SenderID: "host", SenderName: "PM", Phase: "speak", Target: "ag-1", Content: "请发言"})
+	post(model.MeetingMessage{MeetingID: created.ID, SenderType: "agent", SenderID: "ag-1", SenderName: "编剧", Phase: "speak", Target: "host", Content: "我的观点"})
+
+	m, appErr := s.GetMeeting(Scope{UserID: "u1"}, created.ID)
+	if appErr != nil {
+		t.Fatalf("get meeting: %v", appErr)
+	}
+	if m.LastPhase != "speak" {
+		t.Fatalf("LastPhase = %q, want speak", m.LastPhase)
+	}
+	if m.LastTarget != "host" {
+		t.Fatalf("LastTarget = %q, want host", m.LastTarget)
+	}
+	if m.SpeakerTurns != 3 { // host init + host speak + ag-1 speak
+		t.Fatalf("SpeakerTurns = %d, want 3", m.SpeakerTurns)
+	}
+	if m.LastActivityAt.IsZero() {
+		t.Fatal("LastActivityAt must be set after messages")
+	}
+}
+
+// T1.2 会议会话态回填：存量会议（文档无会话字段）重启载入后，
+// backfillMeetingSessionUnsafe 必须按历史消息派生会话态；索引乱序时仍取时间上最后一条；
+// 且幂等（已有会话态的会议不再重复累加）。
+func TestMeetingSessionBackfillDerivesFromHistory(t *testing.T) {
+	s := New()
+	t0 := time.Now().UTC()
+	last := t0.Add(2 * time.Second)
+
+	s.mu.Lock()
+	s.meetings["m-legacy"] = &model.Meeting{
+		ID: "m-legacy", Title: "存量会议", CreatorID: "u1", Status: model.MeetingInProgress,
+	}
+	// 故意乱序写入索引，验证回填先按 CreatedAt 排序再取最后一条。
+	for _, msg := range []*model.MeetingMessage{
+		{ID: "x1", MeetingID: "m-legacy", SenderType: "agent", SenderID: "host", Phase: "init", Target: "all", CreatedAt: t0},
+		{ID: "x3", MeetingID: "m-legacy", SenderType: "agent", SenderID: "ag-9", Phase: "speak", Target: "host", CreatedAt: last},
+		{ID: "x2", MeetingID: "m-legacy", SenderType: "agent", SenderID: "host", Phase: "speak", Target: "ag-9", CreatedAt: t0.Add(time.Second)},
+	} {
+		s.meetingMessages[msg.ID] = msg
+		s.meetingMessageIndex["m-legacy"] = append(s.meetingMessageIndex["m-legacy"], msg.ID)
+	}
+	s.backfillMeetingSessionUnsafe()
+	m := s.meetings["m-legacy"]
+	s.mu.Unlock()
+
+	if m.LastPhase != "speak" || m.LastTarget != "host" {
+		t.Fatalf("backfill phase/target = %q/%q, want speak/host", m.LastPhase, m.LastTarget)
+	}
+	if m.SpeakerTurns != 3 {
+		t.Fatalf("backfill SpeakerTurns = %d, want 3", m.SpeakerTurns)
+	}
+	if !m.LastActivityAt.Equal(last) {
+		t.Fatalf("backfill LastActivityAt = %v, want %v", m.LastActivityAt, last)
+	}
+
+	// 幂等：再次回填不得重复累加轮数。
+	s.mu.Lock()
+	s.backfillMeetingSessionUnsafe()
+	turns := s.meetings["m-legacy"].SpeakerTurns
+	s.mu.Unlock()
+	if turns != 3 {
+		t.Fatalf("second backfill must be idempotent, SpeakerTurns = %d", turns)
+	}
+}

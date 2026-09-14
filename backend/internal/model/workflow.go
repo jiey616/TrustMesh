@@ -73,7 +73,7 @@ type Workflow struct {
 // 一份副本进项目（见 Workflow.ParentTemplateID），模板每次保存 Version 自动递增。
 type WorkflowTemplate struct {
 	ID          string         `json:"id" bson:"_id"`
-	OrgID string `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属
+	OrgID       string         `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属
 	UserID      string         `json:"-" bson:"user_id"`
 	Name        string         `json:"name" bson:"name"`
 	Description string         `json:"description,omitempty" bson:"description,omitempty"`
@@ -89,7 +89,7 @@ type WorkflowTemplate struct {
 // pipeline and lets downstream tasks resolve cross-task step inputs against
 // the predecessor task's produced outputs.
 type WorkflowRef struct {
-	WorkflowIndex int    `json:"workflow_index" bson:"workflow_index"` // index into Project.Workflows（旧引用，兼容存量任务）
+	WorkflowIndex int    `json:"workflow_index" bson:"workflow_index"`               // index into Project.Workflows（旧引用，兼容存量任务）
 	WorkflowID    string `json:"workflow_id,omitempty" bson:"workflow_id,omitempty"` // 新引用，优先于 WorkflowIndex
 	WorkflowName  string `json:"workflow_name" bson:"workflow_name"`
 	StepFrom      int    `json:"step_from" bson:"step_from"`
@@ -107,12 +107,12 @@ func (w *Workflow) Clone() *Workflow {
 		return nil
 	}
 	out := &Workflow{
-		ID:                w.ID,
-		ParentTemplateID:  w.ParentTemplateID,
-		TemplateVersion:   w.TemplateVersion,
-		Name:              w.Name,
-		Steps:             make([]WorkflowStep, len(w.Steps)),
-		TemplateSnapshot:  make([]WorkflowStep, len(w.TemplateSnapshot)),
+		ID:               w.ID,
+		ParentTemplateID: w.ParentTemplateID,
+		TemplateVersion:  w.TemplateVersion,
+		Name:             w.Name,
+		Steps:            make([]WorkflowStep, len(w.Steps)),
+		TemplateSnapshot: make([]WorkflowStep, len(w.TemplateSnapshot)),
 	}
 	copy(out.Steps, w.Steps)
 	copy(out.TemplateSnapshot, w.TemplateSnapshot)
@@ -123,18 +123,18 @@ func (w *Workflow) Clone() *Workflow {
 // (the primary workflow), with execution status derived from the owning task's
 // todo and the produced output files.
 type WorkflowStepProgress struct {
-	Index     int                     `json:"index"`
-	Name      string                  `json:"name"`
-	Role      string                  `json:"role,omitempty"`
-	AgentID   string                  `json:"agent_id,omitempty"`
-	Status    string                  `json:"status"` // pending|in_progress|awaiting_review|done|failed|canceled|unassigned
-	TaskID    string                  `json:"task_id,omitempty"`
-	TaskTitle string                  `json:"task_title,omitempty"`
+	Index     int    `json:"index"`
+	Name      string `json:"name"`
+	Role      string `json:"role,omitempty"`
+	AgentID   string `json:"agent_id,omitempty"`
+	Status    string `json:"status"` // pending|in_progress|awaiting_review|done|failed|canceled|unassigned
+	TaskID    string `json:"task_id,omitempty"`
+	TaskTitle string `json:"task_title,omitempty"`
 	// DeclaredOutputs 是该步骤在流程里声明的输出位名称。手工绑定交付物时前端据此
 	// 限定可选范围：声明了就只能选这些（避免拼出下游步骤取不到的名字），
 	// 没声明才允许自由命名。
-	DeclaredOutputs []string                  `json:"declared_outputs,omitempty"`
-	Outputs   []WorkflowStepOutputRef `json:"outputs,omitempty"`
+	DeclaredOutputs []string                `json:"declared_outputs,omitempty"`
+	Outputs         []WorkflowStepOutputRef `json:"outputs,omitempty"`
 }
 
 // WorkflowStepOutputRef is the final produced file of a pipeline step.
@@ -167,9 +167,9 @@ const (
 // WorkflowSyncChange 是一次模板同步里对单个步骤的处置。Order 为项目目标步骤顺序
 // （应用同步后步骤在该工作流中的最终位置），仅对保留进项目的新增/更新/保留步骤有效。
 type WorkflowSyncChange struct {
-	Name      string                `json:"name"`
-	Kind      WorkflowSyncChangeKind `json:"kind"`
-	ProjectModified bool             `json:"project_modified,omitempty"` // 项目是否改动过该步骤（keep 时为 true）
+	Name            string                 `json:"name"`
+	Kind            WorkflowSyncChangeKind `json:"kind"`
+	ProjectModified bool                   `json:"project_modified,omitempty"` // 项目是否改动过该步骤（keep 时为 true）
 }
 
 // WorkflowSyncDiff 是"模板版本 X → 模板版本 Y"对项目内某个继承工作流的合并预览。

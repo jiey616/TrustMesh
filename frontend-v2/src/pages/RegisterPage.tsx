@@ -35,7 +35,8 @@ export function RegisterPage() {
     onSuccess: (data: AuthSuccessData) => {
       setAuth(data.access_token, data.refresh_token, data.user)
       message.success('注册成功！')
-      navigate('/projects')
+      // 与 LoginPage 同语义：注册后统一进首页；replace 顶掉 /register
+      navigate('/dashboard', { replace: true })
     },
     onError: (err: unknown) => {
       message.error(getRegisterErrorMessage(err))

@@ -49,13 +49,13 @@ func TestResolvePrevStepName(t *testing.T) {
 	}
 	idx := 0
 	if _, appErr := s.UpdateProject(store.Scope{UserID: user.ID}, proj.ID, store.UpdateProjectInput{
-		Workflows:           []model.Workflow{wf},
+		Workflows:            []model.Workflow{wf},
 		PrimaryWorkflowIndex: &idx,
 	}); appErr != nil {
 		t.Fatalf("update project workflows: %v", appErr)
 	}
 
-	h := NewWebhookHandler(s, nil, nil)
+	h := NewWebhookHandler(WebhookDeps{Store: s})
 	base := model.TaskDetail{
 		UserID:    user.ID,
 		ProjectID: proj.ID,

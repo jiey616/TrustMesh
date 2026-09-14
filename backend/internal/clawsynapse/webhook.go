@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -61,37 +62,46 @@ type WebhookHandler struct {
 // transferWarnTTL bounds how long a suppressed duplicate warning is remembered.
 const transferWarnTTL = 30 * time.Minute
 
-func NewWebhookHandler(st *store.Store, client *Client, log *zap.Logger) *WebhookHandler {
+// WebhookDeps is the complete set of dependencies required by WebhookHandler.
+// Every field is injected once at construction so the handler's configuration
+// is immutable after the server starts serving. This removes the data race the
+// previous post-construction setters (SetKnowledgeComponents /
+// SetProjectFileStorage / SetAgentFileConfig / SetMeetingActivityNotifier)
+// created against concurrent request handlers reading the same fields (T0.10).
+//
+// Optional dependencies (Embedder, Qdrant, Client, Log, ...) may be left nil;
+// the handler degrades gracefully exactly as before.
+type WebhookDeps struct {
+	Store    *store.Store
+	Client   *Client
+	Log      *zap.Logger
+	Embedder embedding.Client
+	Qdrant   *knowledge.QdrantClient
+
+	ProjectFileStorage project.FileStorage
+
+	ExternalURL string
+	JWTSecret   []byte
+	DownloadTTL time.Duration
+
+	OnMeetingActivity func(meetingID string)
+}
+
+// NewWebhookHandler builds a WebhookHandler from its full dependency set. All
+// configuration is bound here and never mutated afterwards.
+func NewWebhookHandler(deps WebhookDeps) *WebhookHandler {
 	return &WebhookHandler{
-		store:  st,
-		client: client,
-		log:    log,
+		store:              deps.Store,
+		client:             deps.Client,
+		log:                deps.Log,
+		embedder:           deps.Embedder,
+		qdrant:             deps.Qdrant,
+		projectFileStorage: deps.ProjectFileStorage,
+		externalURL:        deps.ExternalURL,
+		jwtSecret:          deps.JWTSecret,
+		downloadTTL:        deps.DownloadTTL,
+		onMeetingActivity:  deps.OnMeetingActivity,
 	}
-}
-
-// SetKnowledgeComponents injects optional knowledge base dependencies.
-func (h *WebhookHandler) SetKnowledgeComponents(embedder embedding.Client, qdrant *knowledge.QdrantClient) {
-	h.embedder = embedder
-	h.qdrant = qdrant
-}
-
-// SetProjectFileStorage injects the project file storage for artifact auto-indexing.
-func (h *WebhookHandler) SetProjectFileStorage(storage project.FileStorage) {
-	h.projectFileStorage = storage
-}
-
-// SetAgentFileConfig injects external URL and JWT secret for building download URLs.
-func (h *WebhookHandler) SetAgentFileConfig(externalURL string, jwtSecret []byte, downloadTTL time.Duration) {
-	h.externalURL = externalURL
-	h.jwtSecret = jwtSecret
-	h.downloadTTL = downloadTTL
-}
-
-// SetMeetingActivityNotifier registers a callback that is invoked whenever a
-// meeting.chat message is received from any agent. MeetingHandler uses this to
-// reset its inactivity timeout watchdog.
-func (h *WebhookHandler) SetMeetingActivityNotifier(fn func(meetingID string)) {
-	h.onMeetingActivity = fn
 }
 
 func (h *WebhookHandler) HandleWebhook(c *gin.Context) {
@@ -156,6 +166,45 @@ func (h *WebhookHandler) HandleWebhook(c *gin.Context) {
 		metrics.Inc(metrics.EnvelopePlainTextTotal)
 	case envShapeInvalidJSON:
 		metrics.Inc(metrics.EnvelopeInvalidJSONTotal)
+	}
+
+	// T1.6 强制协议 schema（带回退开关）。
+	//
+	// 背景：Task/todo 域的入站消息存在两种形状——(a) 合法协议信封
+	// {"protocol":"clawsynapse/...","type":...}，(b) 无 protocol 字段的 legacy
+	// 手搓 JSON。阶段0（T0.6a）只观测不断言；T1.6 在「结构化任务类型」上把 (b)
+	// 硬拒，强制 agent 一律走协议信封。
+	//
+	// 回退：strictProtocolSchemaGate 默认 OFF（canary）。观测 legacy 计数
+	// （envelope_legacy_json_total）归零后，在 compose 中设
+	// TRUSTMESH_STRICT_PROTOCOL_SCHEMA_GATE=true 并重启即开启强校验；不设 /
+	// 设 false 即一键切回「双读模式」——完全等同 T0.6a：只计数、一律放行。
+	//
+	// 判定只看外层 type 是否属于「结构化任务类型」（requiresProtocolEnvelope），
+	// 与信封内的 result 字段宽容（FlexibleTodoResult 接受字符串）互不干扰：
+	// 后者是信封**内部**的宽容，本门禁只校验**外层信封存在性**。
+	if requiresProtocolEnvelope(payload.Type) {
+		if shape := classifyEnvelopeShape(payload.Message); shape != envShapeProtocol {
+			if strictProtocolSchemaGate {
+				metrics.Inc(metrics.ProtocolSchemaRejectedTotal)
+				typ := strings.TrimSpace(payload.Type)
+				reason := "入站 " + typ + " 必须携带 protocol 信封（clawsynapse），当前收到「" +
+					envelopeShapeName(shape) + "」。请改用：" +
+					`{"protocol":"clawsynapse/1.0","type":"` + typ + `","body":{...}}`
+				h.warnProtocolSchemaRejected(payload, reason)
+				// 硬拒且不 fallback：不做 lenient 重解析，直接 422 交回 agent 自纠。
+				transport.WriteError(c, transport.NewError(http.StatusUnprocessableEntity, "PROTOCOL_ENVELOPE_REQUIRED", reason))
+				return
+			}
+			// 软模式（gate off）：只告警 + 计数，仍然放行（T0.6a 行为）。
+			metrics.Inc(metrics.ProtocolSchemaWarnedTotal)
+			if h.log != nil {
+				h.log.Warn("non-protocol envelope accepted for task message (strict protocol gate off)",
+					zap.String("type", payload.Type),
+					zap.String("from_node", payload.From),
+					zap.String("shape", envelopeShapeName(shape)))
+			}
+		}
 	}
 
 	switch strings.TrimSpace(payload.Type) {
@@ -362,6 +411,148 @@ func classifyEnvelopeShape(raw string) envelopeShape {
 		return envShapeProtocol
 	}
 	return envShapeLegacyJSON
+}
+
+// envelopeShapeName returns a short human label for a shape, used in the T1.6
+// rejection reason so an LLM executor can see exactly what it sent.
+func envelopeShapeName(shape envelopeShape) string {
+	switch shape {
+	case envShapeProtocol:
+		return "protocol 信封"
+	case envShapeLegacyJSON:
+		return "无 protocol 字段的 legacy JSON"
+	case envShapeInvalidJSON:
+		return "非法 JSON"
+	default:
+		return "非 JSON 纯文本"
+	}
+}
+
+// requiresProtocolEnvelope reports whether an inbound webhook type must carry a
+// protocol envelope while the strict schema gate is on (T1.6).
+//
+// Scope is deliberately narrow: only the STRUCTURED task/todo protocol types
+// whose payload is machine-readable (task_id / todo_id / result / …). Anything
+// that legitimately carries prose, OR that is produced by the platform runtime
+// rather than hand-rolled by an agent, is EXCLUDED and must never be forced into
+// an envelope:
+//
+//   - chat.message / chat.response —— 人和 agent 的散文对话；
+//   - meeting.*        —— 会议室发言与中控指令；
+//   - knowledge.query  —— 知识库检索问题（自然语言）；
+//   - task.response / todo.response —— persona 执行者（如山雨）的整段工作汇报；
+//   - task.error / todo.error       —— 执行侧故障上报（人读文本）；
+//   - task.reply       —— PM 回复；handleTaskReply 对「未转义引号」的畸形 JSON 有
+//     专门的 loose-decode 容错（webhook.go handleTaskReply），门禁会把这层容错
+//     变成硬 422，故必须排除；
+//   - transfer.received —— 🔴 由平台/CLI 运行时产出，消息体**恒为裸 JSON**
+//     （{transferId,fileName,fileSize,localPath,mimeType}），不是 agent 手搓的协议
+//     信封。纳入本门禁会让「gate 一开 = 所有交付物上传被 422 拒收」，比 2026-09-02
+//     文件丢失事故更严重。仓库内全部 transfer 夹具（含 app/webhook_test.go 的端到端
+//     用例）都是裸 JSON，已作为回归测试钉死。
+//
+// Forcing any of those would add blast radius with no benefit, and would break the
+// chat-channel envelope-unwrap path (unwrapTaskProtocolEnvelope) that exists
+// precisely because prose channels legitimately carry plain text.
+//
+// ⚠️ 剩余类型仍属「待验证假设」：它们由 agent 发出，而 agent 手搓 JSON 是本平台
+// 的已知惯犯（见 T0.6 的由来）。翻转 TRUSTMESH_STRICT_PROTOCOL_SCHEMA_GATE 之前，
+// 必须先用 protocol_schema_warned_total 与 warn 日志（日志带 type 字段，可按类型
+// 归因）确认这些类型**确实**在上协议信封。
+func requiresProtocolEnvelope(msgType string) bool {
+	switch strings.TrimSpace(msgType) {
+	case "task.create", "task.plan_ready",
+		"task.todo_add", "task.todo_modify", "task.comment",
+		"task.context.query",
+		"todo.progress", "todo.complete", "todo.fail", "todo.ask", "todo.review":
+		return true
+	}
+	return false
+}
+
+// deliverableQualityViolation 是一条「客观可判定」的产出物缺陷（T1.10）。
+type deliverableQualityViolation struct {
+	RuleID   string // 稳定标识，便于追溯与前端展示
+	Severity string // reject | warn
+	Message  string
+}
+
+// 产出物质量门禁的规则 ID（T1.10）。新增规则须同步补单测并在计划书中登记。
+const (
+	deliverableRuleZeroByte = "deliverable_zero_byte"
+)
+
+// judgeDeliverableQuality 对上传的交付物做客观质量裁决（T1.10）。纯函数：
+// 无 I/O、无状态，便于单测与后续下沉。
+//
+// 🔴 只编码「客观缺陷」，绝不含主观质量判断：
+//   - deliverable_zero_byte：0 字节文件不可能是有效交付物（平台历史上确实
+//     出现过静默的 0 字节下载）→ reject 级。
+//
+// ⏳ 刻意未纳入（均需产品确认，见 docs/optimization-plan-2026-09-11.md T1.10）：
+//   - 分镜图分辨率下限、视频时长/码率/封帧完整性 —— 需要真正探测文件内容；
+//   - 「类型不可识别」—— store.extToMime 是窄白名单（缺 .srt/.mov/.wav/.webp
+//     等影视常用格式），用它判定会把合法字幕/音视频误判为缺陷，故不纳入。
+func judgeDeliverableQuality(fileName string, fileSize int64, mimeType string) []deliverableQualityViolation {
+	var out []deliverableQualityViolation
+	if fileSize <= 0 {
+		out = append(out, deliverableQualityViolation{
+			RuleID:   deliverableRuleZeroByte,
+			Severity: "reject",
+			Message:  fmt.Sprintf("文件 %q 大小为 %d 字节——0 字节产出不是有效交付物", fileName, fileSize),
+		})
+	}
+	return out
+}
+
+// describeDeliverableViolations 把缺陷列表拼成可操作的文案（agent 自纠 + 人类可读）。
+func describeDeliverableViolations(violations []deliverableQualityViolation) string {
+	msgs := make([]string, 0, len(violations))
+	for _, v := range violations {
+		msgs = append(msgs, v.Message)
+	}
+	return strings.Join(msgs, "；")
+}
+
+// markDeliverableQuality 把一次产出物质量裁决留痕：任务时间线系统评论 + ops
+// 工单 + 计数，确保「标记/拦截」都可追溯（T1.10 验收要求）。blocked 时才额外
+// 通知上传节点自纠。
+//
+// 复用 model.RuleDeliverableReject：新增一条 ops 规则需要同步改规则引擎判定表
+// （store/ops_scanner.go）与模板库（store/ops_templates.go），超出本任务范围。
+func (h *WebhookHandler) markDeliverableQuality(taskID, todoID, fromNode, reason string, blocked bool) {
+	verb := "已被标记（未拦截）"
+	if blocked {
+		verb = "未入库（硬拒）"
+	}
+	content := "⚠️ 产出物质量门禁：交付物" + verb + "：" + strings.TrimSpace(reason)
+	if h.log != nil {
+		h.log.Warn("deliverable quality violation",
+			zap.String("task_id", taskID),
+			zap.String("todo_id", todoID),
+			zap.String("from_node", fromNode),
+			zap.Bool("blocked", blocked))
+	}
+	if taskID == "" {
+		return
+	}
+	if _, cErr := h.store.AppendSystemTaskComment(taskID, content); cErr != nil && h.log != nil {
+		h.log.Warn("append deliverable-quality system comment failed",
+			zap.String("task_id", taskID), zap.Error(cErr))
+	}
+	h.store.ReportOpsFinding(store.OpsFinding{
+		RuleID:   model.RuleDeliverableReject,
+		Severity: model.OpsSeverityCritical,
+		Title:    "产出物未通过质量门禁",
+		Summary:  strings.TrimSpace(reason),
+		TaskID:   taskID,
+		TodoID:   todoID,
+		NodeID:   fromNode,
+	})
+	h.store.RecordOpsWarning(model.RuleDeliverableReject, taskID, todoID, fromNode, content)
+	if blocked {
+		h.notifySystemWarningToAgent(context.Background(), taskID, todoID, fromNode, content)
+	}
 }
 
 // unwrapTaskProtocolEnvelope detects a task-protocol envelope smuggled over
@@ -1395,6 +1586,51 @@ func (h *WebhookHandler) handleTodoProgress(c *gin.Context, webhook protocol.Web
 	transport.WriteData(c, http.StatusOK, task)
 }
 
+// strictProduceGate 控制「todo.complete 无产出声明」是否硬拒。
+//
+//	true  = 硬拒（422），符合阶段0 验收「产出缺必填字段 → 入库被拒」；
+//	false = 只告警 + 计数，仍然 200（部署日发现打断流水线时的**一行回退**）。
+//
+// 包级变量而非 const：测试需要翻转它，运维也能在紧急时改这一行回退。
+var strictProduceGate = true
+
+// strictDispatchOrgGate 控制「派发时租户不匹配（含存量未绑 org 节点）」是否硬拒。
+//
+//	true  = 跨租户 / 未绑 org 的存量节点禁止接收生产派发（T1.1 强校验）；
+//	false = 只观测（告警 + 计数），等同阶段0 行为（灰度期默认，迁移存量 agent 后翻 true）。
+//
+// 默认 OFF（canary）：先部署、跑 deploy/migrate_agent_org_bind.py 迁移存量 agent，
+// 再在 compose 中设 TRUSTMESH_STRICT_DISPATCH_ORG_GATE=true 并重启容器开启强校验
+// —— 无需重新构建（go build）。包级变量而非 const：测试需要翻转它，运维也能在紧急时
+// 改这一行回退。
+var strictDispatchOrgGate = os.Getenv("TRUSTMESH_STRICT_DISPATCH_ORG_GATE") == "true"
+
+// strictProtocolSchemaGate 控制「结构化 task/todo 入站消息缺少 protocol 信封」
+// 是否硬拒（T1.6）。
+//
+//	true  = 硬拒（422 PROTOCOL_ENVELOPE_REQUIRED），强制 agent 走协议信封；
+//	false = 只观测（告警 + protocol_schema_warned_total 计数），一律放行
+//	        ——完全等同 T0.6a 双读行为。
+//
+// 默认 OFF（canary）：先部署、观测 envelope_legacy_json_total 与
+// protocol_schema_warned_total 归零，再在 compose 中设
+// TRUSTMESH_STRICT_PROTOCOL_SCHEMA_GATE=true 并重启容器开启强校验——无需重新
+// 构建（go build）。包级变量而非 const：测试需要翻转它，运维也能在紧急时改这
+// 一行（或摘掉环境变量重启）一键回退到双读模式。
+var strictProtocolSchemaGate = os.Getenv("TRUSTMESH_STRICT_PROTOCOL_SCHEMA_GATE") == "true"
+
+// strictDeliverableQualityGate 控制「产出物客观缺陷」是否硬拒（T1.10）。
+//
+//	true  = 硬拒（422 DELIVERABLE_QUALITY_REJECTED）：0 字节文件 / 无法识别
+//	        类型的文件不允许入库；
+//	false = 只标记（任务时间线系统评论 + ops 工单 + 计数），仍然放行。
+//
+// 默认 OFF（canary）：先观测 deliverable_quality_warned_total 判断误伤面，
+// 再在 compose 中设 TRUSTMESH_STRICT_DELIVERABLE_QUALITY_GATE=true 并重启开启
+// 硬拒——无需重新构建。编码进本门禁的只有「客观可判定」的缺陷，主观质量
+// （分辨率是否够高、视频节奏是否好）不在此列。
+var strictDeliverableQualityGate = os.Getenv("TRUSTMESH_STRICT_DELIVERABLE_QUALITY_GATE") == "true"
+
 func (h *WebhookHandler) handleTodoComplete(c *gin.Context, webhook protocol.WebhookPayload) {
 	var payload protocol.TodoCompletePayload
 	if err := decodeWebhookMessage(webhook.Message, &payload); err != nil {
@@ -1415,6 +1651,39 @@ func (h *WebhookHandler) handleTodoComplete(c *gin.Context, webhook protocol.Web
 	}
 	if payload.Result.Summary == "" && payload.Content != "" {
 		payload.Result.Summary = payload.Content
+	}
+
+	// T0.12 Agent 合规（平台侧 interim）：产出声明非空校验。
+	// 校验面刻意收窄到两个「咽喉入口」，其余（progress/ask/comment/review/…）
+	// 一律不校验——非结构化产出加校验只会添乱。
+	//
+	// hasProduce 只看 result：content 字段已在上面回填进 result.summary，且
+	// result 为字符串时 FlexibleTodoResult 会变成 {Summary: text}，故字符串
+	// result 天然算「有产出」（2026-09-04 山雨事故的回归保护）。
+	// T0.12a（修复 F-01）：summary/output 一律 TrimSpace 后再判定，纯空白
+	// （空格 / 制表符 / 换行，含经 content backfill 回填的空白）不再被当作
+	// 「有产出」——否则 agent 发空 summary 即可绕过产出声明校验。
+	hasProduce := strings.TrimSpace(payload.Result.Summary) != "" ||
+		strings.TrimSpace(payload.Result.Output) != "" ||
+		len(payload.Result.Metadata) > 0 ||
+		len(payload.Result.ActionItems) > 0
+	if !hasProduce {
+		if strictProduceGate {
+			reason := "todo.complete 缺少产出声明：请在 `result` 中至少提供 `summary`（交付摘要）、`output`（产出物引用）、`metadata` 或 `action_items` 之一。示例：{\"task_id\":\"t1\",\"todo_id\":\"TD_01\",\"result\":{\"summary\":\"完成第3步分镜，产出 storyboard_v2.json\"}}"
+			metrics.Inc(metrics.AgentProduceRejectedTotal)
+			h.warnProduceRejected(payload.TaskID, payload.TodoID, webhook.From, reason)
+			// 硬拒但不改 todo 状态：todo 保持未完成，交回超时/升级机制处理。
+			transport.WriteError(c, transport.NewError(http.StatusUnprocessableEntity, "TODO_RESULT_EMPTY", reason))
+			return
+		}
+		// 软模式（strictProduceGate=false）：只告警 + 计数，仍然放行。
+		metrics.Inc(metrics.AgentProduceWarnedTotal)
+		if h.log != nil {
+			h.log.Warn("todo.complete without produce declaration accepted (strict gate off)",
+				zap.String("task_id", payload.TaskID),
+				zap.String("todo_id", payload.TodoID),
+				zap.String("from_node", webhook.From))
+		}
 	}
 
 	needReview := payload.NeedReview != nil && *payload.NeedReview
@@ -1793,9 +2062,10 @@ func (h *WebhookHandler) handleTaskComment(c *gin.Context, webhook protocol.Webh
 			return nil, nil
 		}
 		return h.store.AddTaskCommentByNode(webhook.From, store.TaskCommentInput{
-			TaskID:  payload.TaskID,
-			TodoID:  payload.TodoID,
-			Content: payload.Content,
+			TaskID:     payload.TaskID,
+			TodoID:     payload.TodoID,
+			Content:    payload.Content,
+			SourceType: webhook.Type, // T1.4: 让 store 按消息类型优先判定错误上报
 		})
 	}()
 	if event == nil && appErr == nil {
@@ -1878,9 +2148,27 @@ func (h *WebhookHandler) dispatchNextTodo(ctx context.Context, task *model.TaskD
 	}
 
 	payload := h.buildTodoAssignedPayload(task, todo)
-	// T0.3: make the tenant trust assumption explicit and observable before we
-	// hand work to a node. Observe-only in Phase 0 — blocking here would break
-	// every existing shared-agent dispatch, so enforcement waits for T1.1.
+	// T1.1: when the strict dispatch-org gate is on, a cross-tenant (or
+	// unbound-legacy-agent) dispatch is hard-blocked. We increment the metric,
+	// warn, and return the task WITHOUT publishing — so the todo stays pending
+	// and visible instead of being silently handed to the wrong tenant. We do
+	// NOT record a dispatch failure here, because that would make reconcile
+	// retry a permanently-mismatched todo forever (retry storm).
+	if h.dispatchOrgBlocked(task, todo) {
+		metrics.Inc(metrics.DispatchOrgMismatchTotal)
+		if h.log != nil {
+			h.log.Warn("dispatch blocked by tenant mismatch: assignee agent carries no matching org_id",
+				zap.String("task_id", task.ID),
+				zap.String("todo_id", todo.ID),
+				zap.String("task_org_id", task.OrgID),
+				zap.String("agent_id", todo.Assignee.AgentID),
+				zap.String("agent_node_id", todo.Assignee.NodeID),
+			)
+		}
+		return task
+	}
+	// Observe-only path (gate off): still count mismatches so ops can size the
+	// migration before flipping the gate. Phase 0 behaviour is unchanged.
 	h.observeDispatchOrgMismatch(task, todo)
 	if _, err := h.client.PublishWithRetry(ctx, todo.Assignee.NodeID, "todo.assigned", payload, task.ID, nil); err != nil {
 		if h.log != nil {
@@ -1935,6 +2223,18 @@ func (h *WebhookHandler) dispatchOrgMismatch(task *model.TaskDetail, todo *model
 		return "", false
 	}
 	return agent.OrgID, agent.OrgID != task.OrgID
+}
+
+// dispatchOrgBlocked reports whether the hard tenant gate must stop this
+// dispatch. It is false while strictDispatchOrgGate is off (canary/observe) or
+// when there is no mismatch (same-tenant dispatch, legacy empty-org task, or
+// unknown agent).
+func (h *WebhookHandler) dispatchOrgBlocked(task *model.TaskDetail, todo *model.Todo) bool {
+	if !strictDispatchOrgGate {
+		return false
+	}
+	_, mismatched := h.dispatchOrgMismatch(task, todo)
+	return mismatched
 }
 
 // observeDispatchOrgMismatch records a tenant mismatch as a metric and a warn
@@ -2824,6 +3124,96 @@ func (h *WebhookHandler) warnOnce(key string) bool {
 	return true
 }
 
+// warnProduceRejected surfaces a hard-rejected produce (a todo.complete with no
+// produce declaration, T0.12) on the task timeline and the ops incident feed so
+// the rejection is never silent. It reuses model.RuleDeliverableReject: adding a
+// dedicated ops rule would require registering it in the scanner's decision
+// table (store/ops_scanner.go) and the template library (store/ops_templates.go)
+// — i.e. spreading the change well beyond this task's scope.
+func (h *WebhookHandler) warnProduceRejected(taskID, todoID, fromNode, reason string) {
+	if strings.TrimSpace(taskID) == "" {
+		return
+	}
+	content := "⚠️ todo.complete 未入库（缺少产出声明）：" + strings.TrimSpace(reason)
+	if _, cErr := h.store.AppendSystemTaskComment(taskID, content); cErr != nil && h.log != nil {
+		h.log.Warn("append produce rejection system comment failed",
+			zap.String("task_id", taskID), zap.String("todo_id", todoID), zap.Error(cErr))
+	}
+	h.notifySystemWarningToAgent(context.Background(), taskID, todoID, fromNode, content)
+	// 运维发现层：产出被拒 → 聚合进 ops_incident 工单（复用既有 deliverable_rejected 规则）。
+	h.store.ReportOpsFinding(store.OpsFinding{
+		RuleID:   model.RuleDeliverableReject,
+		Severity: model.OpsSeverityCritical,
+		Title:    "todo.complete 缺少产出声明",
+		Summary:  strings.TrimSpace(reason),
+		TaskID:   taskID,
+		TodoID:   todoID,
+		NodeID:   fromNode,
+	})
+	h.store.RecordOpsWarning(model.RuleDeliverableReject, taskID, todoID, fromNode, content)
+}
+
+// warnProtocolSchemaRejected surfaces a T1.6 protocol-schema hard rejection on
+// the task timeline and the ops feed so the 422 is never silent and the agent
+// can self-correct. Reuses model.RuleDeliverableReject for the same reason
+// warnProduceRejected does: a dedicated ops rule would have to be registered in
+// store/ops_scanner.go and store/ops_templates.go, spreading the change well
+// beyond this task's scope.
+//
+// The inbound WebhookPayload carries no task_id field of its own, so the best
+// available home for the warning is SessionKey (agents set it to the task id on
+// task/todo traffic); when the message body itself carries a task_id we prefer
+// that.
+func (h *WebhookHandler) warnProtocolSchemaRejected(payload protocol.WebhookPayload, reason string) {
+	taskID, todoID := resolveIDsForWarning(payload)
+	content := "⚠️ 入站消息未入库（缺少 protocol 信封）：" + strings.TrimSpace(reason)
+
+	if h.log != nil {
+		h.log.Warn("inbound message rejected: missing protocol envelope",
+			zap.String("type", payload.Type),
+			zap.String("from_node", payload.From),
+			zap.String("task_id", taskID))
+	}
+	if taskID == "" {
+		return
+	}
+	if _, cErr := h.store.AppendSystemTaskComment(taskID, content); cErr != nil && h.log != nil {
+		h.log.Warn("append protocol-schema rejection system comment failed",
+			zap.String("task_id", taskID), zap.Error(cErr))
+	}
+	h.notifySystemWarningToAgent(context.Background(), taskID, todoID, payload.From, content)
+	h.store.ReportOpsFinding(store.OpsFinding{
+		RuleID:   model.RuleDeliverableReject,
+		Severity: model.OpsSeverityCritical,
+		Title:    "入站消息缺少 protocol 信封",
+		Summary:  strings.TrimSpace(reason),
+		TaskID:   taskID,
+		TodoID:   todoID,
+		NodeID:   payload.From,
+	})
+	h.store.RecordOpsWarning(model.RuleDeliverableReject, taskID, todoID, payload.From, content)
+}
+
+// resolveIDsForWarning best-effort resolves a task id / todo id for a rejection
+// that happens before the message is decoded into a payload struct: SessionKey
+// is the primary source for the task id (agents set it to the task id), falling
+// back to a raw task_id/todo_id probe of the message body. WebhookPayload itself
+// carries neither field.
+func resolveIDsForWarning(payload protocol.WebhookPayload) (taskID, todoID string) {
+	var probe struct {
+		TaskID string `json:"task_id"`
+		TodoID string `json:"todo_id"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(payload.Message)), &probe); err == nil {
+		taskID = strings.TrimSpace(probe.TaskID)
+		todoID = strings.TrimSpace(probe.TodoID)
+	}
+	if taskID == "" {
+		taskID = strings.TrimSpace(payload.SessionKey)
+	}
+	return taskID, todoID
+}
+
 func (h *WebhookHandler) warnTransferRejected(taskID, fromNode, transferID, fileName, reason string) {
 	if taskID == "" {
 		// No declared task: try to still find a home for the warning.
@@ -3064,7 +3454,34 @@ func (h *WebhookHandler) handleTransferReceived(c *gin.Context, webhook protocol
 		transport.WriteError(c, transport.Validation("missing metadata", map[string]any{"taskId": "required"}))
 		return
 	}
+	if strings.TrimSpace(msg.FileName) == "" {
+		// T0.12 Agent 合规（平台侧 interim）：fileName 是交付物的最小可识别
+		// 单位，空文件名会让文件以空名入库，用户与下游步骤都无法引用。硬拒，
+		// 且在任何 artifact / 文件写入之前返回，确保不产生任何记录。
+		h.warnTransferRejected(taskID, webhook.From, msg.TransferID, msg.FileName,
+			"缺少 fileName（文件名为空）")
+		metrics.Inc(metrics.AgentProduceRejectedTotal)
+		transport.WriteError(c, transport.NewError(http.StatusUnprocessableEntity, "ARTIFACT_FILENAME_REQUIRED",
+			"文件上传缺少 `fileName`：请用 `clawsynapse transfer send <path> --metadata taskId=… --metadata todoId=…` 上传，并确保文件名非空。"))
+		return
+	}
 	outputName, _ := webhook.Metadata["outputName"].(string)
+
+	// T1.10 产出物质量门禁：在写盘之前对「客观可判定」的缺陷做裁决。
+	// 默认只标记（任务时间线 + ops 工单 + 计数），strictDeliverableQualityGate
+	// 开启才硬拒——与 T0.12/T1.6 同款 canary 语义。
+	if violations := judgeDeliverableQuality(msg.FileName, msg.FileSize, msg.MimeType); len(violations) > 0 {
+		reason := describeDeliverableViolations(violations)
+		if strictDeliverableQualityGate {
+			metrics.Inc(metrics.DeliverableQualityRejectedTotal)
+			h.markDeliverableQuality(taskID, todoID, webhook.From, reason, true)
+			transport.WriteError(c, transport.NewError(http.StatusUnprocessableEntity, "DELIVERABLE_QUALITY_REJECTED",
+				"交付物未通过质量门禁："+reason))
+			return
+		}
+		metrics.Inc(metrics.DeliverableQualityWarnedTotal)
+		h.markDeliverableQuality(taskID, todoID, webhook.From, reason, false)
+	}
 
 	mimeType := msg.MimeType
 	if strings.TrimSpace(mimeType) == "" {

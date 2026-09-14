@@ -10,16 +10,16 @@ import (
 
 // Cleanup configuration constants.
 const (
-	cleanupInterval       = 10 * time.Minute // run cleanup every 10 minutes
-	maxEventAge           = 7 * 24 * time.Hour // keep events for 7 days
-	maxEventsPerTask      = 1000               // max events per task before truncation
-	maxEventsPerUser      = 2000               // max events per user before truncation
-	maxEventsPerAgent     = 2000               // max events per agent before truncation
-	maxEventsPerOrg       = 5000               // max events per organization before truncation
-	maxNotificationsPerUser = 500              // max notifications per user
-	maxProcessedMessages  = 10000              // max processed message dedup entries
-	maxChatMessages       = 200                // max messages per agent chat session
-	truncatedKeepCount    = 500                // when truncating, keep this many newest
+	cleanupInterval         = 10 * time.Minute   // run cleanup every 10 minutes
+	maxEventAge             = 7 * 24 * time.Hour // keep events for 7 days
+	maxEventsPerTask        = 1000               // max events per task before truncation
+	maxEventsPerUser        = 2000               // max events per user before truncation
+	maxEventsPerAgent       = 2000               // max events per agent before truncation
+	maxEventsPerOrg         = 5000               // max events per organization before truncation
+	maxNotificationsPerUser = 500                // max notifications per user
+	maxProcessedMessages    = 10000              // max processed message dedup entries
+	maxChatMessages         = 200                // max messages per agent chat session
+	truncatedKeepCount      = 500                // when truncating, keep this many newest
 )
 
 // StartCleanupTicker runs a background goroutine that periodically cleans up

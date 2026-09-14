@@ -39,7 +39,7 @@ type LLMConfigView struct {
 	APIKeyMasked string    `json:"api_key_masked"` // 形如 sk-***1234；空 = 该层未配 key
 	Model        string    `json:"model"`
 	OpsModel     string    `json:"ops_model,omitempty"`
-	Source       string    `json:"source"` // org | platform | env（解析后的实际生效来源）
+	Source       string    `json:"source"`       // org | platform | env（解析后的实际生效来源）
 	HasOverride  bool      `json:"has_override"` // 该层是否存在落库配置（false = 展示的是回退值）
 	UpdatedAt    time.Time `json:"updated_at,omitempty"`
 	UpdatedBy    string    `json:"updated_by,omitempty"`
@@ -48,11 +48,11 @@ type LLMConfigView struct {
 // LLMConfigInput 是 PUT 请求体。APIKey 为空 = 保持已有不变；
 // ResetAPIKey 为 true 时清空该层 key（回到回退链）。
 type LLMConfigInput struct {
-	APIURL     string `json:"api_url"`
-	APIKey     string `json:"api_key"`
-	Model      string `json:"model"`
-	OpsModel   string `json:"ops_model"`
-	ResetAPIKey bool  `json:"reset_api_key"`
+	APIURL      string `json:"api_url"`
+	APIKey      string `json:"api_key"`
+	Model       string `json:"model"`
+	OpsModel    string `json:"ops_model"`
+	ResetAPIKey bool   `json:"reset_api_key"`
 }
 
 // LLMConfigTestRequest 是连接测试请求：字段全部可选——

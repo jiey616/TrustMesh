@@ -46,7 +46,7 @@ func TestDispatchOrgMismatchWarnsNotBlocks(t *testing.T) {
 		t.Fatalf("precondition: agent.OrgID = %q, want %q", agent.OrgID, orgA.ID)
 	}
 
-	h := NewWebhookHandler(s, nil, zap.NewNop())
+	h := NewWebhookHandler(WebhookDeps{Store: s, Log: zap.NewNop()})
 
 	todoFor := func(agentID, nodeID string) []model.Todo {
 		return []model.Todo{{
@@ -145,9 +145,84 @@ func TestDispatchOrgMismatchWarnsNotBlocks(t *testing.T) {
 			t.Fatalf("nil input must not report a mismatch")
 		}
 		h.observeDispatchOrgMismatch(nil, nil)
-		empty := NewWebhookHandler(nil, nil, zap.NewNop())
+		empty := NewWebhookHandler(WebhookDeps{Log: zap.NewNop()})
 		if _, mismatched := empty.dispatchOrgMismatch(&model.TaskDetail{ID: "t"}, &model.Todo{}); mismatched {
 			t.Fatalf("handler without a store must not report a mismatch")
 		}
 	})
+}
+
+// T1.1 acceptance: TestDispatchOrgBlockedGateMatrix.
+//
+// strictDispatchOrgGate hard-blocks a dispatch when the assignee agent carries
+// no org_id matching the task's tenant. The decision function dispatchOrgBlocked
+// must:
+//   - return false whenever the gate is off (canary/observe — unchanged Phase 0
+//     behaviour, so existing shared-agent dispatch keeps working during migration);
+//   - return true ONLY on a real cross-tenant mismatch when the gate is on;
+//   - return false for same-tenant dispatch, a legacy task with no org_id, and an
+//     unknown agent even when the gate is on (those are not backfill gaps).
+func TestDispatchOrgBlockedGateMatrix(t *testing.T) {
+	metrics.Reset()
+	t.Cleanup(metrics.Reset)
+
+	s := store.New()
+	orgA, appErr := s.CreateOrganization("u1", "Acme", "acme", model.OrgKindEnterprise)
+	if appErr != nil {
+		t.Fatalf("create orgA: %v", appErr)
+	}
+	orgB, appErr := s.CreateOrganization("u9", "Globex", "globex", model.OrgKindEnterprise)
+	if appErr != nil {
+		t.Fatalf("create orgB: %v", appErr)
+	}
+	agent, appErr := s.CreateAgent(store.Scope{UserID: "u1", OrgID: orgA.ID}, "node-dev-001", "Dev", "developer", "dev agent", nil)
+	if appErr != nil {
+		t.Fatalf("create agent: %v", appErr)
+	}
+	if agent.OrgID != orgA.ID {
+		t.Fatalf("precondition: agent.OrgID = %q, want %q", agent.OrgID, orgA.ID)
+	}
+
+	h := NewWebhookHandler(WebhookDeps{Store: s, Log: zap.NewNop()})
+
+	todoFor := func(agentID, nodeID string) model.Todo {
+		return model.Todo{
+			ID:       "td-1",
+			Title:    "剧本创作",
+			Status:   "pending",
+			Assignee: model.TodoAssignee{AgentID: agentID, Name: "Dev", NodeID: nodeID},
+		}
+	}
+
+	// 还原默认值，避免本测试翻转包级变量影响其它用例。
+	prev := strictDispatchOrgGate
+	t.Cleanup(func() { strictDispatchOrgGate = prev })
+
+	cases := []struct {
+		name      string
+		gateOn    bool
+		taskOrgID string
+		todo      model.Todo
+		wantBlock bool
+	}{
+		{"gate关闭_跨租户不阻断", false, orgB.ID, todoFor(agent.ID, agent.NodeID), false},
+		{"gate开启_跨租户硬阻断", true, orgB.ID, todoFor(agent.ID, agent.NodeID), true},
+		{"gate开启_同租户不阻断", true, orgA.ID, todoFor(agent.ID, agent.NodeID), false},
+		{"gate开启_存量空org任务不阻断", true, "", todoFor(agent.ID, agent.NodeID), false},
+		{"gate开启_agent不存在不阻断", true, orgA.ID, todoFor("ag-ghost", "node-ghost"), false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			strictDispatchOrgGate = tc.gateOn
+			task := &model.TaskDetail{
+				ID: "t-" + tc.name, UserID: "u1", OrgID: tc.taskOrgID, Status: "in_progress",
+				Todos: []model.Todo{tc.todo},
+			}
+			if got := h.dispatchOrgBlocked(task, &task.Todos[0]); got != tc.wantBlock {
+				t.Fatalf("dispatchOrgBlocked = %v, want %v (gateOn=%v taskOrg=%q agentOrg=%q)",
+					got, tc.wantBlock, tc.gateOn, tc.taskOrgID, agent.OrgID)
+			}
+		})
+	}
 }

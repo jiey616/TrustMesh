@@ -1046,7 +1046,7 @@ func TestFindTaskForWorkflowStepSkipsCanceled(t *testing.T) {
 		Workflow:  &model.Workflow{Name: "画宗AIGC无人工厂产线工作流", Steps: []model.WorkflowStep{{Name: "剧本创作", Role: "developer"}}},
 		WorkflowRef: &model.WorkflowRef{
 			WorkflowIndex: 0,
-			WorkflowName: "画宗AIGC无人工厂产线工作流",
+			WorkflowName:  "画宗AIGC无人工厂产线工作流",
 			StepFrom:      0,
 			StepTo:        0,
 		},
@@ -1064,7 +1064,7 @@ func TestFindTaskForWorkflowStepSkipsCanceled(t *testing.T) {
 		Workflow:  &model.Workflow{Name: "画宗AIGC无人工厂产线工作流", Steps: []model.WorkflowStep{{Name: "剧本创作", Role: "developer"}}},
 		WorkflowRef: &model.WorkflowRef{
 			WorkflowIndex: 0,
-			WorkflowName: "画宗AIGC无人工厂产线工作流",
+			WorkflowName:  "画宗AIGC无人工厂产线工作流",
 			StepFrom:      0,
 			StepTo:        0,
 		},
@@ -1184,7 +1184,7 @@ func TestPrimaryStepAggregatesMultipleTodos(t *testing.T) {
 		Workflow:  &model.Workflow{Name: "测试流程", Steps: []model.WorkflowStep{{Name: "分镜拆解", Role: "developer"}}},
 		WorkflowRef: &model.WorkflowRef{
 			WorkflowIndex: 0,
-			WorkflowName: "测试流程",
+			WorkflowName:  "测试流程",
 			StepFrom:      0,
 			StepTo:        0,
 		},

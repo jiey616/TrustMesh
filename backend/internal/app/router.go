@@ -39,47 +39,8 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Start background cleanup ticker to prevent unbounded memory growth (OOM).
-	go s.StartCleanupTicker(context.Background())
-	// Start timeout monitor to detect and retry/fail stuck in_progress todos.
-	go s.StartTimeoutMonitor(context.Background())
-	// Ops scanner: rule-based anomaly discovery feeding ops_incident tickets.
-	// Off by default; flip OPS_ENABLED=1 to enable.
-	if cfg.OpsEnabled {
-		go s.StartOpsScanner(context.Background())
-	}
 	jwtManager := auth.NewJWTManager(cfg.JWTSecret, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
 	clawClient := clawsynapse.NewClient(cfg.ClawSynapseAPIURL, cfg.ClawSynapseTimeout, cfg.ClawSynapseAPIToken)
-	webhookHandler := clawsynapse.NewWebhookHandler(s, clawClient, log)
-	// Redispatch hook: actually re-publish a todo to its assignee. Consumed by
-	// the dispatch reconciler below to heal pipelines broken by a silently
-	// failed dispatch (P-01). Kept as a hook because the store must not import
-	// the clawsynapse package.
-	s.SetDispatchHook(func(ctx context.Context, taskID, todoID string) {
-		if err := webhookHandler.RetryDispatch(ctx, taskID, todoID); err != nil {
-			log.Warn("dispatch reconcile failed",
-				zap.String("task_id", taskID), zap.String("todo_id", todoID), zap.Error(err))
-		}
-	})
-	// Dispatch reconciler: periodic safety net that re-dispatches pending todos
-	// which should have been dispatched but were not (transient publish failure,
-	// process restart, network partition). Runs outside the store lock.
-	go s.StartDispatchReconciler(context.Background())
-	// Timeout reminders nudge the assignee without re-dispatching the todo.
-	// C.2 统一干预编排：remind 先经编排器留痕（进运维工单时间线），再走
-	// 原有下发；计时与判死仍在 timeout_monitor，编排器不改变其语义。
-	s.SetRemindHook(func(ctx context.Context, taskID, todoID string) {
-		s.RecordTimeoutRemind(taskID, todoID)
-		webhookHandler.RemindTodo(ctx, taskID, todoID)
-	})
-	// Planning-stall nudges wake the PM via task.message when a task has been
-	// stuck in planning without a finalized plan.
-	s.SetPlanningStallHook(webhookHandler.NudgePlanningPM)
-	// Adapter lifecycle cancel chain: after CancelTask, notify each canceled
-	// todo's assignee node so it stops the in-flight run (spec §6).
-	s.SetCancelNotifyHook(webhookHandler.NotifyTaskCanceled)
-	// 统一干预编排器：运维修复指引的唯一下发出口（C.2）。
-	s.SetOpsPublishHook(webhookHandler.PublishOpsMention)
 	// LLM 配置（A1+B2+C1）：env 兜底注入 + 平台/租户两级 UI 配置，热生效。
 	s.SetLLMEnvDefaults(cfg.AssistantAPIURL, cfg.AssistantAPIKey, cfg.AssistantModel)
 	s.EnsurePlatformAdminExists()
@@ -110,7 +71,6 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	agentChatHandler := handler.NewAgentChatHandler(s, clawClient, cfg.ExternalURL, []byte(cfg.JWTSecret), cfg.DownloadTokenTTL, log)
 	projectHandler := handler.NewProjectHandler(s)
 
-	taskHandler := handler.NewTaskHandler(s, clawClient, webhookHandler, cfg.ExternalURL, []byte(cfg.JWTSecret), cfg.DownloadTokenTTL, log)
 	actionItemsHandler := handler.NewActionItemsHandler(s, log)
 	transferHandler := handler.NewTransferHandler(s)
 	dashboardHandler := handler.NewDashboardHandler(s)
@@ -149,13 +109,8 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	processor = knowledge.NewProcessor(fileStorage, embeddingClient, qdrantClient, s, log)
 	knowledgeHandler = handler.NewKnowledgeHandler(s, fileStorage, processor, embeddingClient, qdrantClient, log)
 
-	// Inject knowledge components into webhook handler for knowledge.query
-	// support (embedder/qdrant may be nil → text-only search).
-	webhookHandler.SetKnowledgeComponents(embeddingClient, qdrantClient)
-
 	engine.GET("/healthz", handler.Health)
 	engine.GET("/webhook/clawsynapse", func(c *gin.Context) { c.Status(200) })
-	engine.POST("/webhook/clawsynapse", webhookHandler.HandleWebhook)
 
 	v1 := engine.Group("/api/v1")
 	v1.POST("/auth/register", authHandler.Register)
@@ -217,6 +172,9 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	authed.PATCH("/workflow-templates/:templateId", workflowTemplateHandler.Update)
 	authed.POST("/workflow-templates/:templateId/copy", workflowTemplateHandler.Copy)
 	authed.DELETE("/workflow-templates/:templateId", workflowTemplateHandler.Delete)
+	// T1.9: 从成功任务一键沉淀工作流模板（挂在 /tasks/:id 下，避开
+	// /workflow-templates/:templateId 通配段的兄弟节点冲突）。
+	authed.POST("/tasks/:id/distill-template", workflowTemplateHandler.Distill)
 	authed.POST("/projects/:projectId/workflows/inherit", workflowTemplateHandler.Inherit)
 	authed.GET("/projects/:projectId/workflows/:workflowId/sync-diff", workflowTemplateHandler.SyncDiff)
 	authed.POST("/projects/:projectId/workflows/:workflowId/sync", workflowTemplateHandler.ApplySync)
@@ -226,8 +184,6 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	projectFileStorage := project.NewLocalFileStorage(cfg.FilesStoragePath)
 	s.SetFileStorage(projectFileStorage) // used by timeout monitor to auto-generate meeting minutes
 	projectFileHandler := handler.NewProjectFileHandler(s, projectFileStorage, log)
-	webhookHandler.SetProjectFileStorage(projectFileStorage)
-	webhookHandler.SetAgentFileConfig(cfg.ExternalURL, []byte(cfg.JWTSecret), cfg.DownloadTokenTTL)
 
 	// Agent file download endpoint (authenticated by short-lived download token, not JWT).
 	// New format: /api/v1/files/agent/:fileId/token/:token (token in path, not query).
@@ -243,11 +199,86 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	v1.GET("/chats/attachments/:fileId/token/:token", chatAttachmentHandler.Download)
 
 	meetingHandler := handler.NewMeetingHandler(s, clawClient, projectFileStorage, cfg.ExternalURL, []byte(cfg.JWTSecret), cfg.DownloadTokenTTL)
-	webhookHandler.SetMeetingActivityNotifier(meetingHandler.OnMeetingActivity)
 
 	// Resume the inactivity watchdog for any meeting left in_progress by a
 	// previous backend instance (timers are in-memory only).
 	go meetingHandler.RecoverTimeouts(context.Background())
+
+	// Webhook handler: every dependency is injected at construction so its
+	// configuration is immutable once the server starts serving. Previously
+	// these fields were assigned via post-construction setters
+	// (SetKnowledgeComponents / SetProjectFileStorage / SetAgentFileConfig /
+	// SetMeetingActivityNotifier), which raced with concurrent request handlers
+	// reading the same fields (T0.10). Construction therefore happens only after
+	// every dependency below is ready: knowledge (embeddingClient, qdrantClient),
+	// project file storage, and the meeting handler.
+	webhookHandler := clawsynapse.NewWebhookHandler(clawsynapse.WebhookDeps{
+		Store:              s,
+		Client:             clawClient,
+		Log:                log,
+		Embedder:           embeddingClient,
+		Qdrant:             qdrantClient,
+		ProjectFileStorage: projectFileStorage,
+		ExternalURL:        cfg.ExternalURL,
+		JWTSecret:          []byte(cfg.JWTSecret),
+		DownloadTTL:        cfg.DownloadTokenTTL,
+		OnMeetingActivity:  meetingHandler.OnMeetingActivity,
+	})
+	// Redispatch hook: actually re-publish a todo to its assignee. Consumed by
+	// the dispatch reconciler below to heal pipelines broken by a silently
+	// failed dispatch (P-01). Kept as a hook because the store must not import
+	// the clawsynapse package.
+	s.SetDispatchHook(func(ctx context.Context, taskID, todoID string) {
+		if err := webhookHandler.RetryDispatch(ctx, taskID, todoID); err != nil {
+			log.Warn("dispatch reconcile failed",
+				zap.String("task_id", taskID), zap.String("todo_id", todoID), zap.Error(err))
+		}
+	})
+	// Timeout reminders nudge the assignee without re-dispatching the todo.
+	// C.2 统一干预编排：remind 先经编排器留痕（进运维工单时间线），再走
+	// 原有下发；计时与判死仍在 timeout_monitor，编排器不改变其语义。
+	s.SetRemindHook(func(ctx context.Context, taskID, todoID string) {
+		s.RecordTimeoutRemind(taskID, todoID)
+		webhookHandler.RemindTodo(ctx, taskID, todoID)
+	})
+	// Planning-stall nudges wake the PM via task.message when a task has been
+	// stuck in planning without a finalized plan.
+	s.SetPlanningStallHook(webhookHandler.NudgePlanningPM)
+	// Adapter lifecycle cancel chain: after CancelTask, notify each canceled
+	// todo's assignee node so it stops the in-flight run (spec §6).
+	s.SetCancelNotifyHook(webhookHandler.NotifyTaskCanceled)
+	// 统一干预编排器：运维修复指引的唯一下发出口（C.2）。
+	s.SetOpsPublishHook(webhookHandler.PublishOpsMention)
+
+	// 启动顺序不变量（T0.10b）：所有 Set*Hook 必须在下面这些后台 ticker 启动
+	// 之前完成。hook 字段（dispatchHook / remindHook / planningStallHook /
+	// cancelNotifyHook / opsPublishHook / opsAttributionHook）的读写都是无锁的，
+	// 其安全性依赖 Go 的「goroutine 创建 happens-before」语义：只要写在启动
+	// 读线程的 `go` 语句之前完成，就无需给 hook 加锁（cancelNotifyHook 在请求
+	// 路径读取，请求天然 happens-after New() 返回，同样无锁安全）。切勿把任何
+	// Set*Hook 下移到这些 Start* 之后，否则会重新引入读写竞态。
+	//
+	// Start background cleanup ticker to prevent unbounded memory growth (OOM).
+	go s.StartCleanupTicker(context.Background())
+	// Start timeout monitor to detect and retry/fail stuck in_progress todos.
+	// Reads remindHook / planningStallHook — 必须在 SetRemindHook /
+	// SetPlanningStallHook 之后启动。
+	go s.StartTimeoutMonitor(context.Background())
+	// Ops scanner: rule-based anomaly discovery feeding ops_incident tickets.
+	// Off by default; flip OPS_ENABLED=1 to enable. Reads opsPublishHook /
+	// opsAttributionHook（经 attributeAndGuide）— 必须在对应 Set*Hook 之后启动。
+	if cfg.OpsEnabled {
+		go s.StartOpsScanner(context.Background())
+	}
+	// Dispatch reconciler: periodic safety net that re-dispatches pending todos
+	// which should have been dispatched but were not (transient publish failure,
+	// process restart, network partition). Runs outside the store lock. Reads
+	// dispatchHook — 必须在 SetDispatchHook 之后启动。
+	go s.StartDispatchReconciler(context.Background())
+
+	taskHandler := handler.NewTaskHandler(s, clawClient, webhookHandler, cfg.ExternalURL, []byte(cfg.JWTSecret), cfg.DownloadTokenTTL, log)
+
+	engine.POST("/webhook/clawsynapse", webhookHandler.HandleWebhook)
 
 	authed.POST("/projects/:projectId/files", projectFileHandler.Upload)
 	authed.POST("/projects/:projectId/folders", projectFileHandler.CreateFolder)

@@ -28,7 +28,7 @@ const (
 	// downloading hits an expired link it cannot distinguish from a bad one.
 	// NOTE: this only feeds agent download tokens; login tokens use
 	// AccessTokenTTL/RefreshTokenTTL (see app/router.go).
-	defaultDownloadTTL     = 24 * time.Hour
+	defaultDownloadTTL = 24 * time.Hour
 )
 
 // Handler serves agent file download requests authenticated by short-lived tokens.
@@ -97,16 +97,26 @@ func (h *Handler) DebugGenToken(c *gin.Context) {
 	downloadURL := BuildDownloadURL(externalURL, fileID, token)
 
 	c.JSON(http.StatusOK, gin.H{
-		"file_id":        fileID,
-		"token":          token,
-		"download_url":   downloadURL,
-		"external_url":   externalURL,
-		"secret_len":     len(jwtSecret),
-		"ttl":            ttl.String(),
-		"token_len":      len(token),
-		"self_verify":    verifyErr == nil,
-		"self_verify_err": func() string { if verifyErr != nil { return verifyErr.Error() } ; return "" }(),
-		"claims_user_id": func() string { if claims != nil { return claims.UserID } ; return "" }(),
+		"file_id":      fileID,
+		"token":        token,
+		"download_url": downloadURL,
+		"external_url": externalURL,
+		"secret_len":   len(jwtSecret),
+		"ttl":          ttl.String(),
+		"token_len":    len(token),
+		"self_verify":  verifyErr == nil,
+		"self_verify_err": func() string {
+			if verifyErr != nil {
+				return verifyErr.Error()
+			}
+			return ""
+		}(),
+		"claims_user_id": func() string {
+			if claims != nil {
+				return claims.UserID
+			}
+			return ""
+		}(),
 	})
 }
 

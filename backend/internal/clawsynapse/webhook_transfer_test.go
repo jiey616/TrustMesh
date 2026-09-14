@@ -62,7 +62,7 @@ func newTransferTestFixture(t *testing.T) (*store.Store, string, string, string)
 func TestTransferReceivedWithoutTaskIdInfersOwner(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	s, _, taskID, devNode := newTransferTestFixture(t)
-	h := NewWebhookHandler(s, nil, nil)
+	h := NewWebhookHandler(WebhookDeps{Store: s})
 
 	body, err := json.Marshal(map[string]any{
 		"transferId": "tid-no-metadata-00001",
@@ -108,7 +108,7 @@ func TestTransferReceivedWithoutTaskIdInfersOwner(t *testing.T) {
 func TestTransferReceivedRejectionAppendsSystemComment(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	s, userID, taskID, devNode := newTransferTestFixture(t)
-	h := NewWebhookHandler(s, nil, nil)
+	h := NewWebhookHandler(WebhookDeps{Store: s})
 
 	body, err := json.Marshal(map[string]any{
 		"transferId": "tid-bad-todo-0000001",
@@ -162,7 +162,7 @@ func TestTransferReceivedRejectionAppendsSystemComment(t *testing.T) {
 func TestTransferReceivedBadPayloadAppendsSystemComment(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	s, userID, taskID, devNode := newTransferTestFixture(t)
-	h := NewWebhookHandler(s, nil, nil)
+	h := NewWebhookHandler(WebhookDeps{Store: s})
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -220,7 +220,7 @@ func postTransferReceived(h *WebhookHandler, from, message string, metadata map[
 func TestTransferReceivedDuplicateStaysQuiet(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	s, userID, taskID, devNode := newTransferTestFixture(t)
-	h := NewWebhookHandler(s, nil, nil)
+	h := NewWebhookHandler(WebhookDeps{Store: s})
 
 	first, err := json.Marshal(map[string]any{
 		"transferId": "tid-dup-first-000001",
@@ -275,7 +275,7 @@ func TestTransferReceivedDuplicateStaysQuiet(t *testing.T) {
 func TestTransferRejectionWarnedOnce(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	s, userID, taskID, devNode := newTransferTestFixture(t)
-	h := NewWebhookHandler(s, nil, nil)
+	h := NewWebhookHandler(WebhookDeps{Store: s})
 
 	body, err := json.Marshal(map[string]any{
 		"transferId": "tid-twice-0000000001",
@@ -391,7 +391,7 @@ func TestTransferAutoBindsSingleDeclaredOutput(t *testing.T) {
 	s, _, taskID, devNode := newTransferWorkflowFixture(t, []model.StepOutput{
 		{Name: "剧名_剧本类型_版本_时间", MimeType: "docx"},
 	})
-	h := NewWebhookHandler(s, nil, nil)
+	h := NewWebhookHandler(WebhookDeps{Store: s})
 
 	w := postTransfer(t, h, devNode, taskID, "TD_01",
 		"tid-autobind-0000001", "生死靶心_微电影_剧本_v1.docx", docxMime, nil)
@@ -429,7 +429,7 @@ func TestTransferMultiOutputWarnsOnly(t *testing.T) {
 		{Name: "剧名_分镜头脚本", MimeType: "xlsx"},
 		{Name: "剧名_逐镜视频生成提示词", MimeType: "xlsx"},
 	})
-	h := NewWebhookHandler(s, nil, nil)
+	h := NewWebhookHandler(WebhookDeps{Store: s})
 
 	w := postTransfer(t, h, devNode, taskID, "TD_01",
 		"tid-multiout-0000001", "direction-notes.md", "text/markdown", nil)
@@ -471,7 +471,7 @@ func TestUnboundWarningThrottled(t *testing.T) {
 		{Name: "剧名_分镜头脚本", MimeType: "xlsx"},
 		{Name: "剧名_逐镜视频生成提示词", MimeType: "xlsx"},
 	})
-	h := NewWebhookHandler(s, nil, nil)
+	h := NewWebhookHandler(WebhookDeps{Store: s})
 
 	for i, name := range []string{"draft-a.md", "draft-b.md", "draft-c.md"} {
 		w := postTransfer(t, h, devNode, taskID, "TD_01",
@@ -545,7 +545,7 @@ func TestMimeNormalizationMatchesLooseDeclarations(t *testing.T) {
 			s, _, taskID, devNode := newTransferWorkflowFixture(t, []model.StepOutput{
 				{Name: "slot", MimeType: tc.declared},
 			})
-			h := NewWebhookHandler(s, nil, nil)
+			h := NewWebhookHandler(WebhookDeps{Store: s})
 			w := postTransfer(t, h, devNode, taskID, "TD_01",
 				"tid-mime-"+strings.ReplaceAll(tc.name, " ", "-"), "file.bin", tc.uploaded, nil)
 			if w.Code != 200 {
@@ -571,7 +571,7 @@ func TestBuildTodoOutputsCarriesDeclaredSlots(t *testing.T) {
 	s, _, taskID, _ := newTransferWorkflowFixture(t, []model.StepOutput{
 		{Name: "剧名_剧本类型_版本_时间", MimeType: "docx", Description: "最终剧本定稿"},
 	})
-	h := NewWebhookHandler(s, nil, nil)
+	h := NewWebhookHandler(WebhookDeps{Store: s})
 
 	task := s.GetTaskInternal(taskID)
 	refs := h.BuildTodoOutputs(task, &task.Todos[0])
@@ -585,7 +585,7 @@ func TestBuildTodoOutputsCarriesDeclaredSlots(t *testing.T) {
 	// A task with no workflow yields nothing — the agent legitimately has no
 	// slot to claim and every upload is a process file.
 	s2, _, taskID2, _ := newTransferTestFixture(t)
-	h2 := NewWebhookHandler(s2, nil, nil)
+	h2 := NewWebhookHandler(WebhookDeps{Store: s2})
 	task2 := s2.GetTaskInternal(taskID2)
 	if got := h2.BuildTodoOutputs(task2, &task2.Todos[0]); got != nil {
 		t.Fatalf("expected nil outputs for a workflow-less task, got %+v", got)
@@ -601,7 +601,7 @@ func TestBindArtifactOutputPromotesProcessFile(t *testing.T) {
 		{Name: "剧名_分镜头脚本", MimeType: "xlsx"},
 		{Name: "剧名_逐镜视频生成提示词", MimeType: "xlsx"},
 	})
-	h := NewWebhookHandler(s, nil, nil)
+	h := NewWebhookHandler(WebhookDeps{Store: s})
 
 	w := postTransfer(t, h, devNode, taskID, "TD_01",
 		"tid-manualbind-00001", "shotlist.xlsx",

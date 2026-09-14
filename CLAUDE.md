@@ -36,10 +36,10 @@ cd backend && go build ./cmd/server
 ### 前端 (React)
 
 ```bash
-cd frontend && npm install
-cd frontend && npm run dev      # 开发服务器
-cd frontend && npm run build    # 生产构建 (tsc -b && vite build)
-cd frontend && npm run lint     # ESLint
+cd frontend-v2 && npm install
+cd frontend-v2 && npm run dev      # 开发服务器
+cd frontend-v2 && npm run build    # 生产构建 (tsc -b && vite build)
+cd frontend-v2 && npm run lint     # ESLint
 ```
 
 ### Docker Compose (全栈)

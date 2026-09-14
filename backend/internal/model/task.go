@@ -203,7 +203,7 @@ const (
 
 type TaskArtifact struct {
 	TransferID    string    `json:"transfer_id" bson:"_id"`
-	OrgID string `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属
+	OrgID         string    `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属
 	TaskID        string    `json:"task_id" bson:"task_id"`
 	TodoID        string    `json:"todo_id,omitempty" bson:"todo_id,omitempty"`
 	FileName      string    `json:"file_name" bson:"file_name"`
@@ -276,7 +276,7 @@ type TaskDetail struct {
 	// pipeline (the primary workflow): which workflow it belongs to and the
 	// contiguous step range (by index into the workflow's Steps) this task
 	// owns. Empty when the task is not part of a project pipeline.
-	WorkflowRef   *WorkflowRef       `json:"workflow_ref,omitempty" bson:"workflow_ref,omitempty"`
+	WorkflowRef *WorkflowRef `json:"workflow_ref,omitempty" bson:"workflow_ref,omitempty"`
 	// DeliverScope 记录 PM 声明的交付终点步骤（部分交付场景，如「只要到资产图」）。
 	// 为空表示全量交付。仅作记录与审计，不参与派发。
 	DeliverScope  *TaskDeliverScope  `json:"deliver_scope,omitempty" bson:"deliver_scope,omitempty"`

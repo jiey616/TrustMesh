@@ -26,13 +26,15 @@ export function chatAssistant(params: ChatParams, callbacks: ChatCallbacks): Abo
   const controller = new AbortController()
 
   const run = async () => {
-    const { accessToken, activeOrgId } = useAuthStore.getState()
+    const { accessToken, activeOrgId, personalOrgId } = useAuthStore.getState()
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
     }
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`
-    if (activeOrgId) headers['X-Org-Id'] = activeOrgId
+    // 与 apiClient 同语义：个人空间（activeOrgId 为空）发个人租户真头
+    const orgId = activeOrgId ?? personalOrgId
+    if (orgId) headers['X-Org-Id'] = orgId
 
     const response = await fetch(`${API_BASE}assistant/chat`, {
       method: 'POST',

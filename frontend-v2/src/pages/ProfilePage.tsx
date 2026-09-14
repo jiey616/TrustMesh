@@ -70,6 +70,8 @@ export function ProfilePage() {
       cancelText: '取消',
       onOk: () => {
         logout()
+        // 清掉跨账号存活的 react-query 缓存（同 MainLayout.handleLogout）
+        queryClient.clear()
         message.success('已退出登录')
         navigate('/login')
       },

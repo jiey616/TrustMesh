@@ -49,14 +49,14 @@ const (
 
 // 动作类型（OpsAction.Kind）。
 const (
-	OpsActionCreated    = "created"    // 工单创建
-	OpsActionDiagnosed  = "diagnosed"  // 归因完成
-	OpsActionGuided     = "guided"     // 下发修复指引
-	OpsActionReminded   = "reminded"   // timeout_monitor 催办留痕（不占指导预算）
-	OpsActionEscalated  = "escalated"  // 升级人工
-	OpsActionResolved   = "resolved"   // 关闭
-	OpsActionIgnored    = "ignored"    // 人工忽略
-	OpsActionReopened   = "reopened"   // 观察期内复发，重新打开
+	OpsActionCreated   = "created"   // 工单创建
+	OpsActionDiagnosed = "diagnosed" // 归因完成
+	OpsActionGuided    = "guided"    // 下发修复指引
+	OpsActionReminded  = "reminded"  // timeout_monitor 催办留痕（不占指导预算）
+	OpsActionEscalated = "escalated" // 升级人工
+	OpsActionResolved  = "resolved"  // 关闭
+	OpsActionIgnored   = "ignored"   // 人工忽略
+	OpsActionReopened  = "reopened"  // 观察期内复发，重新打开
 )
 
 // OpsIncident 是一次异常的生命周期聚合。
@@ -73,9 +73,9 @@ type OpsIncident struct {
 	Status    string `json:"status" bson:"status"`
 	Severity  string `json:"severity" bson:"severity"`
 
-	Title   string `json:"title" bson:"title"`
-	Summary string `json:"summary,omitempty" bson:"summary,omitempty"`     // 现象描述
-	RootCause string `json:"root_cause,omitempty" bson:"root_cause,omitempty"` // 根因
+	Title      string `json:"title" bson:"title"`
+	Summary    string `json:"summary,omitempty" bson:"summary,omitempty"`       // 现象描述
+	RootCause  string `json:"root_cause,omitempty" bson:"root_cause,omitempty"` // 根因
 	AttrSource string `json:"attr_source,omitempty" bson:"attr_source,omitempty"`
 
 	// 关联主体（按需填充，不必全有）
@@ -112,8 +112,8 @@ type OpsIncident struct {
 type OpsAction struct {
 	ID         string         `json:"id" bson:"id"`
 	At         time.Time      `json:"at" bson:"at"`
-	Level      string         `json:"level" bson:"level"`                         // L0 | L1
-	Kind       string         `json:"kind" bson:"kind"`                           // 见 OpsAction* 常量
+	Level      string         `json:"level" bson:"level"` // L0 | L1
+	Kind       string         `json:"kind" bson:"kind"`   // 见 OpsAction* 常量
 	TemplateID string         `json:"template_id,omitempty" bson:"template_id,omitempty"`
 	Target     string         `json:"target,omitempty" bson:"target,omitempty"`   // 目标节点
 	Content    string         `json:"content,omitempty" bson:"content,omitempty"` // 实际下发的指引全文

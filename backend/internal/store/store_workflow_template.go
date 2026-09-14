@@ -1,6 +1,8 @@
 package store
 
 import (
+	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -140,7 +142,7 @@ func (s *Store) CopyWorkflowTemplate(sc Scope, templateID string) (*model.Workfl
 	doc := &model.WorkflowTemplate{
 		ID:          "wt_" + newID(),
 		UserID:      sc.UserID,
-		OrgID:      s.resolveOwnerOrgUnsafe(sc),
+		OrgID:       s.resolveOwnerOrgUnsafe(sc),
 		Name:        src.Name + "（副本）",
 		Description: src.Description,
 		Steps:       cloneSteps(src.Steps),
@@ -178,6 +180,96 @@ func (s *Store) DeleteWorkflowTemplate(sc Scope, templateID string) (*model.Work
 	return cloneWorkflowTemplate(t), nil
 }
 
+// ---------- 从成功任务沉淀模板（T1.9 一键沉淀） ----------
+
+// DistillWorkflowTemplateFromTask 把一个「成功任务」一键沉淀为用户级全局工作流
+// 模板：任务里每个 todo（按 Order 排序）成为一个步骤，携带指派人 Role（跨项目可
+// 复用的绑定）与该 todo 运行期登记的产出位。
+//
+// 设计取舍：
+//   - **不复制 AgentID**。模板的用途是跨项目复用，目标项目里未必存在同一个数字员
+//     工；工作流解析对 AgentID 优先、Role 兜底，绑 Role 才是可移植的。
+//   - **步骤名唯一**：模板同步走按名三路合并（computeThreeWayMerge），重名步骤会
+//     互相串扰，故重名自动追加序号。
+//   - **只接受全部完成的成功任务**：未完成/失败的 todo 一律拒绝（422 TASK_NOT_COMPLETED），
+//     并把未完成步骤名列给用户——半成品沉淀出的模板会误导后续项目。
+//
+// 前置：任务对 sc 可见（否则 404）；任务至少有一个 todo。
+func (s *Store) DistillWorkflowTemplateFromTask(sc Scope, taskID, name, description string) (*model.WorkflowTemplate, *transport.AppError) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil, transport.Validation("invalid task", map[string]any{"task_id": "required"})
+	}
+
+	task := s.GetTaskInternal(taskID)
+	if task == nil || !visibleToScope(sc, task.OrgID, task.UserID) {
+		return nil, transport.NotFound("task not found")
+	}
+	if len(task.Todos) == 0 {
+		return nil, transport.Validation("无可沉淀的步骤", map[string]any{
+			"task_id": taskID,
+			"reason":  "task has no todos",
+		})
+	}
+
+	var unfinished []string
+	for _, td := range task.Todos {
+		if td.Status != "done" {
+			label := strings.TrimSpace(td.Title)
+			if label == "" {
+				label = td.ID
+			}
+			unfinished = append(unfinished, label)
+		}
+	}
+	if len(unfinished) > 0 {
+		return nil, transport.NewError(http.StatusUnprocessableEntity, "TASK_NOT_COMPLETED",
+			"仅能从未出错且全部完成的成功任务沉淀模板；以下步骤尚未完成："+strings.Join(unfinished, "、"))
+	}
+
+	ordered := append([]model.Todo(nil), task.Todos...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Order < ordered[j].Order })
+
+	steps := make([]model.WorkflowStep, 0, len(ordered))
+	nameSeen := make(map[string]int, len(ordered))
+	for _, td := range ordered {
+		stepName := strings.TrimSpace(td.Title)
+		if stepName == "" {
+			stepName = td.ID
+		}
+		if n, dup := nameSeen[stepName]; dup {
+			nameSeen[stepName] = n + 1
+			stepName = fmt.Sprintf("%s (%d)", stepName, n+1)
+		} else {
+			nameSeen[stepName] = 1
+		}
+
+		step := model.WorkflowStep{
+			Name:       stepName,
+			NeedReview: td.NeedReview,
+		}
+		if td.Assignee.AgentID != "" {
+			if ag, appErr := s.GetAgent(sc, td.Assignee.AgentID); appErr == nil && ag != nil {
+				step.Role = ag.Role
+			}
+		}
+		for _, out := range td.Outputs {
+			if n := strings.TrimSpace(out.OutputName); n != "" {
+				step.Outputs = append(step.Outputs, model.StepOutput{Name: n})
+			}
+		}
+		steps = append(steps, step)
+	}
+
+	if strings.TrimSpace(name) == "" {
+		name = strings.TrimSpace(task.Title)
+	}
+	if strings.TrimSpace(name) == "" {
+		name = "任务沉淀模板"
+	}
+	return s.CreateWorkflowTemplate(sc, name, description, steps)
+}
+
 // ---------- 项目继承 / 同步 / 解除 ----------
 
 // InheritWorkflowTemplate clones a global template into the project as a new
@@ -199,12 +291,12 @@ func (s *Store) InheritWorkflowTemplate(sc Scope, projectID, templateID string) 
 		return nil, err
 	}
 	wf := model.Workflow{
-		ID:                "wf_" + newID(),
-		ParentTemplateID:  t.ID,
-		TemplateVersion:   t.Version,
-		TemplateSnapshot:  cloneSteps(t.Steps),
-		Name:              t.Name,
-		Steps:             steps,
+		ID:               "wf_" + newID(),
+		ParentTemplateID: t.ID,
+		TemplateVersion:  t.Version,
+		TemplateSnapshot: cloneSteps(t.Steps),
+		Name:             t.Name,
+		Steps:            steps,
 	}
 	p.Workflows = append(p.Workflows, wf)
 	p.UpdatedAt = time.Now().UTC()

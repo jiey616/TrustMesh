@@ -17,6 +17,16 @@ import (
 
 type Store struct {
 	mu sync.RWMutex
+	// Hook injection invariant (T0.10b): the hook fields below
+	// (dispatchHook / remindHook / cancelNotifyHook / planningStallHook /
+	// opsPublishHook / opsAttributionHook) are read and written WITHOUT a lock.
+	// The app layer must register ALL of them before it starts any background
+	// ticker that reads them (StartTimeoutMonitor / StartOpsScanner /
+	// StartDispatchReconciler). Correctness relies on Go's "goroutine creation
+	// happens-before" rule: a write that completes before the `go` statement is
+	// safely visible to the started goroutine. Reads on the request path
+	// (cancelNotifyHook) are safe because requests happen-after New() returns.
+	// See internal/app/router.go for the enforced startup order.
 	// dispatchHook is set by the app layer to re-dispatch a todo (e.g.
 	dispatchHook func(ctx context.Context, taskID, todoID string)
 	// remindHook is set by the app layer to send a timeout reminder to a
@@ -58,12 +68,12 @@ type Store struct {
 	// (the T0.7c promotions). Reaching agentStallStreakThreshold trips the
 	// agent compliance sentinel (T0.11③). Guarded by s.mu.
 	autoAdvanceStreak map[string]map[string]int
-	tasks              map[string]*model.TaskDetail
-	projectTasks       map[string][]string
-	taskEvents         map[string][]model.Event
-	userEvents         map[string][]*model.Event
-	agentEvents        map[string][]*model.Event
-	orgEvents          map[string][]*model.Event // 多租户：orgID → 该租户活动流（与 userEvents 共享事件指针）
+	tasks             map[string]*model.TaskDetail
+	projectTasks      map[string][]string
+	taskEvents        map[string][]model.Event
+	userEvents        map[string][]*model.Event
+	agentEvents       map[string][]*model.Event
+	orgEvents         map[string][]*model.Event // 多租户：orgID → 该租户活动流（与 userEvents 共享事件指针）
 
 	// 统一干预编排器（ops_dispatcher.go）：实际推送与 LLM 归因由 app 层注入
 	// （store 不能 import clawsynapse/assistant，与 remindHook 同款注入模式）。
@@ -71,17 +81,17 @@ type Store struct {
 	opsAttributionHook func(ctx context.Context, inc *model.OpsIncident, snapshot string) (string, error)
 
 	// 运维工单（ops_incidents）：与其余资源一致，全内存状态机 + Mongo 持久化镜像
-	llmConfigs     map[string]*model.PlatformLLMSetting // orgID(""=平台默认) → LLM 配置
-	llmEnvURL      string                        // env 兜底（bootstrap 注入）
-	llmEnvKey      string
-	llmEnvModel    string
-	opsIncidents   map[string]*model.OpsIncident // 工单 ID → 工单
-	opsByDedupeKey map[string]string             // dedupeKey → 工单 ID（活跃工单去重）
-	opsByTask      map[string][]string           // taskID → 工单 ID 列表
-	opsClearSince  map[string]time.Time          // 工单 ID → 规则不再满足的观察起点（内存即可，重启后重新观察）
-	opsRuntime     opsRuntime                    // 运维扫描运行参数（bootstrap 注入）
-	opsSuppress    map[string]time.Time          // dedupeKey → 升级抑制窗截止时间（内存即可）
-	processedMessages  map[string]processedMessage
+	llmConfigs        map[string]*model.PlatformLLMSetting // orgID(""=平台默认) → LLM 配置
+	llmEnvURL         string                               // env 兜底（bootstrap 注入）
+	llmEnvKey         string
+	llmEnvModel       string
+	opsIncidents      map[string]*model.OpsIncident // 工单 ID → 工单
+	opsByDedupeKey    map[string]string             // dedupeKey → 工单 ID（活跃工单去重）
+	opsByTask         map[string][]string           // taskID → 工单 ID 列表
+	opsClearSince     map[string]time.Time          // 工单 ID → 规则不再满足的观察起点（内存即可，重启后重新观察）
+	opsRuntime        opsRuntime                    // 运维扫描运行参数（bootstrap 注入）
+	opsSuppress       map[string]time.Time          // dedupeKey → 升级抑制窗截止时间（内存即可）
+	processedMessages map[string]processedMessage
 
 	taskArtifacts map[string][]model.TaskArtifact // taskID → []TaskArtifact
 
@@ -141,12 +151,12 @@ type Store struct {
 	mongoProjectFiles      *mongo.Collection
 	mongoMeetings          *mongo.Collection
 	mongoMeetingMessages   *mongo.Collection
-	mongoOrganizations  *mongo.Collection
-	mongoOrgMemberships *mongo.Collection
-	mongoProjectMembers *mongo.Collection
+	mongoOrganizations     *mongo.Collection
+	mongoOrgMemberships    *mongo.Collection
+	mongoProjectMembers    *mongo.Collection
 	mongoWorkflowTemplates *mongo.Collection
 	mongoOpsIncidents      *mongo.Collection
-	mongoLLMSettings      *mongo.Collection
+	mongoLLMSettings       *mongo.Collection
 	mongoTimeout           time.Duration
 	log                    *zap.Logger
 
@@ -202,52 +212,52 @@ func (s *Store) SetPlanningStallHook(hook func(ctx context.Context, taskID strin
 
 func New() *Store {
 	return &Store{
-		users:              make(map[string]*model.User),
-		usersByMail:        make(map[string]string),
-		agents:             make(map[string]*model.Agent),
-		agentByNode:        make(map[string]string),
-		projects:           make(map[string]*model.Project),
-		agentChats:         make(map[string]*model.AgentChat),
-		activeAgentChats:   make(map[string]string),
-		agentChatBySession: make(map[string]string),
-		planRejectNotify:   make(map[string]int),
+		users:                   make(map[string]*model.User),
+		usersByMail:             make(map[string]string),
+		agents:                  make(map[string]*model.Agent),
+		agentByNode:             make(map[string]string),
+		projects:                make(map[string]*model.Project),
+		agentChats:              make(map[string]*model.AgentChat),
+		activeAgentChats:        make(map[string]string),
+		agentChatBySession:      make(map[string]string),
+		planRejectNotify:        make(map[string]int),
 		planningStallCount:      make(map[string]int),
 		planningStallLastRemind: make(map[string]time.Time),
 		autoAdvanceStreak:       make(map[string]map[string]int),
-		tasks:              make(map[string]*model.TaskDetail),
-		projectTasks:       make(map[string][]string),
-		taskEvents:         make(map[string][]model.Event),
-		userEvents:         make(map[string][]*model.Event),
-		agentEvents:        make(map[string][]*model.Event),
-		orgEvents:          make(map[string][]*model.Event),
-		llmConfigs:         make(map[string]*model.PlatformLLMSetting),
-		opsIncidents:       make(map[string]*model.OpsIncident),
-		opsByDedupeKey:     make(map[string]string),
-		opsByTask:          make(map[string][]string),
-		opsClearSince:      make(map[string]time.Time),
-		opsSuppress:        make(map[string]time.Time),
-		processedMessages:  make(map[string]processedMessage),
-		taskArtifacts:      make(map[string][]model.TaskArtifact),
-		taskComments:       make(map[string][]model.Comment),
-		notifications:      make(map[string]*model.Notification),
-		userNotifications:  make(map[string][]string),
-		joinRequests:       make(map[string]*model.JoinRequest),
-		userJoinRequests:   make(map[string][]string),
-		trustRequestIndex:  make(map[string]string),
-		knowledgeDocs:      make(map[string]*model.KnowledgeDocument),
-		userKnowledgeDocs:  make(map[string][]string),
-		workflowTemplates:  make(map[string]*model.WorkflowTemplate),
-		userWorkflowTemplates: make(map[string][]string),
-		projectFiles:       make(map[string]*model.ProjectFile),
-		projectFileIndex:   make(map[string][]string),
-		transferFileIndex:  make(map[string]string),
-		externalApps:       make(map[string]*model.ExternalApp),
+		tasks:                   make(map[string]*model.TaskDetail),
+		projectTasks:            make(map[string][]string),
+		taskEvents:              make(map[string][]model.Event),
+		userEvents:              make(map[string][]*model.Event),
+		agentEvents:             make(map[string][]*model.Event),
+		orgEvents:               make(map[string][]*model.Event),
+		llmConfigs:              make(map[string]*model.PlatformLLMSetting),
+		opsIncidents:            make(map[string]*model.OpsIncident),
+		opsByDedupeKey:          make(map[string]string),
+		opsByTask:               make(map[string][]string),
+		opsClearSince:           make(map[string]time.Time),
+		opsSuppress:             make(map[string]time.Time),
+		processedMessages:       make(map[string]processedMessage),
+		taskArtifacts:           make(map[string][]model.TaskArtifact),
+		taskComments:            make(map[string][]model.Comment),
+		notifications:           make(map[string]*model.Notification),
+		userNotifications:       make(map[string][]string),
+		joinRequests:            make(map[string]*model.JoinRequest),
+		userJoinRequests:        make(map[string][]string),
+		trustRequestIndex:       make(map[string]string),
+		knowledgeDocs:           make(map[string]*model.KnowledgeDocument),
+		userKnowledgeDocs:       make(map[string][]string),
+		workflowTemplates:       make(map[string]*model.WorkflowTemplate),
+		userWorkflowTemplates:   make(map[string][]string),
+		projectFiles:            make(map[string]*model.ProjectFile),
+		projectFileIndex:        make(map[string][]string),
+		transferFileIndex:       make(map[string]string),
+		externalApps:            make(map[string]*model.ExternalApp),
 
-		organizations:  make(map[string]*model.Organization),
-		orgMemberships: make(map[string]*model.OrgMembership),
-		orgMemberIndex: make(map[string][]string),
-		userOrgIndex:   make(map[string][]string),
-		projectMembers: make(map[string][]model.ProjectMember),
+		organizations:       make(map[string]*model.Organization),
+		orgMemberships:      make(map[string]*model.OrgMembership),
+		orgMemberIndex:      make(map[string][]string),
+		userOrgIndex:        make(map[string][]string),
+		projectMembers:      make(map[string][]model.ProjectMember),
 		meetings:            make(map[string]*model.Meeting),
 		projectMeetings:     make(map[string][]string),
 		meetingMessages:     make(map[string]*model.MeetingMessage),

@@ -105,7 +105,7 @@ func TestTaskPlanReadyBadPayloadAppendsSystemComment(t *testing.T) {
 		t.Fatalf("create task: %v", appErr)
 	}
 
-	h := NewWebhookHandler(s, nil, nil)
+	h := NewWebhookHandler(WebhookDeps{Store: s})
 
 	// Session key carries the task id (platform convention); the body is the
 	// literal @file reference the PM emitted in the incident.

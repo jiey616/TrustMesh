@@ -11,8 +11,8 @@ import (
 
 // Rate limiter configuration.
 const (
-	globalRateLimit    = 100            // max requests per second globally
-	ipRateLimit        = 20             // max requests per second per IP
+	globalRateLimit    = 100             // max requests per second globally
+	ipRateLimit        = 20              // max requests per second per IP
 	rateLimitWindow    = 1 * time.Second // sliding window size
 	rateLimitCleanupMs = 5 * time.Minute // cleanup interval for stale IP entries
 )
@@ -30,7 +30,7 @@ type rateLimiter struct {
 	globalCount int
 	globalEnd   time.Time
 
-	ips     map[string]*ipEntry
+	ips         map[string]*ipEntry
 	lastCleanup time.Time
 }
 

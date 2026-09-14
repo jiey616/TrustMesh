@@ -35,11 +35,11 @@ type UIResponse struct {
 }
 
 type TaskMessage struct {
-	ID         string      `json:"id" bson:"id"`
-	Role       string      `json:"role" bson:"role"`
-	Content    string      `json:"content" bson:"content"`
-	UIBlocks    []UIBlock         `json:"ui_blocks,omitempty" bson:"ui_blocks,omitempty"`
-	UIResponse  *UIResponse       `json:"ui_response,omitempty" bson:"ui_response,omitempty"`
-	Attachments []ChatAttachment  `json:"attachments,omitempty" bson:"attachments,omitempty"`
-	CreatedAt   time.Time         `json:"created_at" bson:"created_at"`
+	ID          string           `json:"id" bson:"id"`
+	Role        string           `json:"role" bson:"role"`
+	Content     string           `json:"content" bson:"content"`
+	UIBlocks    []UIBlock        `json:"ui_blocks,omitempty" bson:"ui_blocks,omitempty"`
+	UIResponse  *UIResponse      `json:"ui_response,omitempty" bson:"ui_response,omitempty"`
+	Attachments []ChatAttachment `json:"attachments,omitempty" bson:"attachments,omitempty"`
+	CreatedAt   time.Time        `json:"created_at" bson:"created_at"`
 }

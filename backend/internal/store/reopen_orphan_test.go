@@ -145,14 +145,14 @@ func TestLateArtifactMarksOrphan(t *testing.T) {
 	s.tasks[taskID].Todos[1].Status = "failed"
 
 	first, appErr := s.SaveArtifactWithFiling(model.TaskArtifact{
-		TransferID:  "tr-orphan-1",
-		TaskID:      taskID,
-		TodoID:      todoID,
-		FileName:    "分镜视频台账.xlsx",
-		FileSize:    2048,
-		MimeType:    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-		FromNodeID:  developer.NodeID,
-		OutputName:  "视频台账",
+		TransferID: "tr-orphan-1",
+		TaskID:     taskID,
+		TodoID:     todoID,
+		FileName:   "分镜视频台账.xlsx",
+		FileSize:   2048,
+		MimeType:   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		FromNodeID: developer.NodeID,
+		OutputName: "视频台账",
 	}, nil)
 	if appErr != nil {
 		t.Fatalf("late artifact must be accepted, got: %v", appErr)

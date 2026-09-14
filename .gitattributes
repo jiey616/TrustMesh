@@ -1,0 +1,27 @@
+# 统一行尾策略：Go 源码与脚本一律以 LF 存储。
+# 背景：backend 下 178 个 .go 文件中曾有 86 个为纯 CRLF，导致
+#   - grep/特征串校验静默失败（CRLF 使行内匹配错位）
+#   - Edit 工具写入后行尾不一致
+#   - 同一文件在不同机器上产生整文件 diff 噪音
+#
+# 刻意不使用 `* text=auto`：那会把「当前未被规则命中的文件」一并纳入
+# 规范化比对，使工作区凭空出现一批已修改文件（实测 10 个 frontend-v2 源文件）。
+# 这里只对明确目标声明属性，「存量 CRLF 归一」单独成批提交，避免与功能改动混在一起。
+*.go   text eol=lf
+*.sh   text eol=lf
+*.mod  text eol=lf
+*.sum  text eol=lf
+
+# 显式声明二进制，避免被误判为文本
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.gz   binary
+*.zip  binary
+*.tar  binary
+*.exe  binary
+*.woff binary
+*.woff2 binary

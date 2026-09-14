@@ -223,24 +223,38 @@ func (s *Store) AddMeetingMessage(sc Scope, msg *model.MeetingMessage) (*model.M
 		meeting = m
 	}
 
-	// Mark the participant as joined once they actually speak. Participants are
-	// created in "invited" state; this keeps the participant roster accurate
-	// without relying on a separate join handshake.
-	if msg.SenderType == "agent" && msg.SenderID != "" && meeting != nil {
-		for i := range meeting.Participants {
-			if meeting.Participants[i].AgentID == msg.SenderID && meeting.Participants[i].Status == "invited" {
-				meeting.Participants[i].Status = "joined"
-				meeting.UpdatedAt = msg.CreatedAt
-				if s.mongoEnabled {
-					ctx, cancel := s.mongoContext()
-					upd := bson.M{"$set": bson.M{"participants": meeting.Participants, "updated_at": meeting.UpdatedAt}}
-					if _, e := s.mongoMeetings.UpdateOne(ctx, bson.M{"_id": meeting.ID}, upd); e != nil {
-						s.log.Warn("failed to update participant status", zap.String("meeting_id", meeting.ID), zap.Error(e))
-					}
-					cancel()
+	if meeting != nil {
+		// Mark the participant as joined once they actually speak. Participants are
+		// created in "invited" state; this keeps the participant roster accurate
+		// without relying on a separate join handshake.
+		if msg.SenderType == "agent" && msg.SenderID != "" {
+			for i := range meeting.Participants {
+				if meeting.Participants[i].AgentID == msg.SenderID && meeting.Participants[i].Status == "invited" {
+					meeting.Participants[i].Status = "joined"
+					break
 				}
-				break
 			}
+		}
+
+		// T1.2 会话态 write-through：把本条消息的会话语义（phase/target/发言轮数/
+		// 最后活动时间）镜到会议记录上并**立即落库**。消息本身早就写入，
+		// 这一步保证重启后不仅能读回记录，还知道「会议进行到哪、上一次点到谁」。
+		applyMeetingSessionFromMessageUnsafe(meeting, msg)
+
+		if s.mongoEnabled {
+			ctx, cancel := s.mongoContext()
+			upd := bson.M{"$set": bson.M{
+				"participants":     meeting.Participants,
+				"last_phase":       meeting.LastPhase,
+				"last_target":      meeting.LastTarget,
+				"speaker_turns":    meeting.SpeakerTurns,
+				"last_activity_at": meeting.LastActivityAt,
+				"updated_at":       meeting.UpdatedAt,
+			}}
+			if _, e := s.mongoMeetings.UpdateOne(ctx, bson.M{"_id": meeting.ID}, upd); e != nil {
+				s.log.Warn("failed to persist meeting session state", zap.String("meeting_id", meeting.ID), zap.Error(e))
+			}
+			cancel()
 		}
 	}
 
@@ -256,6 +270,28 @@ func (s *Store) AddMeetingMessage(sc Scope, msg *model.MeetingMessage) (*model.M
 	s.publishMeetingMessageUnsafe(meeting, msg)
 
 	return msg, nil
+}
+
+// applyMeetingSessionFromMessageUnsafe 把一条会议消息的会话语义镜像到会议记录上（T1.2）。
+//
+// 纯派生，不改变任何编排语义：phase / target 取该消息的值（空值不覆盖，避免用户或系统
+// 消息把主持人刚声明的阶段清空）；SpeakerTurns 仅对 agent 发言累加；LastActivityAt 取
+// 消息时间。调用方必须持有写锁。
+func applyMeetingSessionFromMessageUnsafe(m *model.Meeting, msg *model.MeetingMessage) {
+	if m == nil || msg == nil {
+		return
+	}
+	if msg.Phase != "" {
+		m.LastPhase = msg.Phase
+	}
+	if msg.Target != "" {
+		m.LastTarget = msg.Target
+	}
+	if msg.SenderType == "agent" {
+		m.SpeakerTurns++
+	}
+	m.LastActivityAt = msg.CreatedAt
+	m.UpdatedAt = msg.CreatedAt
 }
 
 func (s *Store) publishMeetingMessageUnsafe(m *model.Meeting, msg *model.MeetingMessage) {

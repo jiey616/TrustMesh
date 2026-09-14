@@ -307,3 +307,90 @@ func TestOperationInterruptedDoesNotRefreshLiveness(t *testing.T) {
 		t.Fatalf("Operation interrupted must NOT refresh LastProgressAt")
 	}
 }
+
+// ────────────────────────────── T1.4 ──────────────────────────────
+
+// 结构化类型优先：给定 type=todo.error 时必须走 type 分支，且**不**回落文案匹配。
+func TestClassifyCommentErrorPrefersStructuredType(t *testing.T) {
+	called := false
+	orig := isErrorCommentFunc
+	// 记录是否被触及，同时委托真实兜底，便于第 3 个断言验证 heuristic 分支仍然生效。
+	isErrorCommentFunc = func(s string) bool { called = true; return orig(s) }
+	t.Cleanup(func() { isErrorCommentFunc = orig })
+
+	// content 不含任何错误特征串 —— 只有结构化类型能让它被判为错误上报。
+	isErr, source := ClassifyCommentError("todo.error", "一切正常，正在推进第二步")
+	if !isErr || source != ErrorSourceStructured {
+		t.Fatalf("ClassifyCommentError(todo.error, benign content) = %v/%q, want true/%q",
+			isErr, source, ErrorSourceStructured)
+	}
+	if called {
+		t.Fatal("structured type must short-circuit the text heuristic (IsErrorComment must NOT be called)")
+	}
+
+	// 非结构化类型 + 无特征 → 不算错误；此时兜底必须被咨询。
+	called = false
+	if isErr, _ := ClassifyCommentError("task.comment", "一切正常，正在推进第二步"); isErr {
+		t.Fatal("plain comment without error wording must not be an error report")
+	}
+	if !called {
+		t.Fatal("heuristic fallback must be consulted for non-structured types")
+	}
+
+	// 非结构化类型 + 命中特征 → 走 heuristic 分支（保住 persona 型执行者）。
+	if isErr, source := ClassifyCommentError("task.comment", "⚠️【执行侧故障上报】Operation interrupted"); !isErr || source != ErrorSourceHeuristic {
+		t.Fatalf("heuristic match = %v/%q, want true/%q", isErr, source, ErrorSourceHeuristic)
+	}
+}
+
+// 端到端：SourceType=todo.error 且 content 是「正常进展」口吻时，仍必须被判为故障上报、
+// 不续命 —— 这正是旧实现（纯文案匹配）会误判为进展、让崩溃 agent 续命的漏洞。
+func TestStructuredErrorCommentDoesNotRefreshLiveness(t *testing.T) {
+	s, _, pm, developer, project := seedWorkflowState(t)
+	s.log = zap.NewNop()
+
+	task, appErr := s.CreateTaskByPMNode(pm.NodeID, TaskCreateInput{
+		ProjectID:   project.ID,
+		Title:       "T1.4 结构化错误",
+		Description: "验证 todo.error 类型优先判定",
+		Todos: []TaskCreateTodoInput{
+			{Title: "阶段一", Description: "d", AssigneeNodeID: developer.NodeID},
+		},
+	})
+	if appErr != nil {
+		t.Fatalf("create task: %v", appErr)
+	}
+	todoID := task.Todos[0].ID
+	if _, appErr := s.UpdateTodoProgressByNode(developer.NodeID, TodoProgressInput{
+		TaskID: task.ID, TodoID: todoID, Message: "开始执行",
+	}); appErr != nil {
+		t.Fatalf("start todo: %v", appErr)
+	}
+
+	old := time.Now().UTC().Add(-40 * time.Minute)
+	td := &s.tasks[task.ID].Todos[0]
+	td.LastActivityAt = &old
+	td.LastProgressAt = &old
+	td.RemindCount = 2
+	td.RemindAt = &old
+
+	// content 故意是「正常进展」口吻，只有 SourceType 表明这是故障上报。
+	if _, appErr := s.AddTaskCommentByNode(developer.NodeID, TaskCommentInput{
+		TaskID: task.ID, TodoID: todoID,
+		Content:    "一切正常，正在推进第二步",
+		SourceType: "todo.error",
+	}); appErr != nil {
+		t.Fatalf("add structured error comment: %v", appErr)
+	}
+
+	td = &s.tasks[task.ID].Todos[0]
+	if td.RemindCount != 2 {
+		t.Fatalf("structured todo.error must NOT reset RemindCount, got %d", td.RemindCount)
+	}
+	if td.LastActivityAt == nil || !td.LastActivityAt.Equal(old) {
+		t.Fatalf("structured todo.error must NOT refresh LastActivityAt")
+	}
+	if td.LastProgressAt == nil || !td.LastProgressAt.Equal(old) {
+		t.Fatalf("structured todo.error must NOT refresh LastProgressAt")
+	}
+}

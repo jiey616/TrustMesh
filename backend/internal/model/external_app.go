@@ -51,15 +51,15 @@ func HasPlacement(placement, want string) bool {
 // ExternalApp is the persisted connection record (includes the sensitive
 // client_secret, which must never be serialized to API clients directly).
 type ExternalApp struct {
-	ID           string    `json:"id" bson:"_id"`
-	OrgID string `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属
-	Name         string    `json:"name" bson:"name"`
-	BaseURL      string    `json:"base_url" bson:"base_url"`
-	ClientID     string    `json:"client_id" bson:"client_id"`
-	ClientSecret string    `json:"-" bson:"client_secret"`
-	SSOType      string    `json:"sso_type" bson:"sso_type"`
-	FrameMode    string    `json:"frame_mode" bson:"frame_mode"`
-	Scopes       string    `json:"scopes,omitempty" bson:"scopes,omitempty"`
+	ID           string `json:"id" bson:"_id"`
+	OrgID        string `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属
+	Name         string `json:"name" bson:"name"`
+	BaseURL      string `json:"base_url" bson:"base_url"`
+	ClientID     string `json:"client_id" bson:"client_id"`
+	ClientSecret string `json:"-" bson:"client_secret"`
+	SSOType      string `json:"sso_type" bson:"sso_type"`
+	FrameMode    string `json:"frame_mode" bson:"frame_mode"`
+	Scopes       string `json:"scopes,omitempty" bson:"scopes,omitempty"`
 
 	// Mount metadata: where the app surfaces inside the TrustMesh shell.
 	// Placement is a comma-separated set of mount points (sidebar, project_tab);

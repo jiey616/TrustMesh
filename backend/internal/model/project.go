@@ -33,7 +33,7 @@ type Project struct {
 	PrimaryWorkflowIndex int `json:"primary_workflow_index" bson:"primary_workflow_index"`
 	// PrimaryWorkflowID is the ID-based reference to the primary workflow
 	// (new style, preferred over PrimaryWorkflowIndex).
-	PrimaryWorkflowID string `json:"primary_workflow_id,omitempty" bson:"primary_workflow_id,omitempty"`
+	PrimaryWorkflowID string    `json:"primary_workflow_id,omitempty" bson:"primary_workflow_id,omitempty"`
 	CreatedAt         time.Time `json:"created_at" bson:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at" bson:"updated_at"`
 }

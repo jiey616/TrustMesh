@@ -91,6 +91,11 @@ type TaskCommentInput struct {
 	Content     string
 	Mentions    []TaskCommentMentionInput
 	Attachments []model.ChatAttachment
+	// SourceType is the originating webhook message type ("task.comment",
+	// "todo.error", "task.error", …). AddTaskCommentByNode classifies an error
+	// report by TYPE first and only falls back to text heuristics when no
+	// structured type is present (T1.4). Empty for callers that don't know it.
+	SourceType string
 }
 
 type TaskCommentMentionInput struct {
@@ -1269,10 +1274,11 @@ func (s *Store) AddTaskCommentByNode(nodeID string, in TaskCommentInput) (*model
 	// agent 会周期性上报故障，若照旧续命，超时判失败将永远无法触发
 	// （2026-09-10：TD_05 靠 14 次错误上报续命空转 8 小时）。
 	// 无法归类的模糊评论按续命处理（保守优先，宁可漏判不可误杀）。
-	if IsErrorComment(in.Content) {
+	if isErr, source := ClassifyCommentError(in.SourceType, in.Content); isErr {
 		if s.log != nil {
 			s.log.Info("agent comment classified as error report; not refreshing todo liveness",
-				zap.String("task_id", task.ID), zap.String("agent_id", agent.ID))
+				zap.String("task_id", task.ID), zap.String("agent_id", agent.ID),
+				zap.String("source", source))
 		}
 		// P-08: a run that hit its tool-call budget is silently truncated
 		// before it can send todo.complete, so the todo merely looks slow and

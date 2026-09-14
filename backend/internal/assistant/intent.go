@@ -20,7 +20,7 @@ type AgentCandidate struct {
 type TaskIntentResult struct {
 	// Mode is "planning" (needs PM 数字员工 to plan) or "building" (direct assignment).
 	Mode        string `json:"mode"`
-	AgentID     string `json:"agent_id"`    // non-empty only when Mode == "building"
+	AgentID     string `json:"agent_id"` // non-empty only when Mode == "building"
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	Priority    string `json:"priority"` // low | medium | high | urgent

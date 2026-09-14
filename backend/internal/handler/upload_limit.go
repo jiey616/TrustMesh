@@ -11,7 +11,7 @@ import (
 
 // Upload limits.
 const (
-	maxUploadSize     = 100 << 20 // 100MB
+	maxUploadSize      = 100 << 20 // 100MB
 	maxFilesPerProject = 1000
 )
 

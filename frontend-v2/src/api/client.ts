@@ -52,13 +52,15 @@ export const apiClient = ky.create({
     beforeRequest: [
       async (request) => {
         await ensureAccessToken()
-        const { accessToken, activeOrgId } = useAuthStore.getState()
+        const { accessToken, activeOrgId, personalOrgId } = useAuthStore.getState()
         if (accessToken) {
           request.headers.set('Authorization', `Bearer ${accessToken}`)
         }
-        // 多租户上下文：activeOrgId 为 null = 个人空间，不带头发请求（与旧客户端行为一致）
-        if (activeOrgId) {
-          request.headers.set('X-Org-Id', activeOrgId)
+        // 多租户上下文：activeOrgId 为 null = 个人空间 → 发个人租户 ID 真头；
+        // personalOrgId 尚未水合（冷启动首轮）时才退回无头，走后端 user 维度兜底。
+        const orgId = activeOrgId ?? personalOrgId
+        if (orgId) {
+          request.headers.set('X-Org-Id', orgId)
         }
       },
     ],

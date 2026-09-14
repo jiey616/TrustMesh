@@ -25,15 +25,15 @@ func NewOrgHandler(s *store.Store) *OrgHandler {
 var orgSlugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$`)
 
 type orgView struct {
-	ID        string             `json:"id"`
-	Name      string             `json:"name"`
-	Slug      string             `json:"slug"`
-	Kind      string             `json:"kind"`
-	OwnerID   string             `json:"owner_id"`
-	MyRole    string             `json:"my_role"`
-	Quota     model.OrgQuota     `json:"quota"`
-	CreatedAt string             `json:"created_at"`
-	Members   []memberView       `json:"members,omitempty"`
+	ID        string         `json:"id"`
+	Name      string         `json:"name"`
+	Slug      string         `json:"slug"`
+	Kind      string         `json:"kind"`
+	OwnerID   string         `json:"owner_id"`
+	MyRole    string         `json:"my_role"`
+	Quota     model.OrgQuota `json:"quota"`
+	CreatedAt string         `json:"created_at"`
+	Members   []memberView   `json:"members,omitempty"`
 }
 
 type memberView struct {

@@ -21,8 +21,8 @@ type Client struct {
 	// apiToken 是节点本地 API 的 Bearer token（clawsynapse v1.0.36+ 的
 	// requireBearer 中间件）。经 bearerTransport 统一注入，空串表示不鉴权
 	// （兼容未启用 token 的旧版节点）。
-	apiToken    string
-	httpClient  *http.Client
+	apiToken   string
+	httpClient *http.Client
 	// writeClient 用于写回类请求：skill/model 写回会重启目标 gateway（契约语义），
 	// 超过默认的 3s 全局超时，需独立的长超时客户端。
 	writeClient *http.Client

@@ -432,7 +432,48 @@ func (s *Store) loadMongoState() error {
 	// 多租户：事件索引按资源归属重建（含存量事件归属校正），幂等。
 	// 必须在 tasks/projects/agents 全部赋值之后执行。
 	s.reindexEventOrgsUnsafe()
+	// T1.2：会议会话态回填——存量会议文档缺少会话字段，重启时按历史消息派生一次
+	// （phase/target/speaker_turns/last_activity_at）。幂等、只读内存，不回写 Mongo。
+	// 必须在 meetings / meetingMessages / meetingMessageIndex 全部赋值之后执行。
+	s.backfillMeetingSessionUnsafe()
 	return nil
+}
+
+// backfillMeetingSessionUnsafe 为「尚无语会话态」的存量会议按历史消息派生会话字段
+// （T1.2）。调用方必须持有写锁，且 s.meetings / s.meetingMessages /
+// s.meetingMessageIndex 已全部赋值。纯派生、幂等：已有会话态的会议
+// （LastActivityAt 非零，即新写入路径已镜像过）直接跳过。
+func (s *Store) backfillMeetingSessionUnsafe() {
+	for id, m := range s.meetings {
+		if m == nil || !m.LastActivityAt.IsZero() {
+			continue
+		}
+		ids := s.meetingMessageIndex[id]
+		if len(ids) == 0 {
+			continue
+		}
+		msgs := make([]*model.MeetingMessage, 0, len(ids))
+		for _, mid := range ids {
+			if msg, ok := s.meetingMessages[mid]; ok && msg != nil {
+				msgs = append(msgs, msg)
+			}
+		}
+		// 索引顺序不保证按时间（Mongo 载入顺序），按 CreatedAt 排序后再派生，
+		// 保证 LastPhase/LastTarget/LastActivityAt 取的是最后一条消息。
+		sort.Slice(msgs, func(i, j int) bool { return msgs[i].CreatedAt.Before(msgs[j].CreatedAt) })
+		for _, msg := range msgs {
+			if msg.Phase != "" {
+				m.LastPhase = msg.Phase
+			}
+			if msg.Target != "" {
+				m.LastTarget = msg.Target
+			}
+			if msg.SenderType == "agent" {
+				m.SpeakerTurns++
+			}
+			m.LastActivityAt = msg.CreatedAt
+		}
+	}
 }
 
 func (s *Store) loadUsers() (map[string]*model.User, error) {

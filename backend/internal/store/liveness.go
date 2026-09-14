@@ -53,6 +53,49 @@ func IsErrorComment(content string) bool {
 	return false
 }
 
+// isErrorCommentFunc indirection lets tests prove the structured-type branch
+// short-circuits the text heuristic (T1.4 acceptance). Production never swaps it.
+var isErrorCommentFunc = IsErrorComment
+
+// Error-classification sources reported by ClassifyCommentError.
+const (
+	// ErrorSourceStructured — the comment carried an explicit node-side error
+	// message type (N-07: todo.error / task.error). No text matching involved.
+	ErrorSourceStructured = "structured"
+	// ErrorSourceHeuristic — no structured type; classified via text patterns.
+	ErrorSourceHeuristic = "heuristic"
+)
+
+// isStructuredErrorType reports whether a webhook message type denotes a
+// node-side failure report rather than an ordinary comment.
+func isStructuredErrorType(t string) bool {
+	switch strings.TrimSpace(t) {
+	case "todo.error", "task.error":
+		return true
+	}
+	return false
+}
+
+// ClassifyCommentError decides whether an agent comment is a failure report,
+// and how. It PREFERS the structured message type (node-side N-07: todo.error /
+// task.error) and only falls back to text-pattern matching (IsErrorComment) when
+// no structured type is supplied.
+//
+// Rationale (T1.4): string matching is fragile — a JSON todo.error whose content
+// carried no known wording used to be mis-read as progress and kept the todo
+// alive. Branching on the type first makes compliance deterministic for nodes
+// that emit it, while persona agents that only ever report via task.comment keep
+// working through the heuristic fallback.
+func ClassifyCommentError(sourceType, content string) (isError bool, source string) {
+	if isStructuredErrorType(sourceType) {
+		return true, ErrorSourceStructured
+	}
+	if isErrorCommentFunc(content) {
+		return true, ErrorSourceHeuristic
+	}
+	return false, ""
+}
+
 // budgetExhaustedPatterns identifies the gateway's silent truncation notice.
 // Kept separate from errorCommentPatterns so the platform can raise a
 // dedicated signal instead of only withholding liveness credit.

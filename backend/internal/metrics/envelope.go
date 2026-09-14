@@ -41,4 +41,38 @@ const (
 	// first) but fail to parse. These are already handled leniently downstream
 	// (loose decode / repair); the counter just makes the volume visible.
 	EnvelopeInvalidJSONTotal = "envelope_invalid_json_total"
+
+	// AgentProduceRejectedTotal counts produces hard-rejected at the two
+	// compliance chokepoints (T0.12): a todo.complete carrying no produce
+	// declaration, or a transfer.received carrying an empty fileName.
+	AgentProduceRejectedTotal = "agent_produce_rejected_total"
+
+	// AgentProduceWarnedTotal counts produces that failed the same compliance
+	// check but were let through because the strict gate is off. Lets a deploy
+	// measure the blast radius of the strict gate before enabling it.
+	AgentProduceWarnedTotal = "agent_produce_warned_total"
+
+	// ProtocolSchemaRejectedTotal counts inbound task/todo messages hard-rejected
+	// because they did not carry a protocol envelope while the strict gate is on
+	// (T1.6). Scope is the structured task/todo types only (see
+	// requiresProtocolEnvelope); free-text channels (chat./meeting./prose
+	// responses/errors) are never counted here.
+	ProtocolSchemaRejectedTotal = "protocol_schema_rejected_total"
+
+	// ProtocolSchemaWarnedTotal counts the same shape mismatch but let through
+	// because the strict gate is off — the "blast radius" meter a deploy watches
+	// before flipping TRUSTMESH_STRICT_PROTOCOL_SCHEMA_GATE to true. It mirrors
+	// AgentProduceWarnedTotal and, like the T0.6a counters, is observe-only.
+	ProtocolSchemaWarnedTotal = "protocol_schema_warned_total"
+
+	// DeliverableQualityRejectedTotal counts uploaded deliverables hard-rejected
+	// by the judgeable quality gate (T1.10): a zero-byte file, or a file whose
+	// type cannot be identified. Only objective defects count — no subjective
+	// judgement is encoded here.
+	DeliverableQualityRejectedTotal = "deliverable_quality_rejected_total"
+
+	// DeliverableQualityWarnedTotal counts the same defects let through (marked
+	// on the task timeline + ops feed) because the strict gate is off. Observe
+	// first, then flip TRUSTMESH_STRICT_DELIVERABLE_QUALITY_GATE.
+	DeliverableQualityWarnedTotal = "deliverable_quality_warned_total"
 )

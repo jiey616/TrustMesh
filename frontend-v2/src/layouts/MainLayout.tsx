@@ -74,7 +74,7 @@ export function MainLayout() {
   const { data: projects } = useProjects()
   const { data: externalApps } = useExternalApps()
   const { data: orgs } = useOrganizations()
-  const { user, logout, activeOrgId, setActiveOrg } = useAuthStore()
+  const { user, logout, activeOrgId, setActiveOrg, personalOrgId, setPersonalOrgId } = useAuthStore()
   const qc = useQueryClient()
   const { theme } = useTheme()
   useRealtimeEvents()
@@ -118,6 +118,9 @@ export function MainLayout() {
 
   const handleLogout = () => {
     logout()
+    // 清掉 react-query 缓存：QueryClient 是模块级单例，跨账号存活，
+    // 不清会导致换账号登录后命中上一个账号的 orgs/项目等缓存数据。
+    qc.clear()
     navigate('/login')
   }
 
@@ -131,6 +134,17 @@ export function MainLayout() {
 
   const personalOrg = useMemo(() => (orgs ?? []).find((o) => o.kind === 'personal'), [orgs])
   const enterpriseOrgs = useMemo(() => (orgs ?? []).filter((o) => o.kind === 'enterprise'), [orgs])
+
+  // 水合个人租户 ID：orgs 列表就绪后把 kind=personal 的租户写进 authStore，
+  // 供 apiClient/assistant 在个人空间（activeOrgId 为空）时发 X-Org-Id 真头。
+  // 首次水合或值变化（跨账号/重建）→ 清查询缓存，全部数据按新租户上下文重取。
+  useEffect(() => {
+    if (!personalOrg) return
+    if (personalOrgId !== personalOrg.id) {
+      setPersonalOrgId(personalOrg.id)
+      qc.removeQueries()
+    }
+  }, [personalOrg, personalOrgId, qc, setPersonalOrgId])
   const roleLabel = (r: string) => (r === 'owner' ? 'Owner' : r === 'admin' ? 'Admin' : '成员')
 
   // 当前生效工作区：activeOrgId 为空 = 个人空间。侧边栏用户区与切换菜单都需要它。

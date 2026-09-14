@@ -61,7 +61,7 @@ export function AuthLayout() {
                 cursor: 'pointer',
                 fontSize: 12,
                 backdropFilter: 'var(--glass-blur)',
-                boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+                boxShadow: 'var(--shadow-float)',  // 主题感知：近白主题自动变轻
                 userSelect: 'none',
               }}
             >

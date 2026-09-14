@@ -109,6 +109,33 @@ func (h *WorkflowTemplateHandler) Delete(c *gin.Context) {
 	transport.WriteData(c, http.StatusOK, t)
 }
 
+// ---------- 从成功任务一键沉淀（T1.9） ----------
+
+type distillWorkflowRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// Distill 把一个成功任务沉淀为全局工作流模板。任务 id 走路径参数 :id（挂在
+// /tasks/:id/distill-template 下，避免与 /workflow-templates/:templateId 的
+// 通配段冲突）。请求体可选：缺省时模板名回退为任务标题。
+func (h *WorkflowTemplateHandler) Distill(c *gin.Context) {
+	sc, ok := currentScope(c)
+	if !ok {
+		return
+	}
+	var req distillWorkflowRequest
+	// 请求体是可选的（「一键」场景可以不带 body）；绑定失败只意味着用默认命名，
+	// 不应因此拒绝请求。
+	_ = c.ShouldBindJSON(&req)
+	t, appErr := h.store.DistillWorkflowTemplateFromTask(sc, c.Param("id"), req.Name, req.Description)
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
+	transport.WriteData(c, http.StatusCreated, t)
+}
+
 // ---------- 项目继承 / 同步 ----------
 
 type inheritWorkflowRequest struct {

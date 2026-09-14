@@ -258,8 +258,8 @@ func (e *ToolExecutor) searchKnowledge(ctx context.Context, sc store.Scope, args
 	}
 
 	mustConds := []knowledge.QdrantCondition{
-// ⚠️ Qdrant 向量过滤保持 user 维度（宁可漏不可泄）：org 维度检索
-	// 需在 chunk 落库时写入 org_id payload，属二期改造。
+		// ⚠️ Qdrant 向量过滤保持 user 维度（宁可漏不可泄）：org 维度检索
+		// 需在 chunk 落库时写入 org_id payload，属二期改造。
 		{Key: "user_id", Match: map[string]any{"value": sc.UserID}},
 	}
 	filter := &knowledge.QdrantFilter{Must: mustConds}

@@ -77,13 +77,13 @@ func (h *MeetingHandler) Create(c *gin.Context) {
 	}
 
 	meeting := &model.Meeting{
-		ProjectID:    projectID,
-		Title:        strings.TrimSpace(req.Title),
-		Agenda:       strings.TrimSpace(req.Agenda),
-		HostAgentID:  req.HostAgentID,
-		Participants: req.Participants,
-		AgendaItems:  req.AgendaItems,
-		FileIDs:      req.FileIDs,
+		ProjectID:     projectID,
+		Title:         strings.TrimSpace(req.Title),
+		Agenda:        strings.TrimSpace(req.Agenda),
+		HostAgentID:   req.HostAgentID,
+		Participants:  req.Participants,
+		AgendaItems:   req.AgendaItems,
+		FileIDs:       req.FileIDs,
 		AttachedFiles: resolveMeetingAttachedFiles(h.store, projectID, req.FileIDs),
 	}
 
@@ -501,16 +501,16 @@ func (h *MeetingHandler) notifyPM(ctx context.Context, meeting *model.Meeting, c
 	}
 
 	msg := protocol.MeetingInstructionPayload{
-		SchemaVersion:  "1.0",
-		MeetingID:      meeting.ID,
-		ProjectID:      meeting.ProjectID,
-		Content:        sb.String(),
-		UserContent:    content,
-		MeetingTitle:   meeting.Title,
-		MeetingAgenda:  meeting.Agenda,
-		AgendaItems:    effectiveRefs,
-		Participants:   participants,
-		AttachedFiles:  attachedFileRefs,
+		SchemaVersion: "1.0",
+		MeetingID:     meeting.ID,
+		ProjectID:     meeting.ProjectID,
+		Content:       sb.String(),
+		UserContent:   content,
+		MeetingTitle:  meeting.Title,
+		MeetingAgenda: meeting.Agenda,
+		AgendaItems:   effectiveRefs,
+		Participants:  participants,
+		AttachedFiles: attachedFileRefs,
 	}
 	_, _ = h.clawClient.Publish(ctx, nodeID, "meeting.instruction", msg, meeting.ID, nil)
 }

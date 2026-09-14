@@ -134,4 +134,3 @@ func (s *TrustRequestSyncer) sync() {
 		s.log.Info("clawsynapse trust sync created join requests", zap.Int("count", created))
 	}
 }
-

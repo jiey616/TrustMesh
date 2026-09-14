@@ -151,10 +151,10 @@ func TestReviewTodoAgentRejectReworksPredecessor(t *testing.T) {
 		t.Fatalf("complete todo-1: %v", appErr)
 	}
 	if _, _, appErr = s.CompleteTodoByNode(developer.NodeID, TodoCompleteInput{
-		TaskID: task.ID,
-		TodoID: "todo-2",
+		TaskID:     task.ID,
+		TodoID:     "todo-2",
 		NeedReview: true,
-		Result: model.TodoResult{Summary: "审核意见"},
+		Result:     model.TodoResult{Summary: "审核意见"},
 	}); appErr != nil {
 		t.Fatalf("complete todo-2: %v", appErr)
 	}

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"go.uber.org/zap"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"go.uber.org/zap"
 	"trustmesh/backend/internal/model"
 	"trustmesh/backend/internal/transport"
 )

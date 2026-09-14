@@ -1,4 +1,17 @@
-/** 登录/注册页共享的科技感样式（CSS-in-JS 常量，随组件注入 <style>） */
+/**
+ * 登录/注册页共享外观（CSS-in-JS 常量，随组件注入 <style>）
+ *
+ * 治理（对齐 docs/frontend-v2-visual-hybrid-plan.md 与 theme/tokens.ts）：
+ *  1. 颜色一律走 var(--x) token —— 双主题各自成立，禁止写死色值；
+ *  2. 毛玻璃 / 发光 / 光斑 / 网格 / 流光 / 噪点等装饰只在深色启用，
+ *     近白主题（Quiet Signal）整体关闭，退化为平面 + 纯信号色。
+ *
+ * 2026-09-11 修复：本文件此前是「深色专用」写法 —— 卡片底 rgba(22,22,34,.85)、
+ * 输入框 rgba(0,0,0,.28)、标题白色渐变、网格/光斑/噪点/流光全部硬编码，
+ * 既无 token 也无主题分支。切到近白主题后卡片底仍为深色，而文字走
+ * --text-primary 变成近黑 → 登录/注册页整体看不清。
+ * 现改为 token 驱动 + [data-theme] 分支：深色观感与原先一致，近白完全成立。
+ */
 export const AUTH_TECH_CSS = `
 /* ========== 全局壳（全屏自适应） ========== */
 .tm-login-shell {
@@ -13,16 +26,24 @@ export const AUTH_TECH_CSS = `
   overflow: hidden;
 }
 
-/* 背景：深色底 + 网格 + 光斑 + 噪点 */
+/* ========== 背景层：近白为纯画布，深色才有氛围场 ========== */
 .tm-login-bg {
   position: absolute;
   inset: 0;
+  background: var(--canvas);
+}
+.tm-login-bg-grid,
+.tm-login-bg-orb,
+.tm-login-bg-noise { display: none; }
+
+[data-theme='dark'] .tm-login-bg {
   background:
     radial-gradient(ellipse 80% 60% at 20% -10%, rgba(109, 95, 245, 0.18), transparent 60%),
     radial-gradient(ellipse 60% 50% at 90% 110%, rgba(34, 211, 238, 0.1), transparent 55%),
     var(--canvas);
 }
-.tm-login-bg-grid {
+[data-theme='dark'] .tm-login-bg-grid {
+  display: block;
   position: absolute;
   inset: 0;
   background-image:
@@ -31,32 +52,34 @@ export const AUTH_TECH_CSS = `
   background-size: 56px 56px;
   mask-image: radial-gradient(ellipse 70% 70% at 50% 50%, black 20%, transparent 80%);
 }
-.tm-login-bg-orb {
+[data-theme='dark'] .tm-login-bg-orb {
+  display: block;
   position: absolute;
   border-radius: 50%;
   filter: blur(60px);
   opacity: 0.5;
   animation: tm-float 10s ease-in-out infinite;
 }
-.tm-login-bg-orb--1 {
+[data-theme='dark'] .tm-login-bg-orb--1 {
   width: 420px; height: 420px;
   left: -120px; top: -120px;
   background: radial-gradient(circle, rgba(109, 95, 245, 0.35), transparent 70%);
 }
-.tm-login-bg-orb--2 {
+[data-theme='dark'] .tm-login-bg-orb--2 {
   width: 380px; height: 380px;
   right: -100px; bottom: -100px;
   background: radial-gradient(circle, rgba(34, 211, 238, 0.22), transparent 70%);
   animation-delay: -5s;
 }
-.tm-login-bg-noise {
+[data-theme='dark'] .tm-login-bg-noise {
+  display: block;
   position: absolute;
   inset: 0;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
   pointer-events: none;
 }
 
-/* ========== 主卡片（占满视口可用空间） ========== */
+/* ========== 主卡片 ========== */
 .tm-login-card {
   position: relative;
   display: flex;
@@ -66,18 +89,26 @@ export const AUTH_TECH_CSS = `
   min-height: 0;
   border-radius: clamp(12px, 1.6vw, 20px);
   overflow: hidden;
+  /* 近白：平面表面 + 细边框 + 轻投影，无毛玻璃、无发光 */
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-card);
+}
+[data-theme='dark'] .tm-login-card {
   background: linear-gradient(160deg, rgba(22, 22, 34, 0.85), rgba(12, 12, 20, 0.92));
   backdrop-filter: blur(28px) saturate(150%);
   -webkit-backdrop-filter: blur(28px) saturate(150%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.08);
   box-shadow:
     0 30px 80px rgba(0, 0, 0, 0.55),
     0 0 0 1px rgba(109, 95, 245, 0.08),
     0 0 60px rgba(109, 95, 245, 0.06);
 }
 
-/* 卡片边缘流光 */
-.tm-login-card-border {
+/* 卡片边缘流光（仅深色） */
+.tm-login-card-border { display: none; }
+[data-theme='dark'] .tm-login-card-border {
+  display: block;
   position: absolute;
   inset: 0;
   padding: 1px;
@@ -95,7 +126,7 @@ export const AUTH_TECH_CSS = `
   min-width: 0;
   position: relative;
   display: flex;
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  border-right: 1px solid var(--line);
   overflow: hidden;
 }
 
@@ -107,7 +138,13 @@ export const AUTH_TECH_CSS = `
   justify-content: center;
 }
 
-.tm-login-hero-grid {
+/* 网格 / 光晕 / 扫描线：仅深色 */
+.tm-login-hero-grid,
+.tm-login-hero-glow,
+.tm-login-hero-scanline { display: none; }
+
+[data-theme='dark'] .tm-login-hero-grid {
+  display: block;
   position: absolute;
   inset: 0;
   background-image:
@@ -116,26 +153,26 @@ export const AUTH_TECH_CSS = `
   background-size: 40px 40px;
   mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 30%, transparent 75%);
 }
-
-.tm-login-hero-glow {
+[data-theme='dark'] .tm-login-hero-glow {
+  display: block;
   position: absolute;
   border-radius: 50%;
   filter: blur(80px);
 }
-.tm-login-hero-glow--a {
+[data-theme='dark'] .tm-login-hero-glow--a {
   width: 500px; height: 500px;
   top: -160px; left: -120px;
   background: radial-gradient(circle, rgba(109, 95, 245, 0.28), transparent 65%);
   animation: tm-float 12s ease-in-out infinite;
 }
-.tm-login-hero-glow--b {
+[data-theme='dark'] .tm-login-hero-glow--b {
   width: 420px; height: 420px;
   bottom: -140px; right: -100px;
   background: radial-gradient(circle, rgba(34, 211, 238, 0.18), transparent 65%);
   animation: tm-float 14s ease-in-out infinite reverse;
 }
-
-.tm-login-hero-scanline {
+[data-theme='dark'] .tm-login-hero-scanline {
+  display: block;
   position: absolute;
   left: 0; right: 0;
   height: 2px;
@@ -163,16 +200,22 @@ export const AUTH_TECH_CSS = `
   flex-shrink: 0;
 }
 
+/* 标题：基色走 token 渐变（深色＝白→紫→青），近白降级为纯文字色 */
 .tm-login-hero-title {
-  color: var(--text-primary) !important;
   font-size: clamp(30px, 4.4vw, 58px) !important;
   line-height: 1.1 !important;
   letter-spacing: -1.5px !important;
   margin: clamp(18px, 3vh, 40px) 0 clamp(12px, 2vh, 22px) !important;
-  background: linear-gradient(120deg, #ffffff 20%, #c4b5fd 55%, #67e8f9 90%);
+  background: linear-gradient(120deg, var(--text-primary) 20%, var(--signal) 55%, var(--cyan) 90%);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
+  color: var(--text-primary) !important;
+}
+[data-theme='quiet'] .tm-login-hero-title {
+  background: none;
+  -webkit-text-fill-color: var(--text-primary);
+  color: var(--text-primary) !important;
 }
 
 .tm-login-hero-sub {
@@ -203,15 +246,23 @@ export const AUTH_TECH_CSS = `
   cursor: grab;
 }
 .tm-login-3d-canvas:active { cursor: grabbing; }
+
+/* 脉冲环：近白不跑动效（无流光），只留一圈静态细环 */
 .tm-login-network-ring {
   position: absolute;
   border-radius: 50%;
-  border: 1px solid rgba(109, 95, 245, 0.24);
-  animation: tm-ring 4s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
+  border: 1px solid var(--signal-border);
 }
 .tm-login-network-ring--1 { width: 260px; height: 260px; }
-.tm-login-network-ring--2 { width: 260px; height: 260px; animation-delay: 1.33s; }
-.tm-login-network-ring--3 { width: 260px; height: 260px; animation-delay: 2.66s; }
+.tm-login-network-ring--2,
+.tm-login-network-ring--3 { display: none; }
+[data-theme='dark'] .tm-login-network-ring {
+  animation: tm-ring 4s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
+}
+[data-theme='dark'] .tm-login-network-ring--2,
+[data-theme='dark'] .tm-login-network-ring--3 { display: block; }
+[data-theme='dark'] .tm-login-network-ring--2 { animation-delay: 1.33s; }
+[data-theme='dark'] .tm-login-network-ring--3 { animation-delay: 2.66s; }
 
 .tm-login-hero-status {
   display: flex;
@@ -228,6 +279,8 @@ export const AUTH_TECH_CSS = `
   width: 8px; height: 8px;
   border-radius: 50%;
   background: var(--success);
+}
+[data-theme='dark'] .tm-login-pulse-dot {
   box-shadow: 0 0 12px rgba(34, 197, 94, 0.8);
   animation: tm-pulse 2s infinite;
 }
@@ -238,7 +291,7 @@ export const AUTH_TECH_CSS = `
   opacity: 0.6;
 }
 
-/* ========== 右侧表单区（占剩余宽度） ========== */
+/* ========== 右侧表单区 ========== */
 .tm-login-right {
   flex: 0 1 42%;
   min-width: 380px;
@@ -251,7 +304,10 @@ export const AUTH_TECH_CSS = `
   overflow-x: hidden;
 }
 
-.tm-login-right-glow {
+/* 底部装饰线：仅深色 */
+.tm-login-right-glow { display: none; }
+[data-theme='dark'] .tm-login-right-glow {
+  display: block;
   position: absolute;
   left: 10%;
   right: 10%;
@@ -283,12 +339,13 @@ export const AUTH_TECH_CSS = `
 }
 
 .tm-login-form .ant-form-item { margin-bottom: 20px; }
+.tm-login-form .ant-form-item-explain-error { font-size: 12px; }
 
-/* 输入框：深色内嵌 + 聚焦发光 */
+/* 输入框：两主题都用 token，深色额外叠聚焦发光 */
 .tm-login-input.ant-input-affix-wrapper,
 .tm-login-input.ant-input-password {
-  background: rgba(0, 0, 0, 0.28) !important;
-  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+  background: var(--surface-inset) !important;
+  border: 1px solid var(--line) !important;
   border-radius: 10px !important;
   padding: 12px 16px !important;
   transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
@@ -296,6 +353,12 @@ export const AUTH_TECH_CSS = `
 .tm-login-input:hover,
 .tm-login-input:focus,
 .tm-login-input.ant-input-affix-wrapper-focused {
+  border-color: var(--signal) !important;
+  box-shadow: 0 0 0 3px var(--signal-soft) !important;
+}
+[data-theme='dark'] .tm-login-input:hover,
+[data-theme='dark'] .tm-login-input:focus,
+[data-theme='dark'] .tm-login-input.ant-input-affix-wrapper-focused {
   border-color: rgba(109, 95, 245, 0.55) !important;
   box-shadow: 0 0 0 3px rgba(109, 95, 245, 0.12), 0 0 20px rgba(109, 95, 245, 0.12) !important;
   background: rgba(0, 0, 0, 0.34) !important;
@@ -313,7 +376,7 @@ export const AUTH_TECH_CSS = `
 }
 .tm-login-input .ant-input-suffix { color: var(--text-tertiary); }
 
-/* 提交按钮：渐变 + 发光 */
+/* 提交按钮：近白走纯信号色（token 已降级），深色保留科技渐变 + 发光 */
 .tm-login-submit.ant-btn {
   height: 48px;
   border-radius: 10px;
@@ -321,12 +384,15 @@ export const AUTH_TECH_CSS = `
   font-size: 15px;
   font-weight: 600;
   letter-spacing: 0.5px;
-  background: linear-gradient(135deg, #6d5ff5 0%, #8b5cf6 55%, #22d3ee 130%);
-  box-shadow: 0 8px 24px rgba(109, 95, 245, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  background: var(--gradient-cta);
   transition: transform 0.15s ease, box-shadow 0.2s ease, filter 0.2s ease;
 }
-.tm-login-submit.ant-btn:hover {
-  transform: translateY(-1px);
+[data-theme='dark'] .tm-login-submit.ant-btn {
+  background: linear-gradient(135deg, #6d5ff5 0%, #8b5cf6 55%, #22d3ee 130%);
+  box-shadow: 0 8px 24px rgba(109, 95, 245, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+.tm-login-submit.ant-btn:hover { transform: translateY(-1px); }
+[data-theme='dark'] .tm-login-submit.ant-btn:hover {
   filter: brightness(1.06);
   box-shadow: 0 12px 32px rgba(109, 95, 245, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }

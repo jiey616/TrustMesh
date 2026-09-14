@@ -111,8 +111,8 @@ func TestNotificationAgentStatusChanged(t *testing.T) {
 func TestNotificationActionableTaskEvents(t *testing.T) {
 	now := time.Now().UTC()
 	cases := []struct {
-		name     string
-		event    *model.Event
+		name      string
+		event     *model.Event
 		wantTitle string
 		wantBody  string
 	}{
@@ -121,7 +121,7 @@ func TestNotificationActionableTaskEvents(t *testing.T) {
 			event: &model.Event{
 				ID: "e-p1", UserID: "user-1", EventType: "task_plan_ready",
 				ActorType: "agent", ActorID: "pm-1", ActorName: "PM 数字员工",
-				Metadata: map[string]any{"task_title": "写剧本"},
+				Metadata:  map[string]any{"task_title": "写剧本"},
 				CreatedAt: now,
 			},
 			wantTitle: "任务规划完成",
@@ -131,7 +131,7 @@ func TestNotificationActionableTaskEvents(t *testing.T) {
 			event: &model.Event{
 				ID: "e-r1", UserID: "user-1", EventType: "todo_awaiting_review",
 				ActorType: "agent", ActorID: "a-1", ActorName: "执行数字员工",
-				Metadata: map[string]any{"todo_title": "分镜拆解"},
+				Metadata:  map[string]any{"todo_title": "分镜拆解"},
 				CreatedAt: now,
 			},
 			wantTitle: "待人工确认",
@@ -141,7 +141,7 @@ func TestNotificationActionableTaskEvents(t *testing.T) {
 			event: &model.Event{
 				ID: "e-q1", UserID: "user-1", EventType: "todo_ask_received",
 				ActorType: "agent", ActorID: "a-1", ActorName: "执行数字员工",
-				Metadata: map[string]any{"question": "需要确认方向"},
+				Metadata:  map[string]any{"question": "需要确认方向"},
 				CreatedAt: now,
 			},
 			wantTitle: "数字员工提问",
@@ -151,7 +151,7 @@ func TestNotificationActionableTaskEvents(t *testing.T) {
 			event: &model.Event{
 				ID: "e-w1", UserID: "user-1", EventType: "todo_rework_requested",
 				ActorType: "system", ActorID: "reviewer", ActorName: "人工确认",
-				Metadata: map[string]any{"todo_title": "剧本初稿"},
+				Metadata:  map[string]any{"todo_title": "剧本初稿"},
 				CreatedAt: now,
 			},
 			wantTitle: "产出被退回重做",
@@ -186,8 +186,8 @@ func TestNotificationTaskCommentFromSelf(t *testing.T) {
 	s.maybeCreateNotificationUnsafe(&model.Event{
 		ID: "e-c1", UserID: "user-1", EventType: "task_comment",
 		ActorType: "user", ActorID: "user-1", ActorName: "我自己",
-		Content: &content,
-		Metadata: map[string]any{"task_title": "写剧本"},
+		Content:   &content,
+		Metadata:  map[string]any{"task_title": "写剧本"},
 		CreatedAt: time.Now().UTC(),
 	})
 	if len(s.userNotifications["user-1"]) != 0 {

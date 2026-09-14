@@ -252,8 +252,8 @@ func TestBuildTodoInputsResolvesPrevOutput(t *testing.T) {
 		},
 	}
 	task := &model.TaskDetail{
-		ID:    "task-1",
-		Title: "Test Task",
+		ID:       "task-1",
+		Title:    "Test Task",
 		Workflow: wf,
 		Todos: []model.Todo{
 			makeTodo("t1", 1, "done", "node-A", "编剧", model.TodoResult{}),
@@ -349,8 +349,8 @@ func TestBuildTodoInputsResolvesDeliverableArtifact(t *testing.T) {
 				Outputs: []model.StepOutput{{Name: "剧本文件", MimeType: "text/markdown"}},
 			},
 			{
-				Name:  "分镜拆解",
-				Role:  "developer",
+				Name: "分镜拆解",
+				Role: "developer",
 				Inputs: []model.StepInput{
 					{Name: "剧本文件", Source: model.StepIOLink{Step: "剧本创作", Output: "剧本文件"}},
 				},
@@ -415,8 +415,8 @@ func TestBuildTodoInputsSkipsNonDeliverableArtifacts(t *testing.T) {
 				Outputs: []model.StepOutput{{Name: "剧本文件", MimeType: "text/markdown"}},
 			},
 			{
-				Name:  "分镜拆解",
-				Role:  "developer",
+				Name: "分镜拆解",
+				Role: "developer",
 				Inputs: []model.StepInput{
 					{Name: "剧本文件", Source: model.StepIOLink{Step: "剧本创作", Output: "剧本文件"}},
 				},

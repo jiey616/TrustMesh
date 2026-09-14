@@ -19,17 +19,17 @@ import (
 
 // opsGuideContext 生成指引所需的现场快照（持锁阶段采集）。
 type opsGuideContext struct {
-	RuleID      string
-	TaskID      string
-	ProjectID   string
-	TodoID      string
-	TaskTitle   string
-	TaskStatus  string
-	TodoTitle   string
-	NodeID      string
-	StalledFor  time.Duration // 距最近一次活动多久
-	Threshold   time.Duration // 静默阈值
-	RootCause   string        // LLM 归因结果，可为空
+	RuleID     string
+	TaskID     string
+	ProjectID  string
+	TodoID     string
+	TaskTitle  string
+	TaskStatus string
+	TodoTitle  string
+	NodeID     string
+	StalledFor time.Duration // 距最近一次活动多久
+	Threshold  time.Duration // 静默阈值
+	RootCause  string        // LLM 归因结果，可为空
 }
 
 // opsGuideContent 按规则生成结构化修复指引全文。

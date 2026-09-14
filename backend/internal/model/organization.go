@@ -26,9 +26,9 @@ const (
 
 // OrgQuota 只留字段与上限校验，不做计费（分支 F）。
 type OrgQuota struct {
-	MaxMembers      int   `json:"max_members" bson:"max_members"`           // -1 = 不限
-	MaxNodes        int   `json:"max_nodes" bson:"max_nodes"`               // -1 = 不限
-	MaxProjects     int   `json:"max_projects" bson:"max_projects"`         // -1 = 不限
+	MaxMembers      int   `json:"max_members" bson:"max_members"`             // -1 = 不限
+	MaxNodes        int   `json:"max_nodes" bson:"max_nodes"`                 // -1 = 不限
+	MaxProjects     int   `json:"max_projects" bson:"max_projects"`           // -1 = 不限
 	MaxStorageBytes int64 `json:"max_storage_bytes" bson:"max_storage_bytes"` // -1 = 不限
 }
 
@@ -36,9 +36,9 @@ type OrgQuota struct {
 type Organization struct {
 	ID        string    `json:"id" bson:"_id"`
 	Name      string    `json:"name" bson:"name"`
-	Slug      string    `json:"slug" bson:"slug"`           // 唯一，预留域名/URL 隔离
-	Kind      string    `json:"kind" bson:"kind"`           // personal | enterprise
-	OwnerID   string    `json:"owner_id" bson:"owner_id"`   // 唯一 Owner，可转让
+	Slug      string    `json:"slug" bson:"slug"`         // 唯一，预留域名/URL 隔离
+	Kind      string    `json:"kind" bson:"kind"`         // personal | enterprise
+	OwnerID   string    `json:"owner_id" bson:"owner_id"` // 唯一 Owner，可转让
 	Quota     OrgQuota  `json:"quota" bson:"quota"`
 	CreatedAt time.Time `json:"created_at" bson:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" bson:"updated_at"`

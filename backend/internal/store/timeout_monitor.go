@@ -1,8 +1,8 @@
 package store
 
 import (
-	"fmt"
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -14,10 +14,10 @@ import (
 
 // Timeout monitor configuration.
 const (
-	timeoutCheckInterval     = 1 * time.Minute  // check every minute
-	defaultTodoTimeout       = 30 * time.Minute // todo in_progress timeout
-	defaultRemindInterval    = 10 * time.Minute // gap between timeout reminders
-	defaultMaxReminders      = 3                // reminders with no response before failure
+	timeoutCheckInterval      = 1 * time.Minute  // check every minute
+	defaultTodoTimeout        = 30 * time.Minute // todo in_progress timeout
+	defaultRemindInterval     = 10 * time.Minute // gap between timeout reminders
+	defaultMaxReminders       = 3                // reminders with no response before failure
 	defaultMeetingIdleTimeout = 30 * time.Minute // meeting idle (no new message) timeout
 	defaultMaxRetries         = 3                // max retries before permanent failure
 	defaultMaxReworks         = 3                // max reworks before permanent failure
@@ -87,7 +87,6 @@ func hardDeadlineFor(todo *model.Todo) time.Duration {
 	}
 	return defaultHardDeadline
 }
-
 
 // remindBackoff returns how long to wait after `count` reminders have already
 // been sent before sending the next one.
@@ -258,26 +257,26 @@ func (s *Store) checkTodoTimeouts() {
 						"system", "timeout-monitor", "超时监控",
 						"todo_timeout_failed", &errMsg,
 						map[string]any{
-							"remind_count": todo.RemindCount,
+							"remind_count":  todo.RemindCount,
 							"max_reminders": maxReminders,
 						}, now,
 					)
-				// P-08: the reminder budget is spent. Escalate to a human-facing
-				// alert instead of letting the todo sit in a remind loop: at this
-				// point the agent has been nudged repeatedly with zero response,
-				// which in practice means a silently wedged run (budget exhausted,
-				// quota dead, or the process is gone) rather than a slow step.
-				escalateMsg := "多次提醒无响应，疑似执行智能体静默卡死（run 预算耗尽 / 额度不足 / 进程异常），已停止提醒并判定失败，请人工介入"
-				s.addEventUnsafe(
-					task.UserID, task.ProjectID, task.ID, todo.ID,
-					"system", "timeout-monitor", "超时监控",
-					"todo_remind_escalated", &escalateMsg,
-					map[string]any{
-						"remind_count":  todo.RemindCount,
-						"max_reminders": maxReminders,
-						"todo_title":    todo.Title,
-					}, now,
-				)
+					// P-08: the reminder budget is spent. Escalate to a human-facing
+					// alert instead of letting the todo sit in a remind loop: at this
+					// point the agent has been nudged repeatedly with zero response,
+					// which in practice means a silently wedged run (budget exhausted,
+					// quota dead, or the process is gone) rather than a slow step.
+					escalateMsg := "多次提醒无响应，疑似执行智能体静默卡死（run 预算耗尽 / 额度不足 / 进程异常），已停止提醒并判定失败，请人工介入"
+					s.addEventUnsafe(
+						task.UserID, task.ProjectID, task.ID, todo.ID,
+						"system", "timeout-monitor", "超时监控",
+						"todo_remind_escalated", &escalateMsg,
+						map[string]any{
+							"remind_count":  todo.RemindCount,
+							"max_reminders": maxReminders,
+							"todo_title":    todo.Title,
+						}, now,
+					)
 					continue
 				}
 				// RemindAt is still inside the interval window: wait for the

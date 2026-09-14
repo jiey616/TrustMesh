@@ -13,10 +13,10 @@ Backend:
 - `cd backend && bash ./scripts/smoke-task-flow.sh` runs the basic end-to-end smoke flow.
 
 Frontend:
-- `cd frontend && npm install` installs dependencies.
-- `cd frontend && npm run dev` starts the Vite dev server.
-- `cd frontend && npm run build` runs `tsc -b` and builds production assets.
-- `cd frontend && npm run lint` runs ESLint.
+- `cd frontend-v2 && npm install` installs dependencies.
+- `cd frontend-v2 && npm run dev` starts the Vite dev server.
+- `cd frontend-v2 && npm run build` runs `tsc -b` and builds production assets.
+- `cd frontend-v2 && npm run lint` runs ESLint.
 
 ## Coding Style & Naming Conventions
 Go code should stay `gofmt`-formatted, with packages in lowercase and exported identifiers in `PascalCase`. Keep backend logic inside `internal/store` and `internal/handler` rather than `main`. Frontend code uses TypeScript, ES modules, and 2-space indentation. Name React components and pages in `PascalCase` (`ProjectBoardPage.tsx`), hooks with `use*`, and Zustand stores with `*Store`. Use the existing ESLint setup in `frontend/eslint.config.js`; do not introduce a separate formatter without agreement.

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { Form, Input, Button, Typography, App } from 'antd'
 import { MailOutlined, LockOutlined, ArrowRightOutlined } from '@ant-design/icons'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { login } from '@/api/auth'
 import { useAuthStore } from '@/stores/authStore'
 import { ApiRequestError } from '@/types'
@@ -17,14 +17,19 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
   const setAuth = useAuthStore((s) => s.setAuth)
+  const queryClient = useQueryClient()
   const { message } = App.useApp()
 
   const loginMutation = useMutation({
     mutationFn: (data: AuthLoginRequest) => login(data),
     onSuccess: (data: AuthSuccessData) => {
+      // 换账号登录防御：清掉上一个账号残留在模块级 QueryClient 里的缓存
+      //（orgs/项目/通知等），避免个人信息页展示旧账号数据。
+      queryClient.clear()
       setAuth(data.access_token, data.refresh_token, data.user)
       message.success(`欢迎回来，${data.user.name}`)
-      navigate('/projects')
+      // 登录后统一进首页（不回退出前页面）；replace 把 /login 顶出历史栈
+      navigate('/dashboard', { replace: true })
     },
     onError: (err: unknown) => {
       const msg = err instanceof ApiRequestError ? err.message : '登录失败，请检查邮箱和密码'

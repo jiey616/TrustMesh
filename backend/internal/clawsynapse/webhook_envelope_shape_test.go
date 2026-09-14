@@ -108,7 +108,7 @@ func TestLegacyHandwrittenTodoCompleteStillAcceptedAndCounted(t *testing.T) {
 		t.Fatalf("create task: %v", appErr)
 	}
 
-	h := NewWebhookHandler(s, nil, nil)
+	h := NewWebhookHandler(WebhookDeps{Store: s})
 
 	// message = 无 protocol 字段的 legacy 手搓 JSON，且 result 是字符串。
 	legacy := `{"task_id":"` + task.ID + `","todo_id":"TD_01","result":"简述：剧本初稿完成"}`
