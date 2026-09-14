@@ -2,7 +2,7 @@ name: CI
 
 # 门禁范围：
 #   - backend：gofmt 校验 + 编译 + 全量单测 + store 包 -race（护栏 *Unsafe「持锁内调用」契约）
-#   - frontend：frontend-v2（单轨）vitest 单测（多租户隔离基线）；lint 暂不设为门禁（见下）
+#   - frontend：frontend-v2（单轨）vitest 单测（多租户隔离基线）+ ESLint 门禁（errors 已清零）
 #   - smoke：仅在手动触发时跑，需要 docker compose 起 mongo/backend/clawsynapse
 #
 # 设计取舍：
@@ -57,7 +57,7 @@ jobs:
         run: go test -race ./internal/store/... -count=1
 
   frontend:
-    name: frontend-v2 (test)
+    name: frontend-v2 (lint + test)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -74,11 +74,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # 这里刻意不放 `npm run lint` 作为门禁：修好 eslint 的产物目录忽略后，
-      # src 下仍有 33 个存量错误（TaskWorkspace.tsx 的 16 条 rules-of-hooks
-      # 条件调用 Hook、多处的 set-state-in-effect、ProjectBoardPage 的
-      # immutability 等），大多是 React Compiler 新增规则。先做一轮清理，
-      # 再把 lint 接成绿色门禁，否则 CI 一上线就是红的，门禁失去意义。
+      # ESLint 门禁（2026-09-14 接通）：存量 34 errors 已清零（TaskWorkspace 早返回下移到
+      # Hook 之后、set-state-in-effect 改渲染期 reset / 延后 tick、useTheme 拆文件修
+      # react-refresh、ThemeProvider purity），故 eslint . 现为 0 error / 4 warning。
+      # 产物目录已由 eslint.config.js 的 globalIgnores 排除，全量 lint 约 20s
+      # （未排除产物目录时会扫打包 bundle，实测 3m39s 且报上千条假错误）。
+      # warning 不阻塞（eslint 仅在有 error 时才非 0 退出），但用 --max-warnings
+      # 锁住当前值，防止 warning 继续漂移增长。
+      - name: Lint (errors are a gate)
+        run: npm run lint -- --max-warnings=4
 
       - name: Unit tests (tenant isolation baseline)
         run: npx vitest run
