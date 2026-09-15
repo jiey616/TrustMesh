@@ -107,6 +107,12 @@ export async function dispatchTodo(taskId: string, todoId: string) {
   return apiClient.post(`tasks/${taskId}/todos/${todoId}/dispatch`).json<ApiResponse<TaskDetail>>()
 }
 
+// 重开失败/已取消/已完成的 todo（回到 in_progress）。
+// 注意：重开不会自动派发给执行员工（防双跑设计），需要用户到任务评论里 @ 执行员工唤醒。
+export async function reopenTodo(taskId: string, todoId: string, reason?: string) {
+  return apiClient.post(`tasks/${taskId}/todos/${todoId}/reopen`, { json: { reason: reason ?? '' } }).json<ApiResponse<TaskDetail>>()
+}
+
 export async function reviewTodo(taskId: string, todoId: string, action: 'approve' | 'reject', reason?: string) {
   return apiClient.post(`tasks/${taskId}/todos/${todoId}/review`, { json: { action, reason: reason ?? '' } }).json<ApiResponse<TaskDetail>>()
 }

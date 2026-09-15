@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Button, Input, Select, Tag, App } from 'antd'
-import { CheckOutlined, CloseOutlined, EditOutlined, DeleteOutlined, PlusOutlined, DownOutlined, RightOutlined } from '@ant-design/icons'
-import { useAddTaskTodo, useUpdateTaskTodo, useRemoveTaskTodo } from '@/hooks/useTasks'
+import { CheckOutlined, CloseOutlined, EditOutlined, DeleteOutlined, PlusOutlined, DownOutlined, RightOutlined, RedoOutlined } from '@ant-design/icons'
+import { useAddTaskTodo, useUpdateTaskTodo, useRemoveTaskTodo, useReopenTaskTodo } from '@/hooks/useTasks'
 import { useAgents } from '@/hooks/useAgents'
 import type { Todo, TaskDetail } from '@/types'
 
@@ -119,6 +119,7 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
   const addTodo = useAddTaskTodo()
   const updateTodo = useUpdateTaskTodo()
   const removeTodo = useRemoveTaskTodo()
+  const reopenTodo = useReopenTaskTodo()
 
   const editable = task.status === 'pending' || task.status === 'in_progress'
   const availableAssignees = agents?.filter((a) => a.id !== task.pm_agent?.id) ?? []
@@ -136,6 +137,7 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
   const [editError, setEditError] = useState('')
 
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [reopeningId, setReopeningId] = useState<string | null>(null)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
   const resetAddForm = () => {
@@ -175,6 +177,7 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
     setEditAssignee(todo.assignee?.agent_id ?? '')
     setEditError('')
     setDeletingId(null)
+    setReopeningId(null)
   }
 
   const handleUpdate = async () => {
@@ -208,6 +211,22 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
       setDeletingId(null)
     } catch (err) {
       message.error(err instanceof Error ? err.message : '删除失败')
+    }
+  }
+
+  // 重开失败/已取消的 todo：两步内联确认（与删除同款交互）。重开不自动派发，
+  // 成功后提醒用户去任务评论 @ 执行员工唤醒其继续执行。
+  const handleReopen = async (todoId: string) => {
+    if (reopeningId !== todoId) {
+      setReopeningId(todoId)
+      return
+    }
+    try {
+      await reopenTodo.mutateAsync({ taskId: task.id, todoId })
+      message.success('已重开，请到任务评论 @ 执行员工唤醒其继续执行')
+      setReopeningId(null)
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '重开失败')
     }
   }
 
@@ -277,7 +296,9 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
         const isExpanded = expandedIds.has(todo.id)
         const isEditing = editingId === todo.id
         const isDeleting = deletingId === todo.id
+        const isReopening = reopeningId === todo.id
         const canModify = todo.status === 'pending' && editable
+        const canReopen = todo.status === 'failed' || todo.status === 'canceled'
         const isAwaitingReview = todo.review_status === 'pending_approval'
         const isRejected = todo.review_status === 'rejected'
 
@@ -359,6 +380,25 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
                       <Button type="text" size="small" icon={<DeleteOutlined style={{ fontSize: 13 }} />} title="删除" onClick={() => setDeletingId(todo.id)} />
                     )}
                   </>
+                )}
+                {/* 重开只看 todo 状态（失败/已取消），不套 pending-todo 的编辑门槛：
+                    后端仅要求项目可见 + 项目活跃。重开不自动派发，需到评论区 @ 执行员工。 */}
+                {canReopen && (
+                  isReopening ? (
+                    <>
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<CheckOutlined style={{ fontSize: 13, color: 'var(--success)' }} />}
+                        title="确认重开"
+                        loading={reopenTodo.isPending}
+                        onClick={() => handleReopen(todo.id)}
+                      />
+                      <Button type="text" size="small" icon={<CloseOutlined style={{ fontSize: 13 }} />} title="取消" onClick={() => setReopeningId(null)} />
+                    </>
+                  ) : (
+                    <Button type="text" size="small" icon={<RedoOutlined style={{ fontSize: 13 }} />} title="重开" onClick={() => setReopeningId(todo.id)} />
+                  )
                 )}
               </div>
             </div>

@@ -204,6 +204,16 @@ export function useRemoveTaskTodo() {
   })
 }
 
+// 重开失败/已取消的 todo（回到 in_progress）。重开不自动派发，用户需在任务评论里 @ 执行员工。
+export function useReopenTaskTodo() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ taskId, todoId, reason }: { taskId: string; todoId: string; reason?: string }) =>
+      tasksApi.reopenTodo(taskId, todoId, reason),
+    onSuccess: (_res, { taskId }) => invalidateTask(qc, taskId),
+  })
+}
+
 // 把归档的过程文件提升为某工作流步骤的交付物。绑定成功后会触发任务详情刷新，
 // 让文件 badge 从「过程」变成「交付 · 输出位名」，并把它接到工作流图的下游步骤上。
 export function useBindArtifactOutput() {
