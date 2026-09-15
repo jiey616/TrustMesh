@@ -18,10 +18,17 @@ import (
 type Store struct {
 	mu sync.RWMutex
 	// locks 是 T2.5 引入的「按聚合拆分」细粒度互斥锁数组，索引即 Aggregate 枚举值
-	// （见 store_lock.go）。P0 仅 AggProject / AggProjectFile / AggTask / AggMeeting
-	// 四个聚合被真正使用；其余槽位预留给 P2 迁移。每把受保护 map 只能由对应
-	// locks[agg] 守护（跨聚合写时再配合 coarseWithAggregates 的 s.mu 外层），
-	// 禁止同一 map 被「聚合锁」与「s.mu」同时并发保护（不变量 3）。
+	// （见 store_lock.go）。
+	//
+	// ⚠️ 2026-09-16 回退说明：T2.5 的四域调用点迁移已整体回退至基线（见
+	// docs/t2.5-rollback-decision-2026-09-16.md），原因是「同一张 map 只能有一把保护锁」，
+	// 增量迁移访问者集合会造成两把互不互斥的锁（s.mu 与聚合锁）同时守护同一张 map
+	// （不变量 3 违反 → P0 数据竞争）。故**当前无任何生产/运行时路径使用 locks**，
+	// store 的全部 map 仍统一由 s.mu 保护，运行时行为与基线 4bcff06 完全一致。
+	// 本字段连同 store_lock.go 的锁原语被**刻意保留**，供后续 T05 做「原子性整批迁移」
+	// （一次迁完 store 包内全部访问者）时直接复用；在此之前不得接入任何调用点。
+	// 不变量 3 由 qa_t25_adversarial_test.go 的
+	// TestQAT25_Invariant3_SameMapMustHaveOneProtectingLock 长期守护（回退后为绿）。
 	//
 	// mu 保留为 sync.RWMutex 系对设计契约（§1 拍板项 Q2 要求 mu 由 sync.RWMutex 降级为
 	// sync.Mutex）的**偏离**。理由：保留 sync.RWMutex 是 sync.Mutex 的严格超集，可避免改动

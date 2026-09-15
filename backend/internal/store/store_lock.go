@@ -17,10 +17,13 @@ import (
 //	AggJoinRequest / AggNotification / AggExternalApp / AggOpsIncident /
 //	AggProcessedMessage / numAggregates
 //
-// P0 仅把 AggProject / AggProjectFile / AggTask / AggMeeting 真正接入细粒度锁
-// （见下方 locks 数组与对应便捷方法）；其余聚合在 P0 仍由 Store.mu 这一把兜底锁守护，
-// 留待 P2 迁移（见设计 T05）。但枚举与 locks 数组已为全部聚合预留槽位，保证「固定顺序」
-// 契约在后续迁移时不位移。
+// ⚠️ 2026-09-16 回退说明：T2.5 的四域调用点迁移已整体回退（见
+// docs/t2.5-rollback-decision-2026-09-16.md）。本文件是**纯锁基础设施**，被完整保留，
+// 但**当前没有任何生产调用点使用** —— store 包内全部 map 仍统一由 Store.mu 守护。
+// 保留理由：T05 将做「原子性整批迁移」（一次迁完同一张 map 的全部访问者），届时直接复用
+// 本文件的原语即可，无需重写。**在 T05 落地之前，禁止把任何调用点接回这些原语**
+// （半吊子迁移 = 同一张 map 两把互不互斥的锁 = P0 数据竞争）。
+// 枚举与 locks 数组已为全部聚合预留槽位，保证「固定顺序」契约在后续迁移时不位移。
 type Aggregate int
 
 const (
