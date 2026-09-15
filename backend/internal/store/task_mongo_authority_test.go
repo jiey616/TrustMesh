@@ -26,6 +26,21 @@ import (
 //  3. 需要真 Mongo 的正向用例（版本冲突 / 存量回填 / 双写一致性 / 重启续推）——
 //     由 TRUSTMESH_TEST_MONGO_URI 门控，未设置时 t.Skip，不让 CI 因缺少 Mongo 变红。
 
+// ─── 编译期护栏（T2.2 typed-nil 签名回归） ───
+//
+// 与 T2.3 的 project 域护栏（project_mongo_authority_test.go:39）同源：把「签名回退」
+// 这一整类回归变成构建失败，不依赖任何运行时用例、不依赖 Mongo。
+//
+// 注意这里钉的对象与 project 域护栏**语义相反**：Task 域 persistTaskUnsafe 的**合法**
+// 签名就是 `error`（其修复方式是显式判空：`if appErr := s.applyTaskVersionedReplaceLocked(task);
+// appErr != nil { return appErr }; return nil`），因此本断言钉住的是「当前正确形态」——
+// 防止有人改回裸 `return s.applyTaskVersionedReplaceLocked(task)` 那种把
+// *transport.AppError 直接装进 error 接口的写法（成功时 nil 指针变非 nil 的 typed-nil 陷阱）。
+// 真正能在运行时咬住「裸返回」的是 TestPersistTaskUnsafeSuccessReturnsNilError —— 但它在纯内存
+// 下会命中提前返回而恒绿，所以这行编译期断言是唯一稳定的 CI 可见护栏。
+// 任何人把 persistTaskUnsafe 的返回类型改成 *transport.AppError，本文件立刻编译失败。
+var _ func(*Store, *model.TaskDetail) error = (*Store).persistTaskUnsafe
+
 // ─── 脚手架 ───
 
 // newTaskMongoFailingStore 构造「Mongo 恒失败」的 Store。
