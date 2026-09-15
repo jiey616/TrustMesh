@@ -2093,7 +2093,9 @@ func (s *Store) deleteProjectFileUnsafe(fileID string) error {
 // 自身由 s.mongoContext()（= s.mongoTimeout）+ client SetTimeout 兜底，不会永久阻塞；
 // 但整轮 sweep 必须尊重传入的 ctx。
 //
-// 锁：全程持 s.mu，因为调用的是不带锁的 persistXxxUnsafe / replaceXxxUnsafe 助手。
+// 锁：T2.5 P1（T04 / AC-5）按 sweep 段取各自保护锁、段间释放（flushSectionLock），
+// 不再全程持单一长锁；每段的锁 = s.mu（未迁移聚合）或 coarseWithAggregates（已迁移聚合），
+// 调用方仍须持锁（persistXxxUnsafe / replaceXxxUnsafe 助手不带锁）。
 //
 // 返回：errors.Join 聚合各条写入错误；全部成功返回 nil；ctx 到期返回 ctx.Err() 并
 // 立即中断整轮 sweep（不继续后续实体）。
@@ -2115,9 +2117,6 @@ func (s *Store) FlushPersistAll(ctx context.Context) error {
 		}
 	}()
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	var errs []error
 	// collect 聚合单个实体写入的错误：单条失败不能中断整轮 sweep。
 	collect := func(err error) {
@@ -2133,23 +2132,23 @@ func (s *Store) FlushPersistAll(ctx context.Context) error {
 
 	// sweeps 是「一类实体」的回写闭包，按依赖无关的稳定顺序排列。
 	// 注意：每一类开始前由调用方做 ctx 有界性检查（见下方循环）。
-	sweeps := []func(){
-		func() { // users
+	sweeps := []flushSection{
+		{agg: numAggregates, run: func() { // users
 			for _, user := range s.users {
 				collect(s.persistUserUnsafe(user))
 			}
-		},
-		func() { // agents
+		}},
+		{agg: numAggregates, run: func() { // agents
 			for _, agent := range s.agents {
 				collect(s.persistAgentUnsafe(agent))
 			}
-		},
-		func() { // joinRequests
+		}},
+		{agg: numAggregates, run: func() { // joinRequests
 			for _, jr := range s.joinRequests {
 				collect(s.persistJoinRequestUnsafe(jr))
 			}
-		},
-		func() { // projects
+		}},
+		{agg: AggProject, run: func() { // projects
 			for _, project := range s.projects {
 				// 显式判空是硬性要求：persistProjectUnsafe 返回 *transport.AppError，
 				// 若裸传给 collect(error) 会把「成功的 nil 指针」当成非 nil 错误记一笔。
@@ -2157,32 +2156,32 @@ func (s *Store) FlushPersistAll(ctx context.Context) error {
 					collect(appErr)
 				}
 			}
-		},
-		func() { // agentChats
+		}},
+		{agg: numAggregates, run: func() { // agentChats
 			for _, chat := range s.agentChats {
 				collect(s.persistAgentChatUnsafe(chat))
 			}
-		},
-		func() { // tasks（含每个 task 的事件流）
+		}},
+		{agg: AggTask, run: func() { // tasks（含每个 task 的事件流）
 			for taskID := range s.tasks {
 				collect(s.persistTaskBundleUnsafe(taskID))
 			}
-		},
-		func() { // comments
+		}},
+		{agg: AggTask, run: func() { // comments
 			for _, comments := range s.taskComments {
 				for i := range comments {
 					collect(s.persistCommentUnsafe(&comments[i]))
 				}
 			}
-		},
-		func() { // artifacts
+		}},
+		{agg: AggTask, run: func() { // artifacts
 			for _, artifacts := range s.taskArtifacts {
 				for i := range artifacts {
 					collect(s.persistArtifactUnsafe(&artifacts[i]))
 				}
 			}
-		},
-		func() { // projectFiles
+		}},
+		{agg: AggProjectFile, run: func() { // projectFiles
 			for _, pf := range s.projectFiles {
 				// 显式判空是硬性要求：persistProjectFileUnsafe 返回 *transport.AppError，
 				// 若裸传给 collect(error) 会把「成功的 nil 指针」当成非 nil 错误记一笔，
@@ -2191,67 +2190,70 @@ func (s *Store) FlushPersistAll(ctx context.Context) error {
 					collect(appErr)
 				}
 			}
-		},
-		func() { // knowledgeDocs
+		}},
+		{agg: numAggregates, run: func() { // knowledgeDocs
 			for _, doc := range s.knowledgeDocs {
 				collect(s.persistKnowledgeDocUnsafe(doc))
 			}
-		},
-		func() { // workflowTemplates
+		}},
+		{agg: numAggregates, run: func() { // workflowTemplates
 			for _, doc := range s.workflowTemplates {
 				collect(s.persistWorkflowTemplateUnsafe(doc))
 			}
-		},
-		func() { // organizations
+		}},
+		{agg: numAggregates, run: func() { // organizations
 			for _, org := range s.organizations {
 				collect(s.persistOrganizationUnsafe(org))
 			}
-		},
-		func() { // orgMemberships
+		}},
+		{agg: numAggregates, run: func() { // orgMemberships
 			for _, m := range s.orgMemberships {
 				collect(s.persistMembershipUnsafe(m))
 			}
-		},
-		func() { // projectMembers（按项目整体替换）
+		}},
+		{agg: numAggregates, run: func() { // projectMembers（按项目整体替换）
 			for projectID, members := range s.projectMembers {
 				collect(s.replaceProjectMembersUnsafe(projectID, members))
 			}
-		},
-		func() { // opsIncidents
+		}},
+		{agg: numAggregates, run: func() { // opsIncidents
 			for _, inc := range s.opsIncidents {
 				collect(s.persistOpsIncidentUnsafe(inc))
 			}
-		},
-		func() { // llmConfigs（平台设置）
+		}},
+		{agg: numAggregates, run: func() { // llmConfigs（平台设置）
 			for _, cfg := range s.llmConfigs {
 				collect(s.persistLLMSettingUnsafe(cfg))
 			}
-		},
-		func() { // processedMessages（消息去重）
+		}},
+		{agg: numAggregates, run: func() { // processedMessages（消息去重）
 			for key := range s.processedMessages {
 				collect(s.persistProcessedMessageUnsafe(key))
 			}
-		},
-		func() { // notifications（助手无返回值，内部自记日志）
+		}},
+		{agg: numAggregates, run: func() { // notifications（助手无返回值，内部自记日志）
 			for _, n := range s.notifications {
 				s.persistNotificationUnsafe(n)
 			}
-		},
-		func() { // externalApps
+		}},
+		{agg: numAggregates, run: func() { // externalApps
 			for _, app := range s.externalApps {
 				collect(s.persistExternalAppUnsafe(app))
 			}
-		},
+		}},
 	}
 
-	for _, sweep := range sweeps {
+	for _, sw := range sweeps {
 		// 有界性：每一类实体开始前检查一次，ctx 到期立即中断整轮 sweep。
 		// 到期直接返回 ctx.Err()（fail-fast 语义），不再继续后续实体。
 		if err := ctx.Err(); err != nil {
 			flushErr = err
 			return err
 		}
-		sweep()
+		// T2.5 P1（T04 / AC-5）：按段取各自保护锁、段间释放，整轮 sweep 不再持单一长锁。
+		release := s.flushSectionLock(sw.agg)
+		sw.run()
+		release()
 	}
 	// 循环结束后再看一次，覆盖「最后一类写完后恰好到期」的情形。
 	if err := ctx.Err(); err != nil {
