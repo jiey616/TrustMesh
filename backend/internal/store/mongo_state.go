@@ -919,7 +919,7 @@ func (s *Store) applyProjectVersionedReplaceLocked(project *model.Project) *tran
 	doc := copyProject(project)
 	doc.Version = next
 
-	// Mongo 写在持锁内，会拉长临界区 —— 本批接受，T2.5 再拆细粒度锁。
+	// Mongo 写在持锁内，会拉长临界区 —— 本批接受，留待 T05 原子性整批迁移再拆细粒度锁。
 	ctx, cancel := s.mongoContext()
 	defer cancel()
 	res, err := s.mongoProjects.ReplaceOne(ctx, bson.M{"_id": project.ID, "version": cur}, doc, options.Replace().SetUpsert(true))
@@ -1103,7 +1103,8 @@ func (s *Store) applyProjectFileVersionedReplaceLocked(pf *model.ProjectFile) *t
 	doc := copyProjectFile(pf)
 	doc.Version = next
 
-	// Mongo 写在持锁内，会拉长临界区 —— 本批接受（同 T2.1/T2.2/T2.3），T2.5 再拆细粒度锁。
+	// Mongo 写在持锁内，会拉长临界区 —— 本批接受（同 T2.1/T2.2/T2.3），
+	// 留待 T05 原子性整批迁移再拆细粒度锁。
 	ctx, cancel := s.mongoContext()
 	defer cancel()
 	res, err := s.mongoProjectFiles.ReplaceOne(ctx, bson.M{"_id": pf.ID, "version": cur}, doc, options.Replace().SetUpsert(true))
@@ -1582,7 +1583,7 @@ func (s *Store) applyTaskVersionedReplaceLocked(task *model.TaskDetail) *transpo
 	doc := copyTask(task)
 	doc.Version = next
 
-	// Mongo 写在持锁内，会拉长临界区 —— 本批接受，T2.5 再拆细粒度锁。
+	// Mongo 写在持锁内，会拉长临界区 —— 本批接受，留待 T05 原子性整批迁移再拆细粒度锁。
 	ctx, cancel := s.mongoContext()
 	defer cancel()
 	res, err := s.mongoTasks.ReplaceOne(ctx, bson.M{"_id": task.ID, "version": cur}, doc, options.Replace().SetUpsert(true))

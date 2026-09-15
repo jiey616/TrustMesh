@@ -23,7 +23,9 @@ import (
 // 「内存里有、库里没有，重启即丢且只留一条 warn」的问题。
 //
 // 已知代价：Mongo I/O 在 s.mu 持锁内执行，临界区被拉长（MONGO_TIMEOUT 当前 5s）。
-// 这是本批接受的权衡 —— 写序正确优先于吞吐；T2.5 再拆 per-aggregate 细粒度锁。
+// 这是本批接受的权衡 —— 写序正确优先于吞吐；留待 T05 原子性整批迁移再拆
+// per-aggregate 细粒度锁（T2.5 曾尝试增量迁移并已回退，见
+// docs/t2.5-rollback-decision-2026-09-16.md）。
 
 // meetingVersionFloor 会议版本号的起始值：新建会议从 1 开始，
 // 「存量 version <= 0」的文档在载入 / 回填时也统一归一化为 1，
@@ -87,7 +89,7 @@ func (s *Store) applyMeetingVersionedUpdateLocked(m *model.Meeting, set bson.M) 
 		return nil
 	}
 
-	// Mongo 写在持锁内，会拉长临界区 —— 本批接受，T2.5 再拆细粒度锁。
+	// Mongo 写在持锁内，会拉长临界区 —— 本批接受，留待 T05 原子性整批迁移再拆细粒度锁。
 	ctx, cancel := s.mongoContext()
 	defer cancel()
 	res, err := s.mongoMeetings.UpdateOne(ctx, bson.M{"_id": m.ID, "version": cur}, bson.M{"$set": set})
