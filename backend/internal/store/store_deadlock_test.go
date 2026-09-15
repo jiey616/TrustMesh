@@ -113,7 +113,7 @@ func TestNoDeadlockUnderLockInterleaving(t *testing.T) {
 
 	select {
 	case <-time.After(dur):
-	case <-blockUntilStalled(stalled):
+	case <-blockUntilStalled(&stalled):
 	}
 
 	close(done)
@@ -129,7 +129,11 @@ func TestNoDeadlockUnderLockInterleaving(t *testing.T) {
 }
 
 // blockUntilStalled 在 stalled 置位时立即返回，供主流程感知 watchdog 判定。
-func blockUntilStalled(stalled atomic.Bool) <-chan struct{} {
+// QA（严过关）修正：原实现按值传参 atomic.Bool，会拷贝锁值（go vet 报
+// "passes lock by value"），且轮询 goroutine 读到的是调用瞬间的**副本**，
+// watchdog 的 Store(true) 永远不会被观察到 ⇒ 死锁提前中断链路是死代码。
+// 改为传指针，恢复「检测到挂死立即结束压测」的语义。
+func blockUntilStalled(stalled *atomic.Bool) <-chan struct{} {
 	ch := make(chan struct{})
 	go func() {
 		for !stalled.Load() {
