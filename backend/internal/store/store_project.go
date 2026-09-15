@@ -91,9 +91,8 @@ func (s *Store) CreateProject(sc Scope, name, description, pmAgentID string) (*m
 		})
 	}
 
-	// T2.5：创建项目写 s.projects，并调 pmAgentForScopeUnsafe / resolveOwnerOrgUnsafe
-	// 读仍由 s.mu 守护的 agents / orgs，故用 coarseWithAggregates（s.mu 外层 + AggProject 内层）。
-	defer s.coarseWithAggregates(AggProject)()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	pm, err := s.pmAgentForScopeUnsafe(sc, pmAgentID)
 	if err != nil {
@@ -124,9 +123,8 @@ func (s *Store) CreateProject(sc Scope, name, description, pmAgentID string) (*m
 }
 
 func (s *Store) ListProjects(sc Scope) []model.Project {
-	// T2.5：读 s.projects 与 projectVisible（读 s.projectMembers，仍由 s.mu 守护），
-	// 并经由 buildProjectViewUnsafe 读 s.tasks / s.projectTasks → AggProject + AggTask。
-	defer s.coarseWithAggregates(AggProject, AggTask)()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	items := make([]model.Project, 0)
 	for _, p := range s.projects {
@@ -139,8 +137,8 @@ func (s *Store) ListProjects(sc Scope) []model.Project {
 }
 
 func (s *Store) GetProject(sc Scope, projectID string) (*model.Project, *transport.AppError) {
-	// T2.5：读 s.projects + projectVisible + buildProjectViewUnsafe（触 s.tasks）→ AggProject + AggTask。
-	defer s.coarseWithAggregates(AggProject, AggTask)()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	p, ok := s.projects[projectID]
 	if !ok || !s.projectVisible(sc, p) {
 		return nil, transport.NotFound("project not found")
@@ -149,9 +147,8 @@ func (s *Store) GetProject(sc Scope, projectID string) (*model.Project, *transpo
 }
 
 func (s *Store) UpdateProject(sc Scope, projectID string, in UpdateProjectInput) (*model.Project, *transport.AppError) {
-	// T2.5：projectVisible / pmAgentForScopeUnsafe（读 agents）+ buildProjectViewUnsafe（读 tasks）
-	// + mutateProjectUnsafe（写 s.projects）→ AggProject + AggTask。
-	defer s.coarseWithAggregates(AggProject, AggTask)()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	p, ok := s.projects[projectID]
 	if !ok || !s.projectVisible(sc, p) {
 		return nil, transport.NotFound("project not found")
@@ -261,9 +258,8 @@ func (s *Store) UpdateProject(sc Scope, projectID string, in UpdateProjectInput)
 }
 
 func (s *Store) ArchiveProject(sc Scope, projectID string) (*model.Project, *transport.AppError) {
-	// T2.5：projectVisible + resetArchivedProjectTasksUnsafe（读/写 s.tasks、persistTaskBundleUnsafe）
-	// + persistAgentGraphUnsafe（读 agents）→ AggProject + AggTask。
-	defer s.coarseWithAggregates(AggProject, AggTask)()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	p, ok := s.projects[projectID]
 	if !ok || !s.projectVisible(sc, p) {
 		return nil, transport.NotFound("project not found")
@@ -341,9 +337,8 @@ func (s *Store) resetArchivedProjectTasksUnsafe(project *model.Project, now time
 }
 
 func (s *Store) GetProjectPMNode(sc Scope, projectID string) (string, *transport.AppError) {
-	// T2.5：projectForScopeUnsafe 含 projectVisible（读 s.projectMembers，仍由 s.mu 守护）
-	// + 读 s.agents → s.mu 外层 + AggProject 内层。
-	defer s.coarseWithAggregates(AggProject)()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	project, err := s.projectForScopeUnsafe(sc, projectID)
 	if err != nil {
@@ -357,7 +352,8 @@ func (s *Store) GetProjectPMNode(sc Scope, projectID string) (string, *transport
 }
 
 func (s *Store) CheckTaskProjectActive(taskID string) *transport.AppError {
-	defer s.lockAggregates(AggProject, AggTask)()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	task, ok := s.tasks[taskID]
 	if !ok {

@@ -10,7 +10,8 @@ import (
 )
 
 func (s *Store) ListTasks(sc Scope, projectID, status string) ([]model.TaskListItem, *transport.AppError) {
-	defer s.coarseWithAggregates(AggProject, AggTask)()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	if _, err := s.projectForScopeUnsafe(sc, projectID); err != nil {
 		return nil, err
@@ -36,9 +37,8 @@ func (s *Store) ListTasks(sc Scope, projectID, status string) ([]model.TaskListI
 }
 
 func (s *Store) GetTask(sc Scope, taskID string) (*model.TaskDetail, *transport.AppError) {
-	// T2.5：读 s.tasks，并经由 copyTaskWithArtifactsUnsafe 读仍由 s.mu 守护的 s.taskArtifacts
-	// → s.mu 外层 + AggTask 内层。
-	defer s.coarseWithAggregates(AggTask)()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	task, ok := s.tasks[taskID]
 	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 		return nil, transport.NotFound("task not found")
@@ -50,9 +50,8 @@ func (s *Store) GetTask(sc Scope, taskID string) (*model.TaskDetail, *transport.
 // Used by internal dispatch hooks (e.g. timeout redispatch) that already hold
 // the task id from an in-memory scan.
 func (s *Store) GetTaskInternal(taskID string) *model.TaskDetail {
-	// T2.5：copyTaskWithArtifactsUnsafe 读仍由 s.mu 守护的 s.taskArtifacts，故用
-	// coarseWithAggregates（s.mu 外层 + AggTask 内层）而非纯 lockTask()。
-	defer s.coarseWithAggregates(AggTask)()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	task, ok := s.tasks[taskID]
 	if !ok {
 		return nil
@@ -63,9 +62,8 @@ func (s *Store) GetTaskInternal(taskID string) *model.TaskDetail {
 // GetTaskByNodeID returns a task if the requesting agent (identified by nodeID)
 // is a participant: either the PM agent or a todo assignee.
 func (s *Store) GetTaskByNodeID(nodeID, taskID string) (*model.TaskDetail, *transport.AppError) {
-	// T2.5：agentByNodeUnsafe 读仍由 s.mu 守护的 s.agents，且 copyTaskWithArtifactsUnsafe
-	// 读 s.taskArtifacts → s.mu 外层 + AggTask 内层。
-	defer s.coarseWithAggregates(AggTask)()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	agent, err := s.agentByNodeUnsafe(nodeID)
 	if err != nil {
@@ -90,8 +88,8 @@ func (s *Store) GetTaskByNodeID(nodeID, taskID string) (*model.TaskDetail, *tran
 }
 
 func (s *Store) ListTaskEvents(sc Scope, taskID string) ([]model.Event, *transport.AppError) {
-	// T2.5：读 s.tasks 与仍由 s.mu 守护的 s.taskEvents → s.mu 外层 + AggTask 内层。
-	defer s.coarseWithAggregates(AggTask)()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	task, ok := s.tasks[taskID]
 	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
 		return nil, transport.NotFound("task not found")
@@ -146,8 +144,8 @@ func (s *Store) ListAgentEvents(sc Scope, agentID string, limit int) ([]model.Ev
 }
 
 func (s *Store) ListRecentTasks(sc Scope, limit int) []model.TaskListItem {
-	// T2.5：遍历 s.tasks（仅触纯函数 visibleToScope，无 s.mu 专属 map 读取）→ s.mu 外层 + AggTask 内层。
-	defer s.coarseWithAggregates(AggTask)()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	items := make([]model.TaskListItem, 0)
 	for _, t := range s.tasks {
@@ -212,8 +210,8 @@ func (s *Store) SetTaskWorkflow(taskID string, wf *model.Workflow) *transport.Ap
 	if taskID == "" {
 		return transport.Validation("invalid task", map[string]any{"task_id": "required"})
 	}
-	// T2.5：写 s.tasks 并落库（persistTaskUnsafe / publishTaskUnsafe）→ s.mu 外层 + AggTask 内层。
-	defer s.coarseWithAggregates(AggTask)()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	task, ok := s.tasks[taskID]
 	if !ok {
 		return transport.NotFound("task not found")
