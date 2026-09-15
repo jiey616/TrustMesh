@@ -3458,9 +3458,18 @@ func (s *Store) BindStepOutput(sc Scope, projectID string, stepIndex int, req Bi
 	if pf != nil && (pf.Kind != model.ArtifactKindDeliverable || pf.OutputName != outputName) {
 		pf.Kind = model.ArtifactKindDeliverable
 		pf.OutputName = outputName
-		if err := s.persistProjectFileUnsafe(pf); err != nil && s.log != nil {
+		// T2.3b：本写点仍走版本化原语（不绕过乐观锁 filter），但**刻意保持 warn-only**
+		// —— 这是 T2.3b 唯一未致命化的项目文件写点，理由：
+		//   1. 它只是给「已存在、已可见」的项目文件补一个 Kind/OutputName 标签（交付物标记），
+		//      不涉及记录存在性，也不参与用户可见的目录操作；写失败不会让工件从文件树里消失；
+		//   2. 失败时内存 version 不推进、Mongo 未变，下次成功写自动收敛（与 T2.2 §8.3
+		//      对 store_artifact.go 「已受乐观锁保护、仅缺快照回滚」的取舍同款）；
+		//   3. 把整个 BindStepOutput 因「一个标签写失败」判为失败，是超出本批范围的语义扩张。
+		// VerifyProjectFileConsistency 只比 ProjectID/ParentID/FileName/Version/IsFolder/
+		// len(children)，不比 Kind，故这处短期分叉不会被误报为 mismatch。
+		if appErr := s.persistProjectFileUnsafe(pf); appErr != nil && s.log != nil {
 			s.log.Warn("failed to persist project file kind",
-				zap.String("file_id", pf.ID), zap.Error(err))
+				zap.String("file_id", pf.ID), zap.Error(appErr))
 		}
 	}
 

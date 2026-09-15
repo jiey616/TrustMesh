@@ -55,10 +55,11 @@ func (s *Store) SaveProjectFile(sc Scope, projectID string, pf *model.ProjectFil
 		s.transferFileIndex[pf.TransferID] = pf.ID
 	}
 
-	if err := s.persistProjectFileUnsafe(pf); err != nil {
-		if s.log != nil {
-			s.log.Warn("failed to persist project file", zap.String("id", pf.ID), zap.Error(err))
-		}
+	// T2.3b：Mongo 权威 —— persist 失败必须把三张内存索引全部回滚并返错，
+	// 否则会留下「内存有、库里没有」的幽灵记录（看得到、重启即丢）。
+	if appErr := s.persistProjectFileUnsafe(pf); appErr != nil {
+		s.rollbackProjectFileAddUnsafe(pf)
+		return nil, appErr
 	}
 
 	return pf, nil
@@ -102,10 +103,11 @@ func (s *Store) CreateMeetingMinutesFile(meetingID, fileName, content string) (*
 	s.projectFiles[pf.ID] = pf
 	s.projectFileIndex[m.ProjectID] = append(s.projectFileIndex[m.ProjectID], pf.ID)
 
-	if err := s.persistProjectFileUnsafe(pf); err != nil {
-		if s.log != nil {
-			s.log.Warn("failed to persist meeting minutes file", zap.String("id", pf.ID), zap.Error(err))
-		}
+	// T2.3b：Mongo 权威 —— 失败回滚两张内存索引并返错（Mongo 抖动时 webhook 会拿到错误，
+	// 由上游重投；这是本批明确接受的用户可见失败面，见规格 §6）。
+	if appErr := s.persistProjectFileUnsafe(pf); appErr != nil {
+		s.rollbackProjectFileAddUnsafe(pf)
+		return nil, appErr
 	}
 
 	return pf, nil
@@ -158,13 +160,48 @@ func (s *Store) CreateFolder(sc Scope, projectID, name, parentID string) (*model
 	s.projectFiles[folder.ID] = folder
 	s.projectFileIndex[projectID] = append(s.projectFileIndex[projectID], folder.ID)
 
-	if err := s.persistProjectFileUnsafe(folder); err != nil {
-		if s.log != nil {
-			s.log.Warn("failed to persist project folder", zap.String("id", folder.ID), zap.Error(err))
-		}
+	// T2.3b：Mongo 权威 —— 失败回滚两张内存索引并返错，不留幽灵文件夹。
+	if appErr := s.persistProjectFileUnsafe(folder); appErr != nil {
+		s.rollbackProjectFileAddUnsafe(folder)
+		return nil, appErr
 	}
 
 	return folder, nil
+}
+
+// rollbackProjectFileAddUnsafe 回滚一次「新增项目文件 / 文件夹」的内存写入（T2.3b）。
+//
+// 新增路径（SaveProjectFile / CreateMeetingMinutesFile / CreateFolder）先写内存再 persist；
+// persist 失败必须把三张索引（projectFiles / projectFileIndex / transferFileIndex）**逐字节**
+// 还原到调用前形态，否则会留下「内存有、库里没有」的幽灵记录（ListProjectFiles / Browse 能
+// 列出它，重启即消失）。还原要求：索引切片为空时删除键本身（而非留一个空切片），
+// 否则与调用前「键不存在」的形态不等价。
+//
+// 必须持锁调用。
+func (s *Store) rollbackProjectFileAddUnsafe(pf *model.ProjectFile) {
+	if pf == nil {
+		return
+	}
+	delete(s.projectFiles, pf.ID)
+
+	if ids := s.projectFileIndex[pf.ProjectID]; len(ids) > 0 {
+		remaining := make([]string, 0, len(ids))
+		for _, id := range ids {
+			if id != pf.ID {
+				remaining = append(remaining, id)
+			}
+		}
+		if len(remaining) == 0 {
+			delete(s.projectFileIndex, pf.ProjectID)
+		} else {
+			s.projectFileIndex[pf.ProjectID] = remaining
+		}
+	}
+
+	// 只在 transfer 映射确实指向本记录时才删，避免误删他人的映射。
+	if pf.TransferID != "" && s.transferFileIndex[pf.TransferID] == pf.ID {
+		delete(s.transferFileIndex, pf.TransferID)
+	}
 }
 
 // RenameProjectFile updates the name of a file or folder.
@@ -197,11 +234,12 @@ func (s *Store) RenameProjectFile(sc Scope, projectID, fileID, name string) (*mo
 		}
 	}
 
-	pf.FileName = name
-	if err := s.persistProjectFileUnsafe(pf); err != nil {
-		if s.log != nil {
-			s.log.Warn("failed to persist renamed project file", zap.String("id", fileID), zap.Error(err))
-		}
+	// T2.3b：就地改名走零副作用提交包装器 —— persist 失败回滚内存、冲突返回 409。
+	if appErr := s.mutateProjectFileUnsafe(fileID, func(pf *model.ProjectFile) *transport.AppError {
+		pf.FileName = name
+		return nil
+	}); appErr != nil {
+		return nil, appErr
 	}
 	return pf, nil
 }
@@ -253,11 +291,12 @@ func (s *Store) MoveProjectFile(sc Scope, projectID, fileID, targetParentID stri
 		}
 	}
 
-	pf.ParentID = targetParentID
-	if err := s.persistProjectFileUnsafe(pf); err != nil {
-		if s.log != nil {
-			s.log.Warn("failed to persist moved project file", zap.String("id", fileID), zap.Error(err))
-		}
+	// T2.3b：就地移动走零副作用提交包装器 —— persist 失败回滚内存、冲突返回 409。
+	if appErr := s.mutateProjectFileUnsafe(fileID, func(pf *model.ProjectFile) *transport.AppError {
+		pf.ParentID = targetParentID
+		return nil
+	}); appErr != nil {
+		return nil, appErr
 	}
 	return pf, nil
 }
@@ -313,6 +352,10 @@ func (s *Store) BatchDeleteProjectFiles(sc Scope, projectID string, ids []string
 	}
 
 	// Delete them all.
+	//
+	// T2.3b：先删 Mongo、成功后再改内存。任一条 Mongo 删除失败则该条计入 Failed[] 且
+	// **内存保持不动**（不删、不回滚），并继续处理其余条目 —— 保持「尽量删完、不因一条
+	// 失败中断整批」的语义。这样绝不会出现「内存已删、库里还在」→ 重启复活的形态。
 	deleted := 0
 	var failed []string
 	for _, id := range unique {
@@ -322,8 +365,16 @@ func (s *Store) BatchDeleteProjectFiles(sc Scope, projectID string, ids []string
 			continue
 		}
 
+		if err := s.deleteProjectFileUnsafe(id); err != nil {
+			if s.log != nil {
+				s.log.Warn("failed to delete project file from mongo", zap.String("id", id), zap.Error(err))
+			}
+			failed = append(failed, id)
+			continue
+		}
+
+		// Mongo 删除成功后才落实内存。
 		delete(s.projectFiles, id)
-		_ = s.deleteProjectFileUnsafe(id)
 
 		// Remove from project index.
 		indexIDs := s.projectFileIndex[projectID]
@@ -335,7 +386,9 @@ func (s *Store) BatchDeleteProjectFiles(sc Scope, projectID string, ids []string
 		}
 		// Remove from transfer index.
 		if pf.TransferID != "" {
-			delete(s.transferFileIndex, pf.TransferID)
+			if s.transferFileIndex[pf.TransferID] == pf.ID {
+				delete(s.transferFileIndex, pf.TransferID)
+			}
 		}
 		deleted++
 	}
@@ -384,11 +437,20 @@ func (s *Store) saveProjectFileFromArtifactUnsafe(artifact model.TaskArtifact) (
 				// artifact was re-registered with an outputName binding after the
 				// project file was first created as a process file).
 				if existing.Kind != artifact.Kind || existing.OutputName != artifact.OutputName {
+					// T2.3b：本分支也**致命化**（而非沿用原来的刻意 warn-only）。分析：
+					// 它是 dedupe 命中（同一 transfer_id 的记录已存在且可见）后，仅在
+					// file-nature 分类（Kind: deliverable/process 与 OutputName 绑定）
+					// 变化时补一次写入。静默失败会让 agent 工件在项目文件树里的
+					// 「交付/过程」归类与 artifacts 侧不一致（用户可见的归类缺口）。
+					// 上游重投有 transfer_id 唯一部分索引兜底（mongo_state.go:231），
+					// 重试相对安全，故返错比吞错更诚实。失败零副作用回滚，避免内存分叉。
+					snapshot := copyProjectFile(existing)
 					existing.Kind = artifact.Kind
 					existing.OutputName = artifact.OutputName
 					s.projectFiles[existing.ID] = existing
-					if err := s.persistProjectFileUnsafe(existing); err != nil && s.log != nil {
-						s.log.Warn("failed to persist refreshed project file kind", zap.String("id", existing.ID), zap.Error(err))
+					if appErr := s.persistProjectFileUnsafe(existing); appErr != nil {
+						s.projectFiles[existing.ID] = snapshot
+						return nil, appErr
 					}
 				}
 				return existing, nil
@@ -408,6 +470,11 @@ func (s *Store) saveProjectFileFromArtifactUnsafe(artifact model.TaskArtifact) (
 			if existing.FileName == artifact.FileName {
 				// Update in place: keep the original id/created_at, refresh the
 				// payload so the latest transfer content wins.
+				//
+				// T2.3b：致命化 + 零副作用回滚。旧实现 warn-only：持久化失败会让内存
+				// 里的 FileSize/MimeType/LocalPath/TransferID 领先 Mongo，重启后被旧内容
+				// 覆盖。现在任一步失败即还原记录与 transfer 索引并返错。
+				snapshot := copyProjectFile(existing)
 				existing.FileSize = artifact.FileSize
 				existing.MimeType = artifact.MimeType
 				existing.LocalPath = artifact.LocalPath
@@ -418,10 +485,15 @@ func (s *Store) saveProjectFileFromArtifactUnsafe(artifact model.TaskArtifact) (
 				if existing.TransferID != "" {
 					s.transferFileIndex[existing.TransferID] = existing.ID
 				}
-				if err := s.persistProjectFileUnsafe(existing); err != nil {
-					if s.log != nil {
-						s.log.Warn("failed to persist overwritten project file from artifact", zap.String("id", existing.ID), zap.Error(err))
+				if appErr := s.persistProjectFileUnsafe(existing); appErr != nil {
+					s.projectFiles[existing.ID] = snapshot
+					if existing.TransferID != "" && s.transferFileIndex[existing.TransferID] == existing.ID {
+						delete(s.transferFileIndex, existing.TransferID)
 					}
+					if snapshot.TransferID != "" {
+						s.transferFileIndex[snapshot.TransferID] = snapshot.ID
+					}
+					return nil, appErr
 				}
 				return existing, nil
 			}
@@ -453,10 +525,11 @@ func (s *Store) saveProjectFileFromArtifactUnsafe(artifact model.TaskArtifact) (
 		s.transferFileIndex[pf.TransferID] = pf.ID
 	}
 
-	if err := s.persistProjectFileUnsafe(pf); err != nil {
-		if s.log != nil {
-			s.log.Warn("failed to persist project file from artifact", zap.String("id", pf.ID), zap.Error(err))
-		}
+	// T2.3b：Mongo 权威 —— 失败回滚三张索引并返错；静默失败会让 agent 工件在项目
+	// 文件树里不可见（用户可见缺口），故致命化。
+	if appErr := s.persistProjectFileUnsafe(pf); appErr != nil {
+		s.rollbackProjectFileAddUnsafe(pf)
+		return nil, appErr
 	}
 
 	return pf, nil
@@ -569,11 +642,19 @@ func (s *Store) DeleteProjectFile(sc Scope, fileID string) (*model.ProjectFile, 
 		return nil, transport.NotFound("project not found") // 不可见 = 不存在，防存在性泄漏
 	}
 
-	// If it's a folder, recursively delete all children.
+	// T2.3b：先删 Mongo（文件夹含子树递归），全部成功后再改内存。
+	// 任一 Mongo 删除失败即原样返错、**内存保持不动** —— 杜绝「内存已删、库里还在」
+	// 的重启复活形态（旧实现 `_ = s.deleteProjectFileUnsafe(fileID)` 完全不检查错误）。
 	if pf.IsFolder {
-		s.deleteFolderChildrenUnsafe(pf.ProjectID, fileID)
+		if err := s.deleteFolderChildrenUnsafe(pf.ProjectID, fileID); err != nil {
+			return nil, mongoWriteError(err)
+		}
+	}
+	if err := s.deleteProjectFileUnsafe(fileID); err != nil {
+		return nil, mongoWriteError(err)
 	}
 
+	// Mongo 删除成功后才落实内存。
 	delete(s.projectFiles, fileID)
 
 	// Remove from project index.
@@ -586,35 +667,41 @@ func (s *Store) DeleteProjectFile(sc Scope, fileID string) (*model.ProjectFile, 
 	}
 
 	// Remove from transfer index.
-	if pf.TransferID != "" {
+	if pf.TransferID != "" && s.transferFileIndex[pf.TransferID] == pf.ID {
 		delete(s.transferFileIndex, pf.TransferID)
 	}
 
-	_ = s.deleteProjectFileUnsafe(fileID)
 	return pf, nil
 }
 
 // deleteFolderChildrenUnsafe recursively deletes all children of a folder.
 // Must be called with s.mu held.
-func (s *Store) deleteFolderChildrenUnsafe(projectID, folderID string) {
-	// Collect child IDs first to avoid modifying the index slice during iteration.
-	var childIDs []string
-	for _, fid := range s.projectFileIndex[projectID] {
-		if child, ok := s.projectFiles[fid]; ok && child.ParentID == folderID {
-			childIDs = append(childIDs, fid)
+//
+// T2.3b：改为「先删 Mongo、后改内存」，并在 Mongo 删除失败时返回错误（调用方据此保持
+// 内存不动）。先一次性收集整棵子树再统一删 Mongo，保证失败时**尚未**产生任何内存副作用。
+func (s *Store) deleteFolderChildrenUnsafe(projectID, folderID string) error {
+	descendants := s.collectDescendantIDsUnsafe(projectID, folderID)
+	if len(descendants) == 0 {
+		return nil
+	}
+
+	// Mongo 先行：任一删除失败即返回错误（内存未改）。
+	for _, fid := range descendants {
+		if err := s.deleteProjectFileUnsafe(fid); err != nil {
+			return err
 		}
 	}
 
-	for _, fid := range childIDs {
+	// Mongo 全部成功后落实内存（含 transfer 索引清理）。
+	for _, fid := range descendants {
 		child, ok := s.projectFiles[fid]
 		if !ok {
 			continue
 		}
-		if child.IsFolder {
-			s.deleteFolderChildrenUnsafe(projectID, child.ID)
-		}
 		delete(s.projectFiles, fid)
-		_ = s.deleteProjectFileUnsafe(fid)
+		if child.TransferID != "" && s.transferFileIndex[child.TransferID] == child.ID {
+			delete(s.transferFileIndex, child.TransferID)
+		}
 
 		// Remove from project index.
 		ids := s.projectFileIndex[projectID]
@@ -625,6 +712,7 @@ func (s *Store) deleteFolderChildrenUnsafe(projectID, folderID string) {
 			}
 		}
 	}
+	return nil
 }
 
 // GetProjectFileTree builds a hierarchical view of project files.
@@ -1249,22 +1337,19 @@ func (s *Store) ListArtifactGroups(sc Scope, projectID string) ([]model.Artifact
 }
 
 // SetProjectFileLocalPath updates the LocalPath of a ProjectFile in memory and persists it.
+//
+// T2.3b：改为走版本化原语 + 致命（返错）。规格 §4.4 定案：本函数在字节已写入存储**之后**被
+// 调用；若失败只 warn，元数据会静默缺失 → 重启后「字节在、索引里没有本地路径」。返错让
+// 调用方重试更诚实（字节重复写入由 T2.6 幂等键收敛）。失败时零副作用回滚内存。
 func (s *Store) SetProjectFileLocalPath(fileID, localPath string) *transport.AppError {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	pf, ok := s.projectFiles[fileID]
-	if !ok {
+	if _, ok := s.projectFiles[fileID]; !ok {
 		return transport.NotFound("file not found")
 	}
-
-	pf.LocalPath = localPath
-
-	if err := s.persistProjectFileUnsafe(pf); err != nil {
-		if s.log != nil {
-			s.log.Warn("failed to persist project file local path", zap.String("id", fileID), zap.Error(err))
-		}
-	}
-
-	return nil
+	return s.mutateProjectFileUnsafe(fileID, func(pf *model.ProjectFile) *transport.AppError {
+		pf.LocalPath = localPath
+		return nil
+	})
 }
