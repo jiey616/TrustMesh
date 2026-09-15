@@ -24,6 +24,20 @@ import (
 //  3. 需要真 Mongo 的正向用例（版本冲突 / 存量回填 / 双写一致性 / 重启读回）——
 //     由 TRUSTMESH_TEST_MONGO_URI 门控，未设置时 t.Skip，不让 CI 因缺少 Mongo 变红。
 
+// ─── 编译期护栏（T2.3 typed-nil 签名回归） ───
+//
+// 为什么必须是**编译期**护栏：纯内存模式（New()，无 Mongo）下 persistProjectUnsafe 会在
+// 进入提交原语**之前**命中 `!mongoEnabled || mongoProjects == nil || project == nil` 的早返回，
+// 直接返回字面 nil —— 因此运行时用例（TestPersistProjectUnsafeSuccessReturnsNilError）
+// **无论签名是 error 还是 *transport.AppError 都会通过**，拦不住「签名退化」这类回归。
+// T2.2 正是被这个形态咬过：persistTaskUnsafe 曾把 *transport.AppError 裸装进 error 接口，
+// 成功时的 nil 指针变成「非 nil error」，调用方把成功当失败（CreateTaskByPMNode 返回 (nil,nil)）。
+//
+// 下面这行在编译期断言 persistProjectUnsafe 的签名恒为
+// `func(*Store, *model.Project) *transport.AppError`：任何人把它改回 error，本文件立刻
+// **编译失败**（错误指向本行），CI 直接变红，无需依赖任何运行时用例。
+var _ func(*Store, *model.Project) *transport.AppError = (*Store).persistProjectUnsafe
+
 // ─── 脚手架 ───
 
 // seedProjectForFailureTest 直接往内存摆一条项目（绕开 Mongo），
