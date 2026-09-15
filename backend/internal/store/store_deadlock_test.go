@@ -12,6 +12,11 @@ import (
 // 高并发随机交错多聚合写：同时猛戳所有取锁 helper（lockAggregates / coarseWithAggregates /
 // 单聚合便捷方法 / flushSectionLock）与真实写路径的 early-return 释放分支（CancelTask），
 // 持续 ≥30s。watchdog + runtime 栈 dump 探测挂死/死锁；-race 同时覆盖数据竞争。
+//
+// ⚠️ 2026-09-16 回退后：调用点已回退，CancelTask 只持 s.mu、不再取内层聚合锁，
+// 「缺陷 #1（漏放内层聚合锁）」已随回退消失。本压测因此**不再是缺陷 #1 的回归用例**，
+// 其价值转为：①锁原语（升序/去重/段锁）自身的死锁免疫；②真实写路径与锁原语并发交错下
+// 的数据竞争探测。保留它是因为 T05 重新接入调用点后，这套交错压测会立刻重新变得关键。
 
 const deadlockTestDuration = 30 * time.Second
 
@@ -24,8 +29,8 @@ func deadlockDuration() time.Duration {
 
 // TestNoDeadlockUnderLockInterleaving 是高并发随机交错取锁压测。它刻意构造「任意顺序、
 // 任意聚合组合」的取锁/释放，验证固定升序取锁（不变量 1）+ 禁止反向嵌套（不变量 2）能从
-// 构造上消除死锁。CancelTask 的 early-return 路径被并发戳刺，专门回归缺陷 #1（取锁后
-// 仅在部分 return 路径释放、漏放内层聚合锁 → 永久死锁）。
+// 构造上消除死锁。CancelTask 的 early-return 路径被并发戳刺（回退后它只持 s.mu，
+// 此处作为「真实写路径 × 锁原语」的交错源，而非缺陷 #1 的定点回归）。
 func TestNoDeadlockUnderLockInterleaving(t *testing.T) {
 	s := New() // mongoEnabled 默认 false：写路径做内存变更并跳过 Mongo，聚焦锁行为。
 	dur := deadlockDuration()
@@ -68,8 +73,8 @@ func TestNoDeadlockUnderLockInterleaving(t *testing.T) {
 				busyWork(rng)
 				rel()
 			case 6:
-				// 真实写路径 early-return：对不存在/已存在的任务调 CancelTask，
-				// 命中 release() 分支（缺陷 #1 修复点）。
+				// 真实写路径 early-return：对不存在/已存在的任务调 CancelTask
+				// （回退后仅持 s.mu，用于制造真实写路径与锁原语的并发交错）。
 				id := randomTaskID(rng, 8)
 				_, _ = s.CancelTask(Scope{UserID: "tester"}, TaskCancelInput{TaskID: id})
 			}
@@ -151,8 +156,8 @@ func busyWork(rng *rand.Rand) {
 }
 
 // randomTaskID 返回 [0,n) 区间内的任务 ID 字符串（供 CancelTask 随机戳刺）。
-// store 内存为空，故这些 ID 必然命中 CancelTask 的「task not found」early-return 分支，
-// 该分支正是缺陷 #1 的修复点（取锁后必须在 return 前调用 release()）。
+// store 内存为空，故这些 ID 必然命中 CancelTask 的「task not found」early-return 分支。
+// （回退后 CancelTask 仅持 s.mu，此处只用于制造真实写路径与锁原语的并发交错。）
 func randomTaskID(rng *rand.Rand, n int) string {
 	return "task-" + string(rune('0'+rng.Intn(n)))
 }

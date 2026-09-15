@@ -118,9 +118,12 @@ func (s *Store) lockMeeting() func() { return s.lockAggregates(AggMeeting) }
 // coarseWithAggregates 先取最外层兜底锁 Store.mu，再按升序取给定聚合锁（内层），
 // 返回逆序释放闭包（先释聚合、后释 s.mu）。
 //
-// 用于「既触碰已迁移聚合（需聚合锁），又触碰仍未迁移、仍由 s.mu 守护的 map（如
+// 用于「既触碰已迁入聚合锁的聚合（需聚合锁），又触碰仍由 s.mu 守护的 map（如
 // agents / organizations / projectVisible 内部的 org 校验等）」的跨聚合写路径。
 // 它显式体现不变量 2 的**允许方向**：s.mu 作为最外层，聚合锁作为内层，绝不反向。
+//
+// ⚠️ 2026-09-16 回退后：**当前没有任何聚合已迁入聚合锁**，所有 map 仍由 s.mu 守护，
+// 故本函数暂未被任何运行时路径使用（仅被死锁压测覆盖），留待 T05 原子性整批迁移启用。
 func (s *Store) coarseWithAggregates(aggs ...Aggregate) func() {
 	if lockTrackingEnabled.Load() {
 		lockTrackingMu.Lock()

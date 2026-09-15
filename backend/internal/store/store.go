@@ -30,12 +30,10 @@ type Store struct {
 	// 不变量 3 由 qa_t25_adversarial_test.go 的
 	// TestQAT25_Invariant3_SameMapMustHaveOneProtectingLock 长期守护（回退后为绿）。
 	//
-	// mu 保留为 sync.RWMutex 系对设计契约（§1 拍板项 Q2 要求 mu 由 sync.RWMutex 降级为
-	// sync.Mutex）的**偏离**。理由：保留 sync.RWMutex 是 sync.Mutex 的严格超集，可避免改动
-	// 数十处既有 s.mu.RLock() 调用点，优先保障 AC-4（T2.x 语义 100% 不变）。聚合锁语义
-	// （独立 sync.Mutex 数组、固定升序取锁）已完全落地，mu 的读写锁能力对既有未迁移路径
-	// 是严格超集，不引入任何正确性回归。主理人已于 2026-09-15 复核并同意此偏离；mu 的
-	// 「Mutex 降级」留作 P2 项处理。
+	// mu 维持基线形态 sync.RWMutex（未按设计契约 §1 Q2 降级为 sync.Mutex）。
+	// 注：该「偏离」原是 T2.5 迁移进行中的权衡（避免改动数十处既有 s.mu.RLock() 调用点），
+	// 现随四域调用点一并回退，「Mutex 降级」在迁移重启前不再有意义 —— 留待 T05 重新评估
+	// （见 docs/t2.5-rollback-decision-2026-09-16.md）。
 	locks [numAggregates]sync.Mutex
 	// Hook injection invariant (T0.10b): the hook fields below
 	// (dispatchHook / remindHook / cancelNotifyHook / planningStallHook /
