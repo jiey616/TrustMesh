@@ -164,8 +164,12 @@ func TestQAVersionStrictlyMonotonicAcrossSequentialWrites(t *testing.T) {
 				t.Fatalf("round %d UpdateMeetingStatus: %+v", i, appErr)
 			}
 		case 1:
+			// T2.6 起会议消息按 (meeting, sender, content) 软键去重（5m 窗口）。本用例
+			// 每轮都发消息，若内容相同会被幂等去重 → 该轮不落库、版本不推进，测试
+			// 失义。故内容带轮次后缀，保证每轮都是新消息（本用例只验版本单调，不验去重）。
 			if _, appErr := s.AddMeetingMessage(sc, &model.MeetingMessage{
-				MeetingID: id, SenderType: "agent", SenderID: "ag-1", Phase: "speak", Target: "host", Content: "观点",
+				MeetingID: id, SenderType: "agent", SenderID: "ag-1", Phase: "speak", Target: "host",
+				Content: "观点-" + string(rune('0'+i)),
 			}); appErr != nil {
 				t.Fatalf("round %d AddMeetingMessage: %+v", i, appErr)
 			}
