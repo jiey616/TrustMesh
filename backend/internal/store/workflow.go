@@ -109,8 +109,9 @@ func (s *Store) RecordTodoDispatch(sc Scope, taskID, todoID string) (*model.Task
 		return nil, transport.Validation("invalid todo dispatch payload", map[string]any{"task_id": "required", "todo_id": "required"})
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：persistAgentGraphUnsafe 读 s.agents（s.mu）/ s.projects（AggProject）/ s.tasks（AggTask）
+	// → s.mu 外层 + AggProject + AggTask 内层。
+	defer s.coarseWithAggregates(AggProject, AggTask)()
 
 	task, ok := s.tasks[taskID]
 	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
@@ -177,8 +178,8 @@ func (s *Store) RecordSequentialTodoDispatch(taskID, todoID string) (*model.Task
 		return nil, transport.Validation("invalid todo dispatch payload", map[string]any{"task_id": "required", "todo_id": "required"})
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：persistAgentGraphUnsafe 读 s.agents/s.projects/s.tasks → s.mu 外层 + AggProject + AggTask 内层。
+	defer s.coarseWithAggregates(AggProject, AggTask)()
 
 	task, ok := s.tasks[taskID]
 	if !ok {
@@ -264,8 +265,8 @@ func (s *Store) CreateTaskByPMNodeWithMessageID(nodeID, messageID string, in Tas
 		return nil, todoErr
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：persistAgentGraphUnsafe 读 s.agents/s.projects/s.tasks → s.mu 外层 + AggProject + AggTask 内层。
+	defer s.coarseWithAggregates(AggProject, AggTask)()
 
 	if task, ok := s.findProcessedTaskUnsafe(processedMessageKey("task.create", nodeID, messageID)); ok {
 		return task, nil
@@ -441,8 +442,8 @@ func (s *Store) CreateTaskByUser(sc Scope, in UserTaskCreateInput) (*model.TaskD
 		return nil, transport.Validation("invalid priority", map[string]any{"priority": "must be low, medium, high, or urgent"})
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：persistAgentGraphUnsafe 读 s.agents/s.projects/s.tasks → s.mu 外层 + AggProject + AggTask 内层。
+	defer s.coarseWithAggregates(AggProject, AggTask)()
 
 	project, ok := s.projects[in.ProjectID]
 	if !ok || !visibleToScope(sc, project.OrgID, project.UserID) {
@@ -693,8 +694,8 @@ func (s *Store) UpdateTodoProgressByNode(nodeID string, in TodoProgressInput) (*
 		return nil, transport.Validation("invalid todo.progress payload", map[string]any{"task_id": "required", "todo_id": "required", "message": "required"})
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：persistAgentGraphUnsafe 读 s.agents/s.projects/s.tasks → s.mu 外层 + AggProject + AggTask 内层。
+	defer s.coarseWithAggregates(AggProject, AggTask)()
 
 	agent, err := s.agentByNodeUnsafe(nodeID)
 	if err != nil {
@@ -779,8 +780,8 @@ func (s *Store) CompleteTodoByNodeWithMessageID(nodeID, messageID string, in Tod
 		return nil, nil, transport.Validation("invalid todo.complete payload", map[string]any{"task_id": "required", "todo_id": "required"})
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：persistAgentGraphUnsafe 读 s.agents/s.projects/s.tasks → s.mu 外层 + AggProject + AggTask 内层。
+	defer s.coarseWithAggregates(AggProject, AggTask)()
 
 	if task, ok := s.findProcessedTaskUnsafe(processedMessageKey("todo.complete", nodeID, messageID)); ok {
 		return task, nil, nil
@@ -936,8 +937,8 @@ func (s *Store) AskTodoByNode(nodeID string, in TodoAskInput) (*model.TaskDetail
 		return nil, nil, transport.Validation("invalid todo.ask payload", map[string]any{"task_id": "required", "todo_id": "required", "question": "required"})
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：persistAgentGraphUnsafe 读 s.agents/s.projects/s.tasks → s.mu 外层 + AggProject + AggTask 内层。
+	defer s.coarseWithAggregates(AggProject, AggTask)()
 
 	agent, err := s.agentByNodeUnsafe(nodeID)
 	if err != nil {
@@ -1185,8 +1186,8 @@ func (s *Store) FailTodoByNodeWithMessageID(nodeID, messageID string, in TodoFai
 		return nil, transport.Validation("invalid todo.fail payload", map[string]any{"task_id": "required", "todo_id": "required", "error": "required"})
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：persistAgentGraphUnsafe 读 s.agents/s.projects/s.tasks → s.mu 外层 + AggProject + AggTask 内层。
+	defer s.coarseWithAggregates(AggProject, AggTask)()
 
 	if task, ok := s.findProcessedTaskUnsafe(processedMessageKey("todo.fail", nodeID, messageID)); ok {
 		return task, nil
@@ -1393,24 +1394,27 @@ func (s *Store) CancelTask(sc Scope, in TaskCancelInput) (*model.TaskDetail, *tr
 		return nil, transport.Validation("invalid cancel payload", map[string]any{"task_id": "required"})
 	}
 
-	s.mu.Lock()
+	// T2.5：persistAgentGraphUnsafe 读 s.agents（s.mu）/ s.projects（AggProject）/ s.tasks（AggTask）
+	// → s.mu 外层 + AggProject + AggTask 内层。本函数采用手动释放（锁外触发 cancelNotifyHook），
+	// 故用 release 闭包替代 defer。
+	release := s.coarseWithAggregates(AggProject, AggTask)
 
 	task, ok := s.tasks[in.TaskID]
 	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
-		s.mu.Unlock()
+		release()
 		return nil, transport.NotFound("task not found")
 	}
 	if appErr := s.ensureTaskProjectActiveUnsafe(task); appErr != nil {
-		s.mu.Unlock()
+		release()
 		return nil, appErr
 	}
 
 	switch task.Status {
 	case "canceled":
-		s.mu.Unlock()
+		release()
 		return nil, transport.Conflict("TASK_ALREADY_CANCELED", "task already canceled")
 	case "done", "failed":
-		s.mu.Unlock()
+		release()
 		return nil, transport.Conflict("TASK_ALREADY_TERMINAL", "task already finalized")
 	}
 
@@ -1430,7 +1434,7 @@ func (s *Store) CancelTask(sc Scope, in TaskCancelInput) (*model.TaskDetail, *tr
 		affectedAgents, cancelNotices = s.cancelTaskUnsafe(task, "user", sc.UserID, userName, in.Reason, now)
 		return nil
 	}); appErr != nil {
-		s.mu.Unlock()
+		release()
 		return nil, appErr
 	}
 	taskVersion := task.Version
@@ -1438,13 +1442,13 @@ func (s *Store) CancelTask(sc Scope, in TaskCancelInput) (*model.TaskDetail, *tr
 	for agentID := range affectedAgents {
 		s.refreshAgentExecutionStatusUnsafe(agentID, now)
 		if err := s.persistAgentGraphUnsafe(agentID); err != nil {
-			s.mu.Unlock()
+			release()
 			return nil, mongoWriteError(err)
 		}
 	}
 	s.publishTaskUnsafe(task.ID)
 	result := s.copyTaskWithArtifactsUnsafe(task)
-	s.mu.Unlock()
+	release()
 
 	// 通知执行节点在锁外进行（hook 可能走 NATS 网络写，且节点回执链路会回读
 	// 平台；持锁调用会拖慢全部 store 操作）。见 dev-spec-adapter-lifecycle §6：
