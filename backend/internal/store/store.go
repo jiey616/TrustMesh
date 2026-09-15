@@ -17,6 +17,19 @@ import (
 
 type Store struct {
 	mu sync.RWMutex
+	// locks 是 T2.5 引入的「按聚合拆分」细粒度互斥锁数组，索引即 Aggregate 枚举值
+	// （见 store_lock.go）。P0 仅 AggProject / AggProjectFile / AggTask / AggMeeting
+	// 四个聚合被真正使用；其余槽位预留给 P2 迁移。每把受保护 map 只能由对应
+	// locks[agg] 守护（跨聚合写时再配合 coarseWithAggregates 的 s.mu 外层），
+	// 禁止同一 map 被「聚合锁」与「s.mu」同时并发保护（不变量 3）。
+	//
+	// mu 保留为 sync.RWMutex 系对设计契约（§1 拍板项 Q2 要求 mu 由 sync.RWMutex 降级为
+	// sync.Mutex）的**偏离**。理由：保留 sync.RWMutex 是 sync.Mutex 的严格超集，可避免改动
+	// 数十处既有 s.mu.RLock() 调用点，优先保障 AC-4（T2.x 语义 100% 不变）。聚合锁语义
+	// （独立 sync.Mutex 数组、固定升序取锁）已完全落地，mu 的读写锁能力对既有未迁移路径
+	// 是严格超集，不引入任何正确性回归。主理人已于 2026-09-15 复核并同意此偏离；mu 的
+	// 「Mutex 降级」留作 P2 项处理。
+	locks [numAggregates]sync.Mutex
 	// Hook injection invariant (T0.10b): the hook fields below
 	// (dispatchHook / remindHook / cancelNotifyHook / planningStallHook /
 	// opsPublishHook / opsAttributionHook) are read and written WITHOUT a lock.
