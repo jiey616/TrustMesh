@@ -93,6 +93,12 @@ type Store struct {
 	opsSuppress       map[string]time.Time          // dedupeKey → 升级抑制窗截止时间（内存即可）
 	processedMessages map[string]processedMessage
 
+	// idemCache 是 T2.6 通用幂等键的进程内快路径缓存：key → 过期时间（UTC）。
+	// 用自有互斥锁 idemCacheMu 保护，不依赖全局 s.mu，避免把 Mongo 往返的临界区
+	// 牵进全局锁。上限复用 cleanup.go 的 maxProcessedMessages 作近似 LRU 容量。
+	idemCache   map[string]time.Time
+	idemCacheMu sync.Mutex
+
 	taskArtifacts map[string][]model.TaskArtifact // taskID → []TaskArtifact
 
 	externalApps map[string]*model.ExternalApp // externalAppID → ExternalApp
@@ -157,6 +163,7 @@ type Store struct {
 	mongoWorkflowTemplates *mongo.Collection
 	mongoOpsIncidents      *mongo.Collection
 	mongoLLMSettings       *mongo.Collection
+	mongoIdempotencyKeys   *mongo.Collection // T2.6 通用幂等键集合（唯一键 _id + TTL 索引 expire_at）
 	mongoTimeout           time.Duration
 	log                    *zap.Logger
 
@@ -242,6 +249,7 @@ func New() *Store {
 		opsClearSince:           make(map[string]time.Time),
 		opsSuppress:             make(map[string]time.Time),
 		processedMessages:       make(map[string]processedMessage),
+		idemCache:               make(map[string]time.Time),
 		taskArtifacts:           make(map[string][]model.TaskArtifact),
 		taskComments:            make(map[string][]model.Comment),
 		notifications:           make(map[string]*model.Notification),

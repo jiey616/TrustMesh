@@ -72,6 +72,9 @@ func (s *Store) enableMongo(cfg config.Config, log *zap.Logger) error {
 	s.mongoProjectMembers = db.Collection("project_members")
 	s.mongoOpsIncidents = db.Collection("ops_incidents")
 	s.mongoLLMSettings = db.Collection("platform_settings")
+	// T2.6 通用幂等键集合：_id 唯一由 Mongo 隐式保证（E11000 = 命中），
+	// expire_at 上的 TTL 索引（expireAfterSeconds=0）由 ensureMongoIndexes 创建。
+	s.mongoIdempotencyKeys = db.Collection("idempotency_keys")
 	s.mongoTimeout = cfg.MongoTimeout
 	if log != nil {
 		s.log = log
@@ -162,6 +165,7 @@ func (s *Store) clearMongoCollections() {
 	s.mongoProjectMembers = nil
 	s.mongoOpsIncidents = nil
 	s.mongoLLMSettings = nil
+	s.mongoIdempotencyKeys = nil
 }
 
 func (s *Store) mongoContext() (context.Context, context.CancelFunc) {
@@ -264,6 +268,12 @@ func (s *Store) ensureMongoIndexes() error {
 			{Keys: bson.D{{Key: "org_id", Value: 1}, {Key: "status", Value: 1}, {Key: "created_at", Value: -1}}},
 			{Keys: bson.D{{Key: "task_id", Value: 1}, {Key: "status", Value: 1}}},
 			{Keys: bson.D{{Key: "rule_id", Value: 1}, {Key: "status", Value: 1}}},
+		},
+		s.mongoIdempotencyKeys: {
+			// T2.6 通用幂等键集合：_id 唯一（Mongo 隐式保证，E11000 = 命中），
+			// expire_at 上的 TTL 索引（expireAfterSeconds=0）到点按字段值过期，
+			// 避免集合无限增长。
+			{Keys: bson.D{{Key: "expire_at", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(0)},
 		},
 	}
 

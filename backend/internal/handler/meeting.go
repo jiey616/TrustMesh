@@ -143,6 +143,9 @@ func (h *MeetingHandler) List(c *gin.Context) {
 
 type sendMessageRequest struct {
 	Content string `json:"content"`
+	// IdempotencyKey T2.6：客户端超时重试可携带同一键，使后端按幂等键去重，
+	// 避免重复落库（不携带时后端派生软键）。omitempty 保持旧客户端兼容。
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 
 func (h *MeetingHandler) SendMessage(c *gin.Context) {
@@ -170,11 +173,12 @@ func (h *MeetingHandler) SendMessage(c *gin.Context) {
 	}
 
 	msg := &model.MeetingMessage{
-		MeetingID:  meetingID,
-		SenderType: "user",
-		SenderID:   userID,
-		SenderName: "我",
-		Content:    strings.TrimSpace(req.Content),
+		MeetingID:      meetingID,
+		SenderType:     "user",
+		SenderID:       userID,
+		SenderName:     "我",
+		Content:        strings.TrimSpace(req.Content),
+		IdempotencyKey: req.IdempotencyKey,
 	}
 
 	result, appErr := h.store.AddMeetingMessage(sc, msg)

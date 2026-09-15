@@ -86,16 +86,20 @@ type Meeting struct {
 }
 
 type MeetingMessage struct {
-	ID           string    `json:"id" bson:"_id"`
-	OrgID        string    `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属
-	MeetingID    string    `json:"meeting_id" bson:"meeting_id"`
-	SenderType   string    `json:"sender_type" bson:"sender_type"` // user | agent | system
-	SenderID     string    `json:"sender_id" bson:"sender_id"`
-	SenderName   string    `json:"sender_name" bson:"sender_name"`
-	Phase        string    `json:"phase,omitempty" bson:"phase,omitempty"`                 // meeting phase tag
-	Target       string    `json:"target,omitempty" bson:"target,omitempty"`               // intended recipient (agent_id/node_id/all/host)
-	ContextBrief string    `json:"context_brief,omitempty" bson:"context_brief,omitempty"` // distilled context summary from host
-	Content      string    `json:"content" bson:"content"`
-	UIBlocks     []UIBlock `json:"ui_blocks,omitempty" bson:"ui_blocks,omitempty"`
-	CreatedAt    time.Time `json:"created_at" bson:"created_at"`
+	ID    string `json:"id" bson:"_id"`
+	OrgID string `json:"org_id,omitempty" bson:"org_id,omitempty"` // 多租户：租户归属
+	// IdempotencyKey T2.6 会议消息幂等键：客户端超时重试携带同一键可去重；
+	// 不携带时由 AddMeetingMessage 派生软键（meetingID|senderType|senderID|sha1(content)）
+	// 并回填到此字段，便于按幂等键回查已存消息。omitempty：存量文档无此字段，向后兼容。
+	IdempotencyKey string    `json:"idempotency_key,omitempty" bson:"idempotency_key,omitempty"`
+	MeetingID      string    `json:"meeting_id" bson:"meeting_id"`
+	SenderType     string    `json:"sender_type" bson:"sender_type"` // user | agent | system
+	SenderID       string    `json:"sender_id" bson:"sender_id"`
+	SenderName     string    `json:"sender_name" bson:"sender_name"`
+	Phase          string    `json:"phase,omitempty" bson:"phase,omitempty"`                 // meeting phase tag
+	Target         string    `json:"target,omitempty" bson:"target,omitempty"`               // intended recipient (agent_id/node_id/all/host)
+	ContextBrief   string    `json:"context_brief,omitempty" bson:"context_brief,omitempty"` // distilled context summary from host
+	Content        string    `json:"content" bson:"content"`
+	UIBlocks       []UIBlock `json:"ui_blocks,omitempty" bson:"ui_blocks,omitempty"`
+	CreatedAt      time.Time `json:"created_at" bson:"created_at"`
 }

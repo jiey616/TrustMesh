@@ -379,6 +379,25 @@ func (s *Store) AddMeetingMessage(sc Scope, msg *model.MeetingMessage) (*model.M
 		return nil, transport.NotFound("meeting not found")
 	}
 
+	// T2.6：会议消息幂等。客户端可带 IdempotencyKey（超时重试去重）；不带的旧客户端
+	// 由后端派生软键。先在写序之前判定：命中（seen）→ 回查已存消息直接返回，不重复落库；
+	// 失败 → 立即返错（宁失败不静默重复）；首次 → 把 key 回填到 msg，使其可回查。
+	key := msg.IdempotencyKey
+	if key == "" {
+		key = meetingMessageSoftKey(msg.MeetingID, msg.SenderType, msg.SenderID, msg.Content)
+	}
+	seen, appErr := s.idemCheckOrRecord(key, 5*time.Minute)
+	if appErr != nil {
+		return nil, appErr
+	}
+	if seen {
+		if existing := s.findStoredMeetingMessageByKeyUnsafe(key); existing != nil {
+			return existing, nil
+		}
+		// 极端：seen 但查不到（TTL 窗口内被并发清理）。按「首次」继续，避免丢消息。
+	}
+	msg.IdempotencyKey = key
+
 	msg.ID = uuid.NewString()
 	// 多租户阶段 1：消息归属跟随所属会议。
 	if m, ok := s.meetings[msg.MeetingID]; ok && m.OrgID != "" {
