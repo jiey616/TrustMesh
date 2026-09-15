@@ -511,3 +511,31 @@ func (s *Store) mutateTaskUnsafe(taskID string, fn func(*model.TaskDetail) *tran
 	}
 	return nil
 }
+
+// mutateProjectUnsafe 是项目域核心写路径的**零副作用提交包装器**（T2.3，对齐 mutateTaskUnsafe）：
+//
+//  1. 先按 projectID 取内存对象并深拷贝一份快照；
+//  2. 在持锁内执行 fn(p) 就地改写内存（fn 必须直接改入参 p，不要重新从 s.projects 取值，
+//     否则快照回滚会失效）；
+//  3. 若 fn 返回错误 → 用快照还原 s.projects[projectID]，立即返回（fn 内的任何改动作废）；
+//  4. 若 fn 成功 → 调用权威提交原语 persistProjectUnsafe（带乐观锁的版本化 Mongo 写）；
+//  5. 若 persist 失败 → 用快照还原 s.projects[projectID]，返回错误（内存零副作用）。
+//
+// 关键不变量：调用方在锁内、且本函数返回前要么内存与 Mongo 都已推进，要么二者都回滚到
+// 进入前的快照。任何「先改内存、后 persist」的调用点都可安全替换为对本包装器的调用。
+func (s *Store) mutateProjectUnsafe(projectID string, fn func(*model.Project) *transport.AppError) *transport.AppError {
+	p, ok := s.projects[projectID]
+	if !ok {
+		return transport.NotFound("project not found")
+	}
+	snapshot := copyProject(p)
+	if appErr := fn(p); appErr != nil {
+		s.projects[projectID] = snapshot
+		return appErr
+	}
+	if appErr := s.persistProjectUnsafe(p); appErr != nil {
+		s.projects[projectID] = snapshot
+		return appErr
+	}
+	return nil
+}
