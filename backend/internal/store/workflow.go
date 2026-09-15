@@ -194,24 +194,6 @@ func (s *Store) RecordSequentialTodoDispatch(taskID, todoID string) (*model.Task
 	}
 
 	todo := &task.Todos[todoIdx]
-
-	// T2.6：派发幂等（T3.1 跨实例去重的半依赖）。必须在任何状态 / 可见性校验之前判定：
-	// 重复派发（同 key 已记录）应返回「当前任务态」（已派发），而非报 TODO_NOT_PENDING。
-	// 记录 Mongo 支撑的幂等键 dispatch|task|todo|node；另一实例并发提升同键会被 E11000
-	// 命中而跳过，避免双派。seen → 返回当前任务态，不重复提升 / 不重复落库；err → 致命化返回。
-	// nodeID 取被派发 agent 的节点。注意：仅守卫「首次派发」提升点；派发对账器失败重派路径
-	// deliberately 不在此守卫（详见交付汇报中的偏离说明）。
-	nodeID := ""
-	if a, ok := s.agents[todo.Assignee.AgentID]; ok {
-		nodeID = a.NodeID
-	}
-	dispatchKey := "dispatch|" + taskID + "|" + todoID + "|" + nodeID
-	if seen, derr := s.idemCheckOrRecord(dispatchKey, 24*time.Hour); derr != nil {
-		return nil, derr
-	} else if seen {
-		return s.copyTaskWithArtifactsUnsafe(task), nil
-	}
-
 	if appErr := ensureTaskAcceptingUpdates(task); appErr != nil {
 		return nil, appErr
 	}

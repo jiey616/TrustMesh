@@ -1,25 +1,21 @@
 package store
 
-// T2.6 去重 / 幂等键测试。
+// T2.6 去重 / 幂等键测试（as-built：范围收敛为「会议消息幂等」，派发不纳入 —— descoped）。
 //
 // 两类用例：
-//  1. CI 门禁（纯内存 store，无 Mongo）：原语同键/异键/TTL 过期行为 + 会议消息去重 +
-//     派发去重。不依赖 docker / 网络。
-//  2. 活库门禁（TRUSTMESH_TEST_MONGO_URI 门控，未设置时 t.Skip）：跨实例共享 Mongo 的
-//     两条硬指标——①同键两次 AddMeetingMessage 库内仅 1 条且第二次返回首条；
-//     ②两个 store 共享同一 Mongo 并发同键派发，仅 1 次实际提升（=1 次派发）。
+//  1. CI 门禁（纯内存 store，无 Mongo）：原语同键/异键/TTL 过期行为 + 会议消息去重
+//     （客户端键与派生软键）。不依赖 docker / 网络。
+//  2. 活库门禁（TRUSTMESH_TEST_MONGO_URI 门控，未设置时 t.Skip）：同键两次
+//     AddMeetingMessage 库内仅 1 条且第二次返回首条（跨实例/重启后的权威去重）。
 
 import (
 	"context"
-	"os"
-	"sync"
 	"testing"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.uber.org/zap"
 
-	"trustmesh/backend/internal/config"
 	"trustmesh/backend/internal/model"
 )
 
@@ -148,41 +144,6 @@ func TestAddMeetingMessageIdempotencyClientKeyInMemory(t *testing.T) {
 	}
 }
 
-// ─── 1. CI 门禁：派发去重（纯内存 store） ───
-
-func TestRecordSequentialTodoDispatchIdempotencyInMemory(t *testing.T) {
-	s := New()
-	s.log = zap.NewNop()
-	s.mu.Lock()
-	s.projects["p1"] = &model.Project{ID: "p1", UserID: "u1", Status: "active"}
-	s.agents["dev"] = &model.Agent{ID: "dev", NodeID: "node-dev", Name: "开发"}
-	s.tasks["t1"] = &model.TaskDetail{
-		ID: "t1", UserID: "u1", ProjectID: "p1", Status: "in_progress", Version: 1,
-		Todos: []model.Todo{{
-			ID: "td1", Status: "pending",
-			Assignee: model.TodoAssignee{AgentID: "dev", Name: "开发", NodeID: "node-dev"},
-		}},
-	}
-	s.mu.Unlock()
-
-	if _, appErr := s.RecordSequentialTodoDispatch("t1", "td1"); appErr != nil {
-		t.Fatalf("first dispatch: %v", appErr)
-	}
-	// 同键第二次（同进程，缓存命中）→ 跳过提升，不重复落库。
-	_, appErr := s.RecordSequentialTodoDispatch("t1", "td1")
-	if appErr != nil {
-		t.Fatalf("second dispatch: %v", appErr)
-	}
-
-	// 仅首次真正提升：todo 仍只被派发一次（DispatchAttempts 不被二次累加）。
-	s.mu.RLock()
-	attempts := s.tasks["t1"].Todos[0].DispatchAttempts
-	s.mu.RUnlock()
-	if attempts != 1 {
-		t.Fatalf("DispatchAttempts must be 1 (one real dispatch), got %d", attempts)
-	}
-}
-
 // ─── 2. 活库门禁（TRUSTMESH_TEST_MONGO_URI） ───
 
 func TestAddMeetingMessageIdempotencyLiveMongo(t *testing.T) {
@@ -227,93 +188,5 @@ func TestAddMeetingMessageIdempotencyLiveMongo(t *testing.T) {
 	}
 	if cnt != 1 {
 		t.Fatalf("meeting_messages must have exactly 1 doc, got %d", cnt)
-	}
-}
-
-func TestDispatchIdempotencyAcrossStoresSharedMongo(t *testing.T) {
-	uri := os.Getenv("TRUSTMESH_TEST_MONGO_URI")
-	if uri == "" {
-		t.Skip("skip: set TRUSTMESH_TEST_MONGO_URI to enable cross-instance dispatch dedup test")
-	}
-	db := os.Getenv("TRUSTMESH_TEST_MONGO_DB")
-	if db == "" {
-		db = "trustmesh_t26_test"
-	}
-
-	mkStore := func() *Store {
-		s := New()
-		cfg := config.Config{
-			MongoEnabled:  true,
-			MongoURI:      uri,
-			MongoDatabase: db,
-			MongoTimeout:  10 * time.Second,
-		}
-		if err := s.enableMongo(cfg, zap.NewNop()); err != nil {
-			t.Skipf("skip: mongo unavailable: %v", err)
-		}
-		t.Cleanup(func() { _ = s.Close() })
-		return s
-	}
-	s1 := mkStore()
-	s2 := mkStore()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	// 清幂等键集合与 tasks 集合，避免用例间串扰（两 store 共享同一 Mongo DB）。
-	if _, err := s1.mongoIdempotencyKeys.DeleteMany(ctx, bson.M{}); err != nil {
-		t.Fatalf("clean idempotency_keys: %v", err)
-	}
-	if _, err := s1.mongoTasks.DeleteMany(ctx, bson.M{}); err != nil {
-		t.Fatalf("clean tasks: %v", err)
-	}
-
-	seedTask := func(s *Store) {
-		s.mu.Lock()
-		s.projects["p1"] = &model.Project{ID: "p1", UserID: "u1", Status: "active"}
-		s.agents["dev"] = &model.Agent{ID: "dev", NodeID: "node-dev", Name: "开发"}
-		s.tasks["t1"] = &model.TaskDetail{
-			ID: "t1", UserID: "u1", ProjectID: "p1", Status: "in_progress", Version: 1,
-			Todos: []model.Todo{{
-				ID: "td1", Status: "pending",
-				Assignee: model.TodoAssignee{AgentID: "dev", Name: "开发", NodeID: "node-dev"},
-			}},
-		}
-		s.mu.Unlock()
-	}
-	seedTask(s1)
-	seedTask(s2)
-
-	// 两个 store 并发对同 (task,todo) 派发：唯一索引保证仅一次 InsertOne 成功，
-	// 另一次 E11000 → seen → 跳过提升。
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		_, _ = s1.RecordSequentialTodoDispatch("t1", "td1")
-	}()
-	go func() {
-		defer wg.Done()
-		_, _ = s2.RecordSequentialTodoDispatch("t1", "td1")
-	}()
-	wg.Wait()
-
-	// 幂等键集合应仅有 1 条（一次 InsertOne 成功，另一次 E11000）。
-	cnt, err := s1.mongoIdempotencyKeys.CountDocuments(ctx, bson.M{"_id": "dispatch|t1|td1|node-dev"})
-	if err != nil {
-		t.Fatalf("count idempotency_keys: %v", err)
-	}
-	if cnt != 1 {
-		t.Fatalf("idempotency_keys must have exactly 1 doc, got %d", cnt)
-	}
-
-	// 两实例中「仅一个」把 todo 提升为 in_progress（= 仅一次实际派发）。
-	s1.mu.RLock()
-	s1promoted := s1.tasks["t1"].Todos[0].Status == "in_progress"
-	s1.mu.RUnlock()
-	s2.mu.RLock()
-	s2promoted := s2.tasks["t1"].Todos[0].Status == "in_progress"
-	s2.mu.RUnlock()
-	if s1promoted == s2promoted {
-		t.Fatalf("exactly one instance must promote (one real dispatch), got s1=%v s2=%v", s1promoted, s2promoted)
 	}
 }
