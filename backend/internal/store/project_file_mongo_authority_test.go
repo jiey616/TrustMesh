@@ -225,6 +225,59 @@ func TestSaveProjectFileLeavesNoGhostOnPersistFailure(t *testing.T) {
 	}
 }
 
+// TestSaveProjectFileRollbackRestoresForeignTransferMapping —— QA 路由回归护栏：
+// 新增记录的 TransferID 与既有记录冲突 + persist 失败时，回滚必须把 transferFileIndex
+// 还原给既有记录（不得删键、也不得指向新记录）。修复前的缺陷：插入路径无条件改写映射，
+// 回滚的「映射指向本记录」恒等守卫因此恒通过 → 删键 → 无辜既有记录的映射被抹掉。
+func TestSaveProjectFileRollbackRestoresForeignTransferMapping(t *testing.T) {
+	s := New()
+	s.log = zap.NewNop()
+	seedProjectForFailureTest(t, s, "pf-tf")
+
+	// 既有记录及其 transfer 映射（冲突场景下的无辜第三方）。
+	owner := seedProjectFileForFailureTest(t, s, "pf-owner", "pf-tf")
+	owner.TransferID = "tr-foreign"
+	s.mu.Lock()
+	s.transferFileIndex["tr-foreign"] = owner.ID
+	s.mu.Unlock()
+
+	s.persistFailForTest = true
+	defer func() { s.persistFailForTest = false }()
+
+	newFile, appErr := s.SaveProjectFile(Scope{UserID: "u1"}, "pf-tf", &model.ProjectFile{
+		FileName:   "collide.txt",
+		FileSize:   1,
+		MimeType:   "text/plain",
+		Source:     "user_upload",
+		TransferID: "tr-foreign",
+	})
+	if appErr == nil {
+		t.Fatal("SaveProjectFile must fail when the persist seam is armed")
+	}
+	if newFile != nil {
+		t.Fatalf("failed SaveProjectFile returned a non-nil file: %+v", newFile)
+	}
+
+	// 无幽灵：内存里只剩既有的 pf-owner。
+	s.mu.RLock()
+	records := len(s.projectFiles)
+	mapping, hasMapping := s.transferFileIndex["tr-foreign"]
+	s.mu.RUnlock()
+
+	if records != 1 {
+		t.Fatalf("ghost record(s) left after rollback: %d entries, want 1 (pf-owner)", records)
+	}
+	if !hasMapping {
+		t.Fatal("foreign transfer mapping was deleted by rollback, want restored to pf-owner")
+	}
+	if mapping != owner.ID {
+		t.Fatalf("foreign transfer mapping = %q, want %q (pf-owner)", mapping, owner.ID)
+	}
+	if got := readProjectFileSnapshot(t, s, "pf-owner"); got.TransferID != "tr-foreign" {
+		t.Fatalf("foreign record mutated by the collided save: TransferID=%q", got.TransferID)
+	}
+}
+
 func TestCreateFolderLeavesNoGhostOnPersistFailure(t *testing.T) {
 	s := New()
 	s.log = zap.NewNop()

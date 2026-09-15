@@ -51,6 +51,9 @@ func (s *Store) SaveProjectFile(sc Scope, projectID string, pf *model.ProjectFil
 
 	s.projectFiles[pf.ID] = pf
 	s.projectFileIndex[projectID] = append(s.projectFileIndex[projectID], pf.ID)
+	// 快照将被覆盖的 transfer 映射旧值（QA 路由修复）：transfer_id 冲突时旧映射指向
+	// 其他记录，persist 失败的回滚必须还原给那条记录，而不是删键。
+	prevTransferFileID, hadPrevTransferFile := s.transferFileIndex[pf.TransferID]
 	if pf.TransferID != "" {
 		s.transferFileIndex[pf.TransferID] = pf.ID
 	}
@@ -58,7 +61,7 @@ func (s *Store) SaveProjectFile(sc Scope, projectID string, pf *model.ProjectFil
 	// T2.3b：Mongo 权威 —— persist 失败必须把三张内存索引全部回滚并返错，
 	// 否则会留下「内存有、库里没有」的幽灵记录（看得到、重启即丢）。
 	if appErr := s.persistProjectFileUnsafe(pf); appErr != nil {
-		s.rollbackProjectFileAddUnsafe(pf)
+		s.rollbackProjectFileAddUnsafe(pf, prevTransferFileID, hadPrevTransferFile)
 		return nil, appErr
 	}
 
@@ -102,11 +105,13 @@ func (s *Store) CreateMeetingMinutesFile(meetingID, fileName, content string) (*
 
 	s.projectFiles[pf.ID] = pf
 	s.projectFileIndex[m.ProjectID] = append(s.projectFileIndex[m.ProjectID], pf.ID)
+	// 会议纪要记录不含 TransferID，快照恒为「无旧映射」；统一传参保持回滚helper契约一致。
+	prevTransferFileID, hadPrevTransferFile := s.transferFileIndex[pf.TransferID]
 
 	// T2.3b：Mongo 权威 —— 失败回滚两张内存索引并返错（Mongo 抖动时 webhook 会拿到错误，
 	// 由上游重投；这是本批明确接受的用户可见失败面，见规格 §6）。
 	if appErr := s.persistProjectFileUnsafe(pf); appErr != nil {
-		s.rollbackProjectFileAddUnsafe(pf)
+		s.rollbackProjectFileAddUnsafe(pf, prevTransferFileID, hadPrevTransferFile)
 		return nil, appErr
 	}
 
@@ -159,10 +164,12 @@ func (s *Store) CreateFolder(sc Scope, projectID, name, parentID string) (*model
 
 	s.projectFiles[folder.ID] = folder
 	s.projectFileIndex[projectID] = append(s.projectFileIndex[projectID], folder.ID)
+	// 文件夹不含 TransferID，快照恒为「无旧映射」；统一传参保持回滚 helper 契约一致。
+	prevTransferFileID, hadPrevTransferFile := s.transferFileIndex[folder.TransferID]
 
 	// T2.3b：Mongo 权威 —— 失败回滚两张内存索引并返错，不留幽灵文件夹。
 	if appErr := s.persistProjectFileUnsafe(folder); appErr != nil {
-		s.rollbackProjectFileAddUnsafe(folder)
+		s.rollbackProjectFileAddUnsafe(folder, prevTransferFileID, hadPrevTransferFile)
 		return nil, appErr
 	}
 
@@ -171,14 +178,21 @@ func (s *Store) CreateFolder(sc Scope, projectID, name, parentID string) (*model
 
 // rollbackProjectFileAddUnsafe 回滚一次「新增项目文件 / 文件夹」的内存写入（T2.3b）。
 //
-// 新增路径（SaveProjectFile / CreateMeetingMinutesFile / CreateFolder）先写内存再 persist；
-// persist 失败必须把三张索引（projectFiles / projectFileIndex / transferFileIndex）**逐字节**
-// 还原到调用前形态，否则会留下「内存有、库里没有」的幽灵记录（ListProjectFiles / Browse 能
-// 列出它，重启即消失）。还原要求：索引切片为空时删除键本身（而非留一个空切片），
-// 否则与调用前「键不存在」的形态不等价。
+// 新增路径（SaveProjectFile / CreateMeetingMinutesFile / CreateFolder / 工件自动入库的新建分支）
+// 先写内存再 persist；persist 失败必须把三张索引（projectFiles / projectFileIndex /
+// transferFileIndex）**逐字节**还原到调用前形态，否则会留下「内存有、库里没有」的幽灵记录
+// （ListProjectFiles / Browse 能列出它，重启即消失）。还原要求：索引切片为空时删除键本身
+// （而非留一个空切片），否则与调用前「键不存在」的形态不等价。
+//
+// prevTransferFileID / hadPrevTransferFile 是新增写入**覆盖 transferFileIndex 映射之前**的
+// 旧值快照（QA 路由修复）：transfer_id 冲突场景下，新增路径会无条件把映射改写成自己，
+// 而 persist 失败后回滚时「映射指向本记录」这一恒等守卫必然通过 —— 若直接删键，就会把
+// 无辜既有记录的映射一并抹掉。因此：
+//   - 新增前键不存在 → 删键（无冲突的常规路径，与原行为一致）；
+//   - 新增前键已存在（指向其他记录）→ 把映射**还原给那条记录**，而不是删键。
 //
 // 必须持锁调用。
-func (s *Store) rollbackProjectFileAddUnsafe(pf *model.ProjectFile) {
+func (s *Store) rollbackProjectFileAddUnsafe(pf *model.ProjectFile, prevTransferFileID string, hadPrevTransferFile bool) {
 	if pf == nil {
 		return
 	}
@@ -198,8 +212,16 @@ func (s *Store) rollbackProjectFileAddUnsafe(pf *model.ProjectFile) {
 		}
 	}
 
-	// 只在 transfer 映射确实指向本记录时才删，避免误删他人的映射。
-	if pf.TransferID != "" && s.transferFileIndex[pf.TransferID] == pf.ID {
+	// transfer 映射回滚：按「覆盖前的旧值快照」还原，见函数头注释。
+	if pf.TransferID == "" {
+		return
+	}
+	if hadPrevTransferFile {
+		s.transferFileIndex[pf.TransferID] = prevTransferFileID
+		return
+	}
+	// 无旧映射：仅当映射仍指向本记录时才删键（防御性恒等守卫，正常路径恒真）。
+	if s.transferFileIndex[pf.TransferID] == pf.ID {
 		delete(s.transferFileIndex, pf.TransferID)
 	}
 }
@@ -521,6 +543,8 @@ func (s *Store) saveProjectFileFromArtifactUnsafe(artifact model.TaskArtifact) (
 
 	s.projectFiles[pf.ID] = pf
 	s.projectFileIndex[task.ProjectID] = append(s.projectFileIndex[task.ProjectID], pf.ID)
+	// 快照将被覆盖的 transfer 映射旧值（QA 路由修复，同 SaveProjectFile）。
+	prevTransferFileID, hadPrevTransferFile := s.transferFileIndex[pf.TransferID]
 	if pf.TransferID != "" {
 		s.transferFileIndex[pf.TransferID] = pf.ID
 	}
@@ -528,7 +552,7 @@ func (s *Store) saveProjectFileFromArtifactUnsafe(artifact model.TaskArtifact) (
 	// T2.3b：Mongo 权威 —— 失败回滚三张索引并返错；静默失败会让 agent 工件在项目
 	// 文件树里不可见（用户可见缺口），故致命化。
 	if appErr := s.persistProjectFileUnsafe(pf); appErr != nil {
-		s.rollbackProjectFileAddUnsafe(pf)
+		s.rollbackProjectFileAddUnsafe(pf, prevTransferFileID, hadPrevTransferFile)
 		return nil, appErr
 	}
 
