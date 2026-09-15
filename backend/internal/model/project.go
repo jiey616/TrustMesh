@@ -33,7 +33,12 @@ type Project struct {
 	PrimaryWorkflowIndex int `json:"primary_workflow_index" bson:"primary_workflow_index"`
 	// PrimaryWorkflowID is the ID-based reference to the primary workflow
 	// (new style, preferred over PrimaryWorkflowIndex).
-	PrimaryWorkflowID string    `json:"primary_workflow_id,omitempty" bson:"primary_workflow_id,omitempty"`
-	CreatedAt         time.Time `json:"created_at" bson:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at" bson:"updated_at"`
+	PrimaryWorkflowID string `json:"primary_workflow_id,omitempty" bson:"primary_workflow_id,omitempty"`
+	// Version is the project's optimistic-lock version (T2.3). It is advanced
+	// by the authoritative commit primitive on every successful persist. No
+	// omitempty: the field must always be written to Mongo so the versioned
+	// filter ({_id, version}) has a stable baseline.
+	Version   int       `json:"version" bson:"version"`
+	CreatedAt time.Time `json:"created_at" bson:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" bson:"updated_at"`
 }
