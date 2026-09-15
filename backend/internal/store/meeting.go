@@ -185,8 +185,9 @@ func (s *Store) retryOnceAfterVersionRefreshLocked(appErr *transport.AppError, m
 // ─── Meeting CRUD ───
 
 func (s *Store) CreateMeeting(sc Scope, m *model.Meeting) (*model.Meeting, *transport.AppError) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：写 s.meetings / s.projectMeetings（AggMeeting），并调 resolveOwnerOrgUnsafe
+	// 读仍由 s.mu 守护的 orgs → s.mu 外层 + AggMeeting 内层。
+	defer s.coarseWithAggregates(AggMeeting)()
 
 	m.ID = uuid.NewString()
 	m.CreatedAt = time.Now().UTC()
@@ -217,18 +218,20 @@ func (s *Store) CreateMeeting(sc Scope, m *model.Meeting) (*model.Meeting, *tran
 }
 
 func (s *Store) GetMeeting(sc Scope, meetingID string) (*model.Meeting, *transport.AppError) {
-	s.mu.RLock()
+	// T2.5：读 s.meetings（AggMeeting）+ meetingVisible（触 s.projects / s.projectMembers，
+	// 仍由 s.mu 守护）→ s.mu 外层 + AggMeeting + AggProject 内层。整个函数持锁
+	// （含未命中时的 Mongo FindOne 回灌），与改造前「先读后懒加载」语义一致，仅锁粒度更细。
+	defer s.coarseWithAggregates(AggMeeting, AggProject)()
+
 	m, ok := s.meetings[meetingID]
 	if ok {
 		// 裁决必须在锁内：meetingVisible 读 s.projects / s.projectMembers
 		visible := s.meetingVisible(sc, m)
-		s.mu.RUnlock()
 		if !visible {
 			return nil, transport.NotFound("meeting not found")
 		}
 		return m, nil
 	}
-	s.mu.RUnlock()
 
 	// Lazy-load from MongoDB so callers keep working after a backend restart
 	// (the in-memory map is empty until meetings are re-accessed).
@@ -239,11 +242,9 @@ func (s *Store) GetMeeting(sc Scope, meetingID string) (*model.Meeting, *transpo
 		if err := s.mongoMeetings.FindOne(ctx, bson.M{"_id": meetingID}).Decode(&mm); err == nil {
 			// T2.1：存量文档没有 version 字段 → 归一化为 1，否则后续更新必然冲突。
 			normalizeMeetingVersion(&mm)
-			s.mu.Lock()
 			s.meetings[meetingID] = &mm
 			s.projectMeetings[mm.ProjectID] = append(s.projectMeetings[mm.ProjectID], mm.ID)
 			visible := s.meetingVisible(sc, &mm)
-			s.mu.Unlock()
 			if !visible {
 				return nil, transport.NotFound("meeting not found")
 			}
@@ -254,8 +255,10 @@ func (s *Store) GetMeeting(sc Scope, meetingID string) (*model.Meeting, *transpo
 }
 
 func (s *Store) ListMeetings(sc Scope, projectID string) []*model.Meeting {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	// T2.5（T03 跨聚合读）：projectVisible 读 s.projects（AggProject）/ s.projectMembers（仍由 s.mu 守护）
+	// 且本函数读 s.meetings / s.projectMeetings（AggMeeting）→ s.mu 外层 + AggMeeting + AggProject 内层。
+	// 注：因 projectMembers 仍由 s.mu 守护，此处用 coarseWithAggregates 而非纯 lockAggregates（见汇报说明）。
+	defer s.coarseWithAggregates(AggMeeting, AggProject)()
 
 	// 项目不在内存（懒加载边界）时不裁决，行为与改造前一致 ——
 	// 宁可沿用旧行为，也不因数据缺失误伤。
@@ -287,7 +290,9 @@ func (s *Store) ListMeetingsByStatus(sc Scope, status model.MeetingStatus) []*mo
 		if err == nil {
 			var out []*model.Meeting
 			if cur.All(ctx, &out) == nil {
-				s.mu.Lock()
+				// T2.5：回灌缓存 + meetingVisible（读 s.projects / s.projectMembers）需
+				// s.mu 外层 + AggMeeting + AggProject 内层；仅包住缓存写入段，Mongo I/O 仍在锁外。
+				release := s.coarseWithAggregates(AggMeeting, AggProject)
 				kept := make([]*model.Meeting, 0, len(out))
 				for _, m := range out {
 					// T2.1：存量文档没有 version 字段 → 归一化为 1（同上）。
@@ -301,7 +306,7 @@ func (s *Store) ListMeetingsByStatus(sc Scope, status model.MeetingStatus) []*mo
 						kept = append(kept, m)
 					}
 				}
-				s.mu.Unlock()
+				release()
 				return kept
 			}
 		}
@@ -310,8 +315,9 @@ func (s *Store) ListMeetingsByStatus(sc Scope, status model.MeetingStatus) []*mo
 }
 
 func (s *Store) UpdateMeetingStatus(sc Scope, meetingID string, status model.MeetingStatus) *transport.AppError {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：meetingVisible（触 s.projects / s.projectMembers）+ 写 s.meetings（AggMeeting）
+	// + publishUserEventUnsafe（s.mu map）→ s.mu 外层 + AggMeeting + AggProject 内层。
+	defer s.coarseWithAggregates(AggMeeting, AggProject)()
 
 	m, ok := s.meetings[meetingID]
 	if !ok || !s.meetingVisible(sc, m) {
@@ -370,8 +376,9 @@ func (s *Store) UpdateMeetingStatus(sc Scope, meetingID string, status model.Mee
 // ─── Meeting Message CRUD ───
 
 func (s *Store) AddMeetingMessage(sc Scope, msg *model.MeetingMessage) (*model.MeetingMessage, *transport.AppError) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：meetingVisible（触 s.projects / s.projectMembers）+ 写 s.meetings / s.meetingMessages
+	// （仍由 s.mu 守护）/ publishUserEventUnsafe（s.mu map）→ s.mu 外层 + AggMeeting + AggProject 内层。
+	defer s.coarseWithAggregates(AggMeeting, AggProject)()
 
 	// 改造前本函数没有任何归属校验：任何登录用户都能往任意 meetingID 发消息。
 	// 内部 webhook（agent 发言）用 SystemScope 显式放行。
@@ -554,16 +561,18 @@ func (s *Store) publishMeetingMessageUnsafe(m *model.Meeting, msg *model.Meeting
 // 会议不在内存时对齐 GetMeeting 先懒加载 Mongo 再裁决，不可见一律 404。
 // （旧实现「不在内存就不裁决、不可见回空列表」是 fail-open，越权探测抓出后修复。）
 func (s *Store) ListMeetingMessages(sc Scope, meetingID string) ([]*model.MeetingMessage, *transport.AppError) {
-	s.mu.RLock()
+	// T2.5：读 s.meetings（AggMeeting）+ meetingVisible（触 s.projects / s.projectMembers）
+	// + 懒加载回灌 s.meetings / s.projectMeetings → s.mu 外层 + AggMeeting + AggProject 内层。
+	defer s.coarseWithAggregates(AggMeeting, AggProject)()
+
 	m, ok := s.meetings[meetingID]
 	if ok {
 		visible := s.meetingVisible(sc, m)
-		s.mu.RUnlock()
 		if !visible {
 			return nil, transport.NotFound("meeting not found")
 		}
 	} else {
-		s.mu.RUnlock()
+		// 未命中内存：懒加载回灌（与 GetMeeting 一致）。
 		if s.mongoEnabled {
 			ctx, cancel := s.mongoContext()
 			defer cancel()
@@ -571,12 +580,9 @@ func (s *Store) ListMeetingMessages(sc Scope, meetingID string) ([]*model.Meetin
 			if err := s.mongoMeetings.FindOne(ctx, bson.M{"_id": meetingID}).Decode(&mm); err == nil {
 				// T2.1：存量文档没有 version 字段 → 归一化为 1（同 GetMeeting）。
 				normalizeMeetingVersion(&mm)
-				s.mu.Lock()
 				s.meetings[meetingID] = &mm
 				s.projectMeetings[mm.ProjectID] = append(s.projectMeetings[mm.ProjectID], mm.ID)
-				visible := s.meetingVisible(sc, &mm)
-				s.mu.Unlock()
-				if !visible {
+				if !s.meetingVisible(sc, &mm) {
 					return nil, transport.NotFound("meeting not found")
 				}
 			} else {
@@ -603,8 +609,8 @@ func (s *Store) ListMeetingMessages(sc Scope, meetingID string) ([]*model.Meetin
 // ─── Meeting Summary / Todos / Agenda ───
 
 func (s *Store) UpdateMeetingSummary(sc Scope, meetingID, summaryFileID string) *transport.AppError {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：meetingVisible + 写 s.meetings（AggMeeting）+ 读 s.projects（AggProject）→ coarse。
+	defer s.coarseWithAggregates(AggMeeting, AggProject)()
 
 	m, ok := s.meetings[meetingID]
 	if !ok || !s.meetingVisible(sc, m) {
@@ -627,8 +633,8 @@ func (s *Store) UpdateMeetingSummary(sc Scope, meetingID, summaryFileID string) 
 // UpdateMeetingMinutes stores the generated meeting minutes (markdown text) and
 // the linked project file ID on the meeting record.
 func (s *Store) UpdateMeetingMinutes(sc Scope, meetingID, minutes, minutesFileID string) *transport.AppError {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：meetingVisible + 写 s.meetings（AggMeeting）+ 读 s.projects（AggProject）→ coarse。
+	defer s.coarseWithAggregates(AggMeeting, AggProject)()
 
 	m, ok := s.meetings[meetingID]
 	if !ok || !s.meetingVisible(sc, m) {
@@ -667,11 +673,14 @@ func (s *Store) GenerateMeetingMinutesFile(sc Scope, meeting *model.Meeting) (st
 	}
 
 	// 归属校验（本函数后面会调 SaveProjectFile 拿写锁，裁决必须先放锁）
-	s.mu.RLock()
-	visible := s.meetingVisible(sc, meeting)
-	s.mu.RUnlock()
-	if !visible {
-		return "", fmt.Errorf("meeting not found")
+	// T2.5：meetingVisible 读 s.projects（AggProject）/ s.projectMembers（仍由 s.mu 守护）→ coarse。
+	{
+		release := s.coarseWithAggregates(AggProject)
+		visible := s.meetingVisible(sc, meeting)
+		release()
+		if !visible {
+			return "", fmt.Errorf("meeting not found")
+		}
 	}
 
 	// 可见性已在本函数前置校验，此处错误不可能触发
@@ -758,11 +767,13 @@ func (s *Store) GenerateMeetingMinutesFile(sc Scope, meeting *model.Meeting) (st
 	fileScope := sc
 	if sc.System {
 		ownerID := ""
-		s.mu.RLock()
+		// T2.5（T03 跨聚合读）：此处仅读 s.projects（AggProject），用纯聚合锁（不取 s.mu），
+		// 演示跨聚合读取的细粒度并发。AggMeeting 一并锁定以保持与 T03 契约一致。
+		release := s.lockAggregates(AggMeeting, AggProject)
 		if p, ok := s.projects[meeting.ProjectID]; ok && p.UserID != "" {
 			ownerID = p.UserID
 		}
-		s.mu.RUnlock()
+		release()
 		if ownerID == "" {
 			ownerID = meeting.CreatorID
 		}
@@ -795,8 +806,8 @@ func sanitizeMinutesTitle(title string) string {
 }
 
 func (s *Store) AddMeetingTodo(sc Scope, meetingID string, todo model.MeetingTodoItem) (*model.Meeting, *transport.AppError) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：meetingVisible + 写 s.meetings（AggMeeting）+ 读 s.projects（AggProject）→ coarse。
+	defer s.coarseWithAggregates(AggMeeting, AggProject)()
 
 	m, ok := s.meetings[meetingID]
 	if !ok || !s.meetingVisible(sc, m) {
@@ -833,14 +844,15 @@ func (s *Store) VerifyMeetingConsistency() (int, int, error) {
 		return 0, 0, nil
 	}
 
-	s.mu.RLock()
+	// T2.5：仅快照 s.meetings（AggMeeting），无授权/跨聚合读写，用 coarse（s.mu 外层 + AggMeeting 内层）即可。
+	release := s.coarseWithAggregates(AggMeeting)
 	snapshot := make([]model.Meeting, 0, len(s.meetings))
 	for _, m := range s.meetings {
 		if m != nil {
 			snapshot = append(snapshot, *m)
 		}
 	}
-	s.mu.RUnlock()
+	release()
 
 	ctx, cancel := s.mongoContext()
 	defer cancel()

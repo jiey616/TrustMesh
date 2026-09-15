@@ -15,8 +15,10 @@ import (
 // FileSize, MimeType, and Source set. ID and timestamps are generated here.
 // ParentID is supported for uploading into a user-created folder.
 func (s *Store) SaveProjectFile(sc Scope, projectID string, pf *model.ProjectFile) (*model.ProjectFile, *transport.AppError) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：写 s.projectFiles / s.projectFileIndex / s.transferFileIndex（AggProjectFile），读 s.projects
+	// （AggProject）+ projectVisible（s.mu 守护的 s.projectMembers），且 TaskID 非空时读 s.tasks（AggTask）
+	// + resolveOwnerOrgUnsafe（orgs，s.mu）→ s.mu 外层 + AggProject + AggProjectFile + AggTask 内层。
+	defer s.coarseWithAggregates(AggProject, AggProjectFile, AggTask)()
 
 	// Validate project ownership.
 	project, ok := s.projects[projectID]
@@ -74,8 +76,9 @@ func (s *Store) SaveProjectFile(sc Scope, projectID string, pf *model.ProjectFil
 // to know the owner user ID. The caller is responsible for writing the file
 // bytes to storage and then calling SetProjectFileLocalPath.
 func (s *Store) CreateMeetingMinutesFile(meetingID, fileName, content string) (*model.ProjectFile, *transport.AppError) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：写 s.projectFiles（AggProjectFile）+ 读 s.meetings（AggMeeting）/ s.projects（AggProject）
+	// + personalOrgOfUnsafe（orgs，s.mu）→ s.mu 外层 + AggProject + AggProjectFile + AggMeeting 内层。
+	defer s.coarseWithAggregates(AggProject, AggProjectFile, AggMeeting)()
 
 	m, ok := s.meetings[meetingID]
 	if !ok {
@@ -120,8 +123,9 @@ func (s *Store) CreateMeetingMinutesFile(meetingID, fileName, content string) (*
 
 // CreateFolder creates a new folder record in the project file space.
 func (s *Store) CreateFolder(sc Scope, projectID, name, parentID string) (*model.ProjectFile, *transport.AppError) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：写 s.projectFiles（AggProjectFile）+ 读 s.projects（AggProject）+ projectVisible
+	// （s.mu 守护的 s.projectMembers）+ resolveOwnerOrgUnsafe（orgs，s.mu）→ coarse。
+	defer s.coarseWithAggregates(AggProject, AggProjectFile)()
 
 	project, ok := s.projects[projectID]
 	if !ok {
@@ -228,8 +232,9 @@ func (s *Store) rollbackProjectFileAddUnsafe(pf *model.ProjectFile, prevTransfer
 
 // RenameProjectFile updates the name of a file or folder.
 func (s *Store) RenameProjectFile(sc Scope, projectID, fileID, name string) (*model.ProjectFile, *transport.AppError) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：写 s.projectFiles（AggProjectFile）+ 读 s.projects（AggProject）+ projectVisible
+	// （s.mu 守护的 s.projectMembers）+ mutateProjectFileUnsafe → coarse。
+	defer s.coarseWithAggregates(AggProject, AggProjectFile)()
 
 	pf, ok := s.projectFiles[fileID]
 	if !ok {
@@ -268,8 +273,9 @@ func (s *Store) RenameProjectFile(sc Scope, projectID, fileID, name string) (*mo
 
 // MoveProjectFile moves a file or folder to a different parent folder.
 func (s *Store) MoveProjectFile(sc Scope, projectID, fileID, targetParentID string) (*model.ProjectFile, *transport.AppError) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：写 s.projectFiles（AggProjectFile）+ 读 s.projects（AggProject）+ projectVisible
+	// （s.mu 守护的 s.projectMembers）+ mutateProjectFileUnsafe → coarse。
+	defer s.coarseWithAggregates(AggProject, AggProjectFile)()
 
 	pf, ok := s.projectFiles[fileID]
 	if !ok {
@@ -341,8 +347,9 @@ func (s *Store) isDescendantUnsafe(ancestorID, candidateID string) bool {
 // BatchDeleteProjectFiles deletes multiple files/folders and cascades to children.
 // Returns a result summarizing deleted count and any IDs that failed.
 func (s *Store) BatchDeleteProjectFiles(sc Scope, projectID string, ids []string) model.BatchDeleteResult {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：写 s.projectFiles（AggProjectFile）+ 读 s.projects（AggProject）+ projectVisible
+	// （s.mu 守护的 s.projectMembers）+ deleteProjectFileUnsafe → coarse。
+	defer s.coarseWithAggregates(AggProject, AggProjectFile)()
 
 	project, ok := s.projects[projectID]
 	if !ok || !s.projectVisible(sc, project) {
@@ -437,8 +444,10 @@ func (s *Store) collectDescendantIDsUnsafe(projectID, folderID string) []string 
 // Returns nil, nil if the task has no projectID (graceful skip).
 // Public API — acquires s.mu.Lock.
 func (s *Store) SaveProjectFileFromArtifact(artifact model.TaskArtifact) (*model.ProjectFile, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：saveProjectFileFromArtifactUnsafe 读 s.tasks（AggTask）/ s.projectFiles（AggProjectFile）/
+	// s.projectFileIndex / s.transferFileIndex（均 AggProjectFile）+ personalOrgOfUnsafe（orgs，s.mu）
+	// → s.mu 外层 + AggProjectFile + AggTask 内层。
+	defer s.coarseWithAggregates(AggProjectFile, AggTask)()
 	return s.saveProjectFileFromArtifactUnsafe(artifact)
 }
 
@@ -561,8 +570,9 @@ func (s *Store) saveProjectFileFromArtifactUnsafe(artifact model.TaskArtifact) (
 
 // ListProjectFiles returns files for a project with optional filters.
 func (s *Store) ListProjectFiles(sc Scope, projectID, source, taskID, agentID string) []model.ProjectFile {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	// T2.5：读 s.projectFiles / s.projectFileIndex（AggProjectFile）+ s.projects（AggProject）
+	// + projectVisible（s.mu 守护的 s.projectMembers）→ s.mu 外层 + AggProject + AggProjectFile 内层。
+	defer s.coarseWithAggregates(AggProject, AggProjectFile)()
 
 	// Validate ownership.
 	project, ok := s.projects[projectID]
@@ -605,8 +615,9 @@ func (s *Store) ListProjectFiles(sc Scope, projectID, source, taskID, agentID st
 
 // GetProjectFile returns a single file by ID with ownership validation.
 func (s *Store) GetProjectFile(sc Scope, fileID string) (*model.ProjectFile, *transport.AppError) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	// T2.5：读 s.projectFiles（AggProjectFile）+ s.projects（AggProject）+ projectVisible
+	// （s.mu 守护的 s.projectMembers）→ s.mu 外层 + AggProject + AggProjectFile 内层。
+	defer s.coarseWithAggregates(AggProject, AggProjectFile)()
 
 	pf, ok := s.projectFiles[fileID]
 	if !ok {
@@ -624,8 +635,9 @@ func (s *Store) GetProjectFile(sc Scope, fileID string) (*model.ProjectFile, *tr
 // GetProjectFileByID returns a file by its ID without ownership validation.
 // Used by agent file download endpoint where agents authenticate via download token.
 func (s *Store) GetProjectFileByID(fileID string) (*model.ProjectFile, *transport.AppError) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	// T2.5：纯聚合读，只触 s.projectFiles（AggProjectFile），无授权/跨聚合 → 用纯聚合锁（不取 s.mu），
+	// 演示细粒度只读并发（与 CheckTaskProjectActive / 会议纪要 ownerID 读取同属纯聚合读路径）。
+	defer s.lockProjectFile()()
 
 	pf, ok := s.projectFiles[fileID]
 	if !ok {
@@ -636,8 +648,8 @@ func (s *Store) GetProjectFileByID(fileID string) (*model.ProjectFile, *transpor
 
 // GetProjectFileByTransferID finds a file by its transfer ID.
 func (s *Store) GetProjectFileByTransferID(transferID string) (*model.ProjectFile, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	// T2.5：纯聚合读，只触 s.transferFileIndex / s.projectFiles（均 AggProjectFile），无授权 → 纯聚合锁。
+	defer s.lockProjectFile()()
 
 	fileID, ok := s.transferFileIndex[transferID]
 	if !ok {
@@ -653,8 +665,9 @@ func (s *Store) GetProjectFileByTransferID(transferID string) (*model.ProjectFil
 // DeleteProjectFile removes a file record and returns it.
 // If the entry is a folder, all child files and sub-folders are also deleted.
 func (s *Store) DeleteProjectFile(sc Scope, fileID string) (*model.ProjectFile, *transport.AppError) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：写 s.projectFiles（AggProjectFile）+ 读 s.projects（AggProject）+ projectVisible
+	// （s.mu 守护的 s.projectMembers）+ deleteProjectFileUnsafe → coarse。
+	defer s.coarseWithAggregates(AggProject, AggProjectFile)()
 
 	pf, ok := s.projectFiles[fileID]
 	if !ok {
@@ -743,8 +756,9 @@ func (s *Store) deleteFolderChildrenUnsafe(projectID, folderID string) error {
 // User uploads are organized by the ParentID folder hierarchy.
 // Agent artifacts remain grouped by task → agent.
 func (s *Store) GetProjectFileTree(sc Scope, projectID string) *model.ProjectFileTree {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	// T2.5：读 s.projectFiles / s.projectFileIndex（AggProjectFile）+ s.projects（AggProject）
+	// + projectVisible（s.mu projectMembers）；browseArtifactTasks 等辅助还读 s.tasks（AggTask）→ coarse 含三者。
+	defer s.coarseWithAggregates(AggProject, AggProjectFile, AggTask)()
 
 	project, ok := s.projects[projectID]
 	if !ok || !s.projectVisible(sc, project) {
@@ -988,8 +1002,9 @@ func buildFolderNode(folderID, folderName string, folderMap map[string]*model.Pr
 // BrowseProjectFiles returns the flat contents of a folder (folders + files) plus breadcrumbs.
 // parentID empty means the project root.
 func (s *Store) BrowseProjectFiles(sc Scope, projectID, parentID string) (*model.BrowseFilesResult, *transport.AppError) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	// T2.5：读 s.projectFiles / s.projectFileIndex（AggProjectFile）+ s.projects（AggProject）
+	// + projectVisible（s.mu projectMembers）；虚拟目录辅助读 s.tasks（AggTask）→ coarse 含三者。
+	defer s.coarseWithAggregates(AggProject, AggProjectFile, AggTask)()
 
 	project, ok := s.projects[projectID]
 	if !ok || !s.projectVisible(sc, project) {
@@ -1285,8 +1300,9 @@ func buildBreadcrumbs(projectFiles map[string]*model.ProjectFile, folderID strin
 
 // ListArtifactGroups returns agent artifacts grouped by task → agent.
 func (s *Store) ListArtifactGroups(sc Scope, projectID string) ([]model.ArtifactTaskGroup, *transport.AppError) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	// T2.5：读 s.projectFiles / s.projectFileIndex（AggProjectFile）+ s.projects（AggProject）
+	// + projectVisible（s.mu projectMembers）；分组时读 s.tasks（AggTask）→ coarse 含三者。
+	defer s.coarseWithAggregates(AggProject, AggProjectFile, AggTask)()
 
 	project, ok := s.projects[projectID]
 	if !ok || !s.projectVisible(sc, project) {
@@ -1366,8 +1382,8 @@ func (s *Store) ListArtifactGroups(sc Scope, projectID string) ([]model.Artifact
 // 调用；若失败只 warn，元数据会静默缺失 → 重启后「字节在、索引里没有本地路径」。返错让
 // 调用方重试更诚实（字节重复写入由 T2.6 幂等键收敛）。失败时零副作用回滚内存。
 func (s *Store) SetProjectFileLocalPath(fileID, localPath string) *transport.AppError {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// T2.5：只写 s.projectFiles（AggProjectFile）+ mutateProjectFileUnsafe → s.mu 外层 + AggProjectFile 内层。
+	defer s.coarseWithAggregates(AggProjectFile)()
 
 	if _, ok := s.projectFiles[fileID]; !ok {
 		return transport.NotFound("file not found")
