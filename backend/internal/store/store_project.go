@@ -113,8 +113,11 @@ func (s *Store) CreateProject(sc Scope, name, description, pmAgentID string) (*m
 		UpdatedAt:   now,
 	}
 	s.projects[project.ID] = project
-	if err := s.persistProjectUnsafe(project); err != nil {
-		return nil, mongoWriteError(err)
+	if appErr := s.persistProjectUnsafe(project); appErr != nil {
+		// 幽灵项目修复（T2.3）：Mongo 写失败必须把刚插入的内存对象移除，
+		// 否则 ListProjects/GetProject 能列出一个 Mongo 没有的项目，重启即消失。
+		delete(s.projects, project.ID)
+		return nil, appErr
 	}
 	return s.buildProjectViewUnsafe(project), nil
 }
@@ -150,103 +153,108 @@ func (s *Store) UpdateProject(sc Scope, projectID string, in UpdateProjectInput)
 	if !ok || !s.projectVisible(sc, p) {
 		return nil, transport.NotFound("project not found")
 	}
-	if in.Name != nil {
-		name := strings.TrimSpace(*in.Name)
-		if name == "" {
-			return nil, transport.Validation("invalid name", map[string]any{"name": "cannot be empty"})
+	// T2.3：把校验 + 变更整体放进 mutateProjectUnsafe —— 任一步返回错误都会用快照还原，
+	// 持久化失败同样回滚，保证「内存零副作用」。注意 fn 内必须直接改入参 p（快照回滚依赖）。
+	appErr := s.mutateProjectUnsafe(projectID, func(p *model.Project) *transport.AppError {
+		if in.Name != nil {
+			name := strings.TrimSpace(*in.Name)
+			if name == "" {
+				return transport.Validation("invalid name", map[string]any{"name": "cannot be empty"})
+			}
+			p.Name = name
 		}
-		p.Name = name
-	}
-	if in.Description != nil {
-		desc := strings.TrimSpace(*in.Description)
-		if desc == "" {
-			return nil, transport.Validation("invalid description", map[string]any{"description": "cannot be empty"})
+		if in.Description != nil {
+			desc := strings.TrimSpace(*in.Description)
+			if desc == "" {
+				return transport.Validation("invalid description", map[string]any{"description": "cannot be empty"})
+			}
+			p.Description = desc
 		}
-		p.Description = desc
-	}
-	if in.Workflows != nil {
-		cloned := make([]model.Workflow, 0, len(in.Workflows))
-		for _, wf := range in.Workflows {
-			if c := wf.Clone(); c != nil {
-				// 输入引用校验：拦截悬空的 source.step（指向不存在的步骤），
-				// 避免派发时上游交付物解析失败（2026-09-07 资产制作事故）。
-				if err := workflowStepsInputErr(c.Name, c.Steps); err != nil {
-					return nil, err
-				}
-				if c.ID == "" {
-					c.ID = "wf_" + newID() // 存量迁移：老工作流没有 ID，保存时补上
-				}
-				// 保护继承快照：前端保存时通常不带 template_snapshot/template_version，
-				// 若这是已存在的继承工作流，保留原有的快照与版本，避免三路合并 base 丢失。
-				if old := findWorkflowByID(p.Workflows, c.ID); old != nil &&
-					old.ParentTemplateID != "" && c.ParentTemplateID == old.ParentTemplateID {
-					if len(c.TemplateSnapshot) == 0 {
-						c.TemplateSnapshot = cloneSteps(old.TemplateSnapshot)
+		if in.Workflows != nil {
+			cloned := make([]model.Workflow, 0, len(in.Workflows))
+			for _, wf := range in.Workflows {
+				if c := wf.Clone(); c != nil {
+					// 输入引用校验：拦截悬空的 source.step（指向不存在的步骤），
+					// 避免派发时上游交付物解析失败（2026-09-07 资产制作事故）。
+					if err := workflowStepsInputErr(c.Name, c.Steps); err != nil {
+						return err
 					}
-					if c.TemplateVersion == 0 {
-						c.TemplateVersion = old.TemplateVersion
+					if c.ID == "" {
+						c.ID = "wf_" + newID() // 存量迁移：老工作流没有 ID，保存时补上
 					}
+					// 保护继承快照：前端保存时通常不带 template_snapshot/template_version，
+					// 若这是已存在的继承工作流，保留原有的快照与版本，避免三路合并 base 丢失。
+					if old := findWorkflowByID(p.Workflows, c.ID); old != nil &&
+						old.ParentTemplateID != "" && c.ParentTemplateID == old.ParentTemplateID {
+						if len(c.TemplateSnapshot) == 0 {
+							c.TemplateSnapshot = cloneSteps(old.TemplateSnapshot)
+						}
+						if c.TemplateVersion == 0 {
+							c.TemplateVersion = old.TemplateVersion
+						}
+					}
+					cloned = append(cloned, *c)
 				}
-				cloned = append(cloned, *c)
+			}
+			p.Workflows = cloned
+		}
+		if in.PrimaryWorkflowIndex != nil {
+			idx := *in.PrimaryWorkflowIndex
+			if idx < -1 || idx >= len(p.Workflows) {
+				return transport.Validation("invalid primary_workflow_index", map[string]any{
+					"primary_workflow_index": idx,
+					"max":                    len(p.Workflows) - 1,
+				})
+			}
+			p.PrimaryWorkflowIndex = idx
+			if idx >= 0 && p.Workflows[idx].ID != "" {
+				p.PrimaryWorkflowID = p.Workflows[idx].ID
+			} else if idx < 0 {
+				p.PrimaryWorkflowID = ""
 			}
 		}
-		p.Workflows = cloned
-	}
-	if in.PrimaryWorkflowIndex != nil {
-		idx := *in.PrimaryWorkflowIndex
-		if idx < -1 || idx >= len(p.Workflows) {
-			return nil, transport.Validation("invalid primary_workflow_index", map[string]any{
-				"primary_workflow_index": idx,
-				"max":                    len(p.Workflows) - 1,
-			})
+		if in.PrimaryWorkflowID != nil {
+			id := strings.TrimSpace(*in.PrimaryWorkflowID)
+			if id == "" {
+				p.PrimaryWorkflowID = ""
+				p.PrimaryWorkflowIndex = -1
+			} else {
+				idx := findWorkflowIndexByID(p.Workflows, id)
+				if idx < 0 {
+					return transport.Validation("invalid primary_workflow_id", map[string]any{"primary_workflow_id": id})
+				}
+				p.PrimaryWorkflowID = id
+				p.PrimaryWorkflowIndex = idx
+			}
 		}
-		p.PrimaryWorkflowIndex = idx
-		if idx >= 0 && p.Workflows[idx].ID != "" {
-			p.PrimaryWorkflowID = p.Workflows[idx].ID
-		} else if idx < 0 {
-			p.PrimaryWorkflowID = ""
+		if in.PMAgentID != nil {
+			agentID := strings.TrimSpace(*in.PMAgentID)
+			if agentID == "" {
+				return transport.Validation("invalid pm_agent_id", map[string]any{"pm_agent_id": "cannot be empty"})
+			}
+			pm, err := s.pmAgentForScopeUnsafe(sc, agentID)
+			if err != nil {
+				return err
+			}
+			p.PMAgentID = agentID
+			p.PMAgent = toPMSummary(pm)
 		}
-	}
-	if in.PrimaryWorkflowID != nil {
-		id := strings.TrimSpace(*in.PrimaryWorkflowID)
-		if id == "" {
+
+		// 若主流程引用的工作流已被删除（或越界），自动清空 primary 标记，避免脏数据。
+		if p.PrimaryWorkflowID != "" && findWorkflowByID(p.Workflows, p.PrimaryWorkflowID) == nil {
 			p.PrimaryWorkflowID = ""
 			p.PrimaryWorkflowIndex = -1
-		} else {
-			idx := findWorkflowIndexByID(p.Workflows, id)
-			if idx < 0 {
-				return nil, transport.Validation("invalid primary_workflow_id", map[string]any{"primary_workflow_id": id})
-			}
-			p.PrimaryWorkflowID = id
-			p.PrimaryWorkflowIndex = idx
+		} else if p.PrimaryWorkflowIndex < -1 || p.PrimaryWorkflowIndex >= len(p.Workflows) {
+			p.PrimaryWorkflowID = ""
+			p.PrimaryWorkflowIndex = -1
 		}
+		p.UpdatedAt = time.Now().UTC()
+		return nil
+	})
+	if appErr != nil {
+		return nil, appErr
 	}
-	if in.PMAgentID != nil {
-		agentID := strings.TrimSpace(*in.PMAgentID)
-		if agentID == "" {
-			return nil, transport.Validation("invalid pm_agent_id", map[string]any{"pm_agent_id": "cannot be empty"})
-		}
-		pm, err := s.pmAgentForScopeUnsafe(sc, agentID)
-		if err != nil {
-			return nil, err
-		}
-		p.PMAgentID = agentID
-		p.PMAgent = toPMSummary(pm)
-	}
-
-	// 若主流程引用的工作流已被删除（或越界），自动清空 primary 标记，避免脏数据。
-	if p.PrimaryWorkflowID != "" && findWorkflowByID(p.Workflows, p.PrimaryWorkflowID) == nil {
-		p.PrimaryWorkflowID = ""
-		p.PrimaryWorkflowIndex = -1
-	} else if p.PrimaryWorkflowIndex < -1 || p.PrimaryWorkflowIndex >= len(p.Workflows) {
-		p.PrimaryWorkflowID = ""
-		p.PrimaryWorkflowIndex = -1
-	}
-	p.UpdatedAt = time.Now().UTC()
-	if err := s.persistProjectUnsafe(p); err != nil {
-		return nil, mongoWriteError(err)
-	}
-	return s.buildProjectViewUnsafe(p), nil
+	return s.buildProjectViewUnsafe(s.projects[projectID]), nil
 }
 
 func (s *Store) ArchiveProject(sc Scope, projectID string) (*model.Project, *transport.AppError) {
@@ -263,10 +271,14 @@ func (s *Store) ArchiveProject(sc Scope, projectID string) (*model.Project, *tra
 		return nil, mongoWriteError(err)
 	}
 
-	p.Status = "archived"
-	p.UpdatedAt = now
-	if err := s.persistProjectUnsafe(p); err != nil {
-		return nil, mongoWriteError(err)
+	// T2.3：只为「项目自身」这一步加版本化 + 失败回滚；上一步的任务重置保持既有语义，
+	// 不引入跨聚合事务（项目步骤失败不影响已落库的任务重置）。
+	if appErr := s.mutateProjectUnsafe(projectID, func(p *model.Project) *transport.AppError {
+		p.Status = "archived"
+		p.UpdatedAt = now
+		return nil
+	}); appErr != nil {
+		return nil, appErr
 	}
 
 	for agentID := range affectedAgents {

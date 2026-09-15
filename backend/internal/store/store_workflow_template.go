@@ -324,12 +324,14 @@ func (s *Store) InheritWorkflowTemplate(sc Scope, projectID, templateID string) 
 		Name:             t.Name,
 		Steps:            steps,
 	}
-	p.Workflows = append(p.Workflows, wf)
-	p.UpdatedAt = time.Now().UTC()
-	if err := s.persistProjectUnsafe(p); err != nil {
-		return nil, mongoWriteError(err)
+	if appErr := s.mutateProjectUnsafe(projectID, func(p *model.Project) *transport.AppError {
+		p.Workflows = append(p.Workflows, wf)
+		p.UpdatedAt = time.Now().UTC()
+		return nil
+	}); appErr != nil {
+		return nil, appErr
 	}
-	return s.buildProjectViewUnsafe(p), nil
+	return s.buildProjectViewUnsafe(s.projects[projectID]), nil
 }
 
 // ComputeWorkflowSyncDiff produces a three-way merge preview of a global
@@ -455,14 +457,17 @@ func (s *Store) ApplyWorkflowSync(sc Scope, projectID, workflowID string, remove
 	if err := workflowStepsInputErr(wf.Name, result); err != nil {
 		return nil, err
 	}
-	wf.Steps = result
-	wf.TemplateSnapshot = cloneSteps(t.Steps)
-	wf.TemplateVersion = t.Version
-	p.UpdatedAt = time.Now().UTC()
-	if err := s.persistProjectUnsafe(p); err != nil {
-		return nil, mongoWriteError(err)
+	if appErr := s.mutateProjectUnsafe(projectID, func(p *model.Project) *transport.AppError {
+		wf := &p.Workflows[idx]
+		wf.Steps = result
+		wf.TemplateSnapshot = cloneSteps(t.Steps)
+		wf.TemplateVersion = t.Version
+		p.UpdatedAt = time.Now().UTC()
+		return nil
+	}); appErr != nil {
+		return nil, appErr
 	}
-	return s.buildProjectViewUnsafe(p), nil
+	return s.buildProjectViewUnsafe(s.projects[projectID]), nil
 }
 
 // DetachWorkflowFromTemplate breaks the inheritance link, turning the workflow
@@ -482,14 +487,17 @@ func (s *Store) DetachWorkflowFromTemplate(sc Scope, projectID, workflowID strin
 	if wf.ParentTemplateID == "" {
 		return nil, transport.BadRequest("BAD_REQUEST", "workflow is not inherited from a global template")
 	}
-	wf.ParentTemplateID = ""
-	wf.TemplateVersion = 0
-	wf.TemplateSnapshot = nil
-	p.UpdatedAt = time.Now().UTC()
-	if err := s.persistProjectUnsafe(p); err != nil {
-		return nil, mongoWriteError(err)
+	if appErr := s.mutateProjectUnsafe(projectID, func(p *model.Project) *transport.AppError {
+		wf := &p.Workflows[idx]
+		wf.ParentTemplateID = ""
+		wf.TemplateVersion = 0
+		wf.TemplateSnapshot = nil
+		p.UpdatedAt = time.Now().UTC()
+		return nil
+	}); appErr != nil {
+		return nil, appErr
 	}
-	return s.buildProjectViewUnsafe(p), nil
+	return s.buildProjectViewUnsafe(s.projects[projectID]), nil
 }
 
 // ---------- 三路合并 ----------
