@@ -326,6 +326,19 @@ func copyProject(p *model.Project) *model.Project {
 	return &clone
 }
 
+// copyProjectFile 返回 ProjectFile 的值拷贝（用于快照回滚）。
+//
+// ProjectFile 是**扁平结构**：全部字段均为值类型（string / int64 / bool / time.Time），
+// 没有任何切片 / map / 指针字段，因此 `clone := *pf` 就是完整的深拷贝 —— 与 copyProject /
+// copyTask 不同，无需逐字段展开。若将来给 ProjectFile 增加引用类型字段，必须同步加深拷贝。
+func copyProjectFile(pf *model.ProjectFile) *model.ProjectFile {
+	if pf == nil {
+		return nil
+	}
+	clone := *pf
+	return &clone
+}
+
 func copyTask(t *model.TaskDetail) *model.TaskDetail {
 	clone := *t
 	clone.Messages = copyTaskMessages(t.Messages)
@@ -535,6 +548,38 @@ func (s *Store) mutateProjectUnsafe(projectID string, fn func(*model.Project) *t
 	}
 	if appErr := s.persistProjectUnsafe(p); appErr != nil {
 		s.projects[projectID] = snapshot
+		return appErr
+	}
+	return nil
+}
+
+// mutateProjectFileUnsafe 是项目文件域就地更新写路径的**零副作用提交包装器**（T2.3b，
+// 对齐 mutateProjectUnsafe / mutateTaskUnsafe）：
+//
+//  1. 先按 fileID 取内存对象并深拷贝一份快照；
+//  2. 在持锁内执行 fn(pf) 就地改写内存（fn 必须直接改入参 pf，不要重新从 s.projectFiles
+//     取值，否则快照回滚会失效）；
+//  3. 若 fn 返回错误 → 用快照还原 s.projectFiles[fileID]，立即返回（fn 内的任何改动作废）；
+//  4. 若 fn 成功 → 调用权威提交原语 persistProjectFileUnsafe（带乐观锁的版本化 Mongo 写）；
+//  5. 若 persist 失败 → 用快照还原 s.projectFiles[fileID]，返回错误（内存零副作用）。
+//
+// 关键不变量：调用方在锁内、且本函数返回前要么内存与 Mongo 都已推进，要么二者都回滚到
+// 进入前的快照。任何「先改内存、后 persist」的就地更新调用点都可安全替换为对本包装器的调用。
+//
+// 注意：fn 内若还改动了 pf 之外的集合（如 s.transferFileIndex），那些集合的回滚不在本包装器
+// 职责内；就地更新路径（rename / move / SetProjectFileLocalPath）都不改动索引，故安全。
+func (s *Store) mutateProjectFileUnsafe(fileID string, fn func(*model.ProjectFile) *transport.AppError) *transport.AppError {
+	pf, ok := s.projectFiles[fileID]
+	if !ok {
+		return transport.NotFound("file not found")
+	}
+	snapshot := copyProjectFile(pf)
+	if appErr := fn(pf); appErr != nil {
+		s.projectFiles[fileID] = snapshot
+		return appErr
+	}
+	if appErr := s.persistProjectFileUnsafe(pf); appErr != nil {
+		s.projectFiles[fileID] = snapshot
 		return appErr
 	}
 	return nil

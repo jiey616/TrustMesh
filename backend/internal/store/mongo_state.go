@@ -1016,6 +1016,266 @@ func (s *Store) backfillProjectVersions() {
 	}
 }
 
+// ─── T2.3b：项目文件域「Mongo 权威」写序与乐观锁 ───
+//
+// 项目文件域自 T2.3b 起与 Project 聚合（T2.3）逐行同构：persistProjectFileUnsafe 升级为
+// **权威提交原语** —— 先做带版本化乐观锁的 Mongo 写并确认，失败则**不产生内存副作用**。
+// 与会议域 T2.1 / 任务域 T2.2 / 项目域 T2.3 同构：Mongo 写失败或版本冲突时直接返错、
+// 内存零副作用（由调用方回滚）。
+//
+// 为什么本批必须**全量**（含删除路径），而不是只改原语：
+//  1. 只要存在任一不走版本化原语的写方，它就会绕过 filter 冲突检测 —— 乐观锁在多实例 /
+//     滚动发布窗口下防的正是「另一个进程已推进 version」，半量实现会让这个防护静默失效；
+//  2. 真正在丢数据的是「吞错」：rename/move/delete 失败即静默丢弃 → 重启丢失，delete 失败
+//     则文件「复活」。要修这个必须致命化 + 零副作用回滚，而致命化与版本化必须是同一批。
+
+// projectFileVersionFloor 项目文件版本号起始值：新建记录从 1 开始；
+// 「存量 version <= 0」的文档在载入 / 回填时统一归一化为 1，
+// 保证乐观锁 filter（{_id, version}）永远有确定的基准值。
+const projectFileVersionFloor = 1
+
+// projectFileVersionConflictCode / projectFileVersionConflictMessage 是版本冲突出口共用的
+// 业务码（HTTP 409）与文案；调用方按 code 判定「要不要重试」，文案不参与判定。
+const (
+	projectFileVersionConflictCode    = "PROJECT_FILE_VERSION_CONFLICT"
+	projectFileVersionConflictMessage = "project file was modified concurrently, please retry"
+)
+
+// projectFileConflict 构造统一形态的版本冲突错误。
+func projectFileConflict() *transport.AppError {
+	return transport.Conflict(projectFileVersionConflictCode, projectFileVersionConflictMessage)
+}
+
+// isProjectFileVersionConflict 判定一个错误是否为版本冲突（调用方据此决定要不要重试）。
+func isProjectFileVersionConflict(appErr *transport.AppError) bool {
+	return appErr != nil && appErr.Code == projectFileVersionConflictCode
+}
+
+// normalizeProjectFileVersion 把缺失 / 非法的 version 归一化为 projectFileVersionFloor。
+//
+// 存量项目文件文档（T2.3b 之前写入）没有 version 字段，解码后为 0；若不归一化，
+// 后续带 {_id, version} filter 的更新永远匹配不上 —— 该记录会被永久锁死。
+// 归一化只在内存解码 / 载入路径上做，库内真值由 backfillProjectFileVersions 补齐。
+func normalizeProjectFileVersion(pf *model.ProjectFile) {
+	if pf == nil {
+		return
+	}
+	if pf.Version < 1 {
+		pf.Version = projectFileVersionFloor
+	}
+}
+
+// applyProjectFileVersionedReplaceLocked 在持锁内对项目文件执行一次带乐观锁的 Mongo 全量替换。
+//
+// 契约（调用方必须遵守）：
+//   - filter = {_id: pf.ID, version: cur}，全量 ReplaceOne 且 Upsert(true)；
+//   - Mongo 报错         → mongoWriteError(500)，调用方须立即返回，**不得改任何内存字段**；
+//   - 未命中（ModifiedCount==0 且 UpsertedCount==0）→ 见 healZeroVersionProjectFileLocked：
+//     先排除「存量 version<=0 文档」这种可自愈形态，仍然不行才 409 PROJECT_FILE_VERSION_CONFLICT；
+//   - 成功               → 内存对象的 Version 推进到 cur+1，调用方再写其余内存字段。
+//
+// 为什么不写「非锁路径会把 version 改小」这种论断（对初稿论证的更正）：本原语写入的
+// doc.Version 恒为 cur+1（从内存取当前值推导），且只在成功时才把内存 version 推进 ——
+// 内存 version 因此单调不减，不存在「拿陈旧副本覆盖」的写方。所以非锁路径至多写出
+// 「与 Mongo 相同或更大」的 version，真正的问题是「吞错」造成的短期分叉 / 删除复活，
+// 以及半量实现会让乐观锁 filter 静默失效（见本节顶部注释）。
+func (s *Store) applyProjectFileVersionedReplaceLocked(pf *model.ProjectFile) *transport.AppError {
+	normalizeProjectFileVersion(pf)
+	cur := pf.Version
+	next := cur + 1
+
+	// 纯内存模式（Mongo 未启用）：没有权威库可比，仍然推进版本以保持内存自洽。
+	if !s.mongoEnabled || s.mongoProjectFiles == nil {
+		pf.Version = next
+		return nil
+	}
+
+	doc := copyProjectFile(pf)
+	doc.Version = next
+
+	// Mongo 写在持锁内，会拉长临界区 —— 本批接受（同 T2.1/T2.2/T2.3），T2.5 再拆细粒度锁。
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+	res, err := s.mongoProjectFiles.ReplaceOne(ctx, bson.M{"_id": pf.ID, "version": cur}, doc, options.Replace().SetUpsert(true))
+	// Upsert 的 filter 含 _id：当文档已存在但 version 与 cur 不匹配时（真实并发落后，
+	// 或滚动发布期间由旧镜像（无 Version 字段）写出的存量 version<=0 文档），服务端
+	// **不会**返回 ModifiedCount==0，而是尝试插入一个同 _id 的新文档 → E11000 duplicate
+	// key。必须把这种错误并入「未命中」分支（heal / 409 conflict），否则版本冲突会被
+	// 误报成 500，且 heal 分支永远不可达。
+	if err != nil && !mongo.IsDuplicateKeyError(err) {
+		return mongoWriteError(err)
+	}
+	if err == nil && res != nil && (res.ModifiedCount > 0 || res.UpsertedCount > 0) {
+		pf.Version = next
+		return nil
+	}
+
+	// 未命中除了「真实并发落后」，还有一种**一旦发生就永久锁死**的存量形态
+	// （库内 version<=0 而内存已被归一化成 1），必须自愈 —— 见 healZeroVersionProjectFileLocked。
+	if appErr := s.healZeroVersionProjectFileLocked(pf, cur); appErr != nil {
+		return appErr
+	}
+	pf.Version = next
+	return nil
+}
+
+// healZeroVersionProjectFileLocked 处理 filter 未命中的**存量兼容**分支（对齐 T2.2/T2.3）。
+//
+// 未命中（ModifiedCount == 0）有两种成因，必须区分：
+//  1. 真实并发落后：库内 version 是合法的（> 0）但已被别的写方推进 → 维持 409，
+//     不允许掩盖，否则就退化成「后写静默覆盖先写」，正是乐观锁要消灭的问题；
+//  2. 存量非法文档：version 缺失 / 显式 0 / null / 负数。这类文档一旦被命中，
+//     **每次**更新都会 409，而且**重启也救不回来** —— 启动时的一次性回填覆盖不到
+//     滚动发布期间由旧镜像（无 Version 字段）新建出来的文档，等于该记录永久锁死。
+//
+// 对 ② 做一次性自愈：先把库内 version 修成内存认定的 cur（此刻库内的值本来就是非法的，
+// 因此这次修不用带 version filter），再重试一次正常的版本化替换。
+//
+// 这是纯存量兼容修复，**不改变并发语义**：唯一被放宽的是「version <= 0」这种明确
+// 非法的历史取值，正常写路径永远不会在库里留下 <= 0 的版本。
+func (s *Store) healZeroVersionProjectFileLocked(pf *model.ProjectFile, cur int) *transport.AppError {
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+
+	var doc struct {
+		Version int `bson:"version"`
+	}
+	if err := s.mongoProjectFiles.FindOne(ctx, bson.M{"_id": pf.ID}).Decode(&doc); err != nil {
+		// 文档不存在（或读取失败）→ 不是版本问题，维持冲突语义。
+		return projectFileConflict()
+	}
+	if doc.Version > 0 {
+		// 合法但已落后 → 真实并发冲突，如实上报。
+		return projectFileConflict()
+	}
+
+	// 存量非法值：先修成 cur，再按正常路径重试一次。
+	if _, err := s.mongoProjectFiles.UpdateOne(ctx, bson.M{"_id": pf.ID}, bson.M{"$set": bson.M{"version": cur}}); err != nil {
+		return mongoWriteError(err)
+	}
+	retryDoc := copyProjectFile(pf)
+	retryDoc.Version = cur + 1
+	retry, err := s.mongoProjectFiles.ReplaceOne(ctx, bson.M{"_id": pf.ID, "version": cur}, retryDoc, options.Replace().SetUpsert(true))
+	if err != nil {
+		return mongoWriteError(err)
+	}
+	if retry == nil || (retry.ModifiedCount == 0 && retry.UpsertedCount == 0) {
+		return projectFileConflict()
+	}
+	return nil
+}
+
+// backfillProjectFileVersions 为「存量无合法 version」的项目文件文档补 version=1（T2.3b）。
+//
+// 为什么要补：T2.3b 起所有项目文件更新都带 {_id, version} 乐观锁 filter；存量文档解码后
+// version 为 0（库里根本没这个字段），filter 永远匹配不上 → 该记录任何更新都判冲突，
+// 等于生产全量写失败。
+//
+// filter 用 {"version": {"$not": {"$gt": 0}}} 而非 {"version": {"$exists": false}}：
+// 后者漏掉了「显式 0 / null / 负数」以及**滚动发布期间由旧镜像（无 Version 字段）新建、
+// 但本实例回填启动时点已过**的文档 —— 这类文档对当前进程同样永久不可写。一次性把
+// 缺失 / null / 0 / 负数全部归一，避免永久锁死。
+//
+// 幂等：重复执行无副作用。失败只告警不阻断启动 —— 载入路径上的 normalizeProjectFileVersion
+// 会把内存侧归一化，最坏退化成「更新报冲突」，而 applyProjectFileVersionedReplaceLocked 的
+// healZeroVersionProjectFileLocked 还能在写入时再自愈一次，不会静默丢数据。
+func (s *Store) backfillProjectFileVersions() {
+	if !s.mongoEnabled || s.mongoProjectFiles == nil {
+		return
+	}
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+	res, err := s.mongoProjectFiles.UpdateMany(ctx,
+		bson.M{"version": bson.M{"$not": bson.M{"$gt": 0}}},
+		bson.M{"$set": bson.M{"version": projectFileVersionFloor}},
+	)
+	if err != nil {
+		if s.log != nil {
+			s.log.Warn("failed to backfill project file version field", zap.Error(err))
+		}
+		return
+	}
+	if s.log != nil && res != nil && res.ModifiedCount > 0 {
+		s.log.Info("backfilled project file version field", zap.Int64("project_files", res.ModifiedCount))
+	}
+}
+
+// VerifyProjectFileConsistency 校验内存项目文件缓存与 Mongo 文档是否一致（T2.3b 双写过渡期）。
+//
+// 返回 (检查条数, 不一致条数, 错误)。生产可调用、**无副作用**：只在 RLock 下取一份内存
+// 快照，然后逐条 FindOne 比对，不写任何集合。过渡期应当恒为 mismatched == 0。
+// Mongo 未启用时返回 (0, 0, nil) —— 没有第二份数据可比。
+//
+// len(children) 的比对放在本函数（而非 projectFileSnapshotMatches）：子节点不存在于单条
+// ProjectFile 结构内，只能靠集合内 parent_id 计数，故对每个文件夹记录额外比对两侧子节点数。
+func (s *Store) VerifyProjectFileConsistency() (int, int, error) {
+	if !s.mongoEnabled || s.mongoProjectFiles == nil {
+		return 0, 0, nil
+	}
+
+	s.mu.RLock()
+	snapshot := make([]model.ProjectFile, 0, len(s.projectFiles))
+	memoryChildCount := make(map[string]int)
+	for _, pf := range s.projectFiles {
+		if pf == nil {
+			continue
+		}
+		snapshot = append(snapshot, *pf)
+		if pf.ParentID != "" {
+			memoryChildCount[pf.ParentID]++
+		}
+	}
+	s.mu.RUnlock()
+
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+
+	mismatched := 0
+	for i := range snapshot {
+		want := snapshot[i]
+		var got model.ProjectFile
+		err := s.mongoProjectFiles.FindOne(ctx, bson.M{"_id": want.ID}).Decode(&got)
+		if err != nil {
+			if errors.Is(err, mongo.ErrNoDocuments) {
+				// 内存有、库里没有 —— 正是改造前「重启即丢」的分叉形态。
+				mismatched++
+				continue
+			}
+			return len(snapshot), mismatched, err
+		}
+		if !projectFileSnapshotMatches(want, got) {
+			mismatched++
+			continue
+		}
+		// 文件夹额外比对子节点数（仅在两侧都存在该文件夹文档时，避免与「文档缺失」重复计数）。
+		if want.IsFolder {
+			mongoChildren, err := s.mongoProjectFiles.CountDocuments(ctx, bson.M{"parent_id": want.ID})
+			if err != nil {
+				return len(snapshot), mismatched, err
+			}
+			if int(mongoChildren) != memoryChildCount[want.ID] {
+				mismatched++
+			}
+		}
+	}
+	return len(snapshot), mismatched, nil
+}
+
+// projectFileSnapshotMatches 判定一份内存快照与 Mongo 文档的关键字段是否一致。
+//
+// 只比写路径会改动的**稳定**字段。刻意**不比 LocalPath**：它在字节写盘之后由
+// SetProjectFileLocalPath 单独一步设置，落库与内存之间可能短暂不同步 → 比了会制造假 mismatch。
+// 刻意**不比 CreatedAt**：BSON Date 只有毫秒精度，而内存 time.Now() 带纳秒，序列化落库
+// 再读回必然截断到毫秒 → `Equal` 恒判不等（T2.1/T2.2/T2.3 同款结论）。
+// len(children) 不是单条结构内可得的字段，改由 VerifyProjectFileConsistency 依 parent_id 计数比对。
+func projectFileSnapshotMatches(want, got model.ProjectFile) bool {
+	return want.ProjectID == got.ProjectID &&
+		want.ParentID == got.ParentID &&
+		want.FileName == got.FileName &&
+		want.Version == got.Version &&
+		want.IsFolder == got.IsFolder
+}
+
 // ─── 双写校验（T2.3 过渡期） ───
 
 // VerifyProjectConsistency 校验内存项目缓存与 Mongo 文档是否一致（T2.3 双写过渡期）。
@@ -1780,14 +2040,25 @@ func (s *Store) loadProjectFiles() (map[string]*model.ProjectFile, map[string][]
 	return files, index, transferIndex, nil
 }
 
-func (s *Store) persistProjectFileUnsafe(pf *model.ProjectFile) error {
+// persistProjectFileUnsafe 是项目文件域的**权威提交原语**（T2.3b）：
+//
+//	① 先对记录做带乐观锁的版本化 Mongo 全量替换并确认（applyProjectFileVersionedReplaceLocked）；
+//	② 成功后才由调用方（mutateProjectFileUnsafe / 各写路径）落实内存；失败则**不产生内存副作用**。
+//
+// 🔴 签名是 *transport.AppError（而非 error）：调用方必须以 `if appErr := ...; appErr != nil`
+// 显式判空。若把「nil *transport.AppError」直接装进 error 接口会得到**非 nil**（Go typed-nil
+// 陷阱，T2.2 曾因此让 CreateTaskByPMNode 返回 (nil, nil) 并 panic 3 个测试）。
+//
+// 注：persistFailForTest 注入检查放在 Mongo 启用判定**之前**，这样纯内存用例
+// （New() + persistFailForTest=true）也能触发失败，用于验证「失败零副作用」。
+func (s *Store) persistProjectFileUnsafe(pf *model.ProjectFile) *transport.AppError {
+	if s.persistFailForTest {
+		return mongoWriteError(fmt.Errorf("injected project file persist failure"))
+	}
 	if !s.mongoEnabled || s.mongoProjectFiles == nil || pf == nil {
 		return nil
 	}
-	ctx, cancel := s.mongoContext()
-	defer cancel()
-	_, err := s.mongoProjectFiles.ReplaceOne(ctx, bson.M{"_id": pf.ID}, pf, options.Replace().SetUpsert(true))
-	return err
+	return s.applyProjectFileVersionedReplaceLocked(pf)
 }
 
 func (s *Store) deleteProjectFileUnsafe(fileID string) error {
@@ -1903,7 +2174,12 @@ func (s *Store) FlushPersistAll(ctx context.Context) error {
 		},
 		func() { // projectFiles
 			for _, pf := range s.projectFiles {
-				collect(s.persistProjectFileUnsafe(pf))
+				// 显式判空是硬性要求：persistProjectFileUnsafe 返回 *transport.AppError，
+				// 若裸传给 collect(error) 会把「成功的 nil 指针」当成非 nil 错误记一笔，
+				// 从而给每一次成功写入都记一个假错误（typed-nil 陷阱）。
+				if appErr := s.persistProjectFileUnsafe(pf); appErr != nil {
+					collect(appErr)
+				}
 			}
 		},
 		func() { // knowledgeDocs

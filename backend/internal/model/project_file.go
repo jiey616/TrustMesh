@@ -28,6 +28,10 @@ type ProjectFile struct {
 	OutputName string    `json:"output_name,omitempty" bson:"output_name,omitempty"`
 	UploadedBy string    `json:"uploaded_by" bson:"uploaded_by"`
 	CreatedAt  time.Time `json:"created_at" bson:"created_at"`
+	// Version is the optimistic-lock version for Mongo-authoritative writes (T2.3b).
+	// No omitempty: it must always persist, so the {_id, version} filter has a
+	// deterministic baseline (see projectFileVersionFloor).
+	Version int `json:"version" bson:"version"`
 }
 
 // ProjectFileTreeNode represents a node in the project file tree.
