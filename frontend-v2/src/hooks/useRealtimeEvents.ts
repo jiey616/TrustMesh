@@ -92,11 +92,17 @@ export function useRealtimeEvents() {
         }
         return
       }
-      // task.event.created 按具体事件类型过滤高频噪声
+      // task.event.created 按具体事件类型过滤高频噪声。
+      // 后端 payload 结构：{ payload: { task_id, project_id, event: { event_type, ... } } }，
+      // event_type 在 payload.payload.event 内层 —— 此前少套了一层，eventType 恒为
+      // undefined，该分支永远提前 return，任务事件从不失效 query（任务详情页有轮询
+      // 兜底看不出来；办公室页无兜底，表现为状态冻结到刷新页面）。
       if (type === 'task.event.created') {
-        const event = (payload.event ?? payload.payload) as { event_type?: string; task_id?: string } | undefined
-        const eventType = event?.event_type
-        const taskId = event?.task_id
+        const envelope = payload.payload as
+          | { task_id?: string; event?: { event_type?: string; task_id?: string } }
+          | undefined
+        const eventType = envelope?.event?.event_type
+        const taskId = envelope?.task_id ?? envelope?.event?.task_id
         if (!eventType || !taskId) return
         // todo_progress 是执行过程 feed 的主要内容，但高频：仅精准失效该任务的事件流查询，
         // 避免任务详情（含对话 messages）被高频拉取风暴波及，同时让「执行过程」近实时更新。
@@ -113,10 +119,20 @@ export function useRealtimeEvents() {
     }
 
     const connect = async () => {
+      // 每次重连都从 store 现取 token，不能用闭包捕获的 accessToken：
+      // token TTL(15m) < 服务端 SSE 最长连接(30m)，30min 强制断开后的重连若用旧
+      // token 必 401，且 catch 分支会拿同一个过期 token 每 5s 死循环重试 ——
+      // 标签页失焦时轮询暂停（refetchIntervalInBackground 默认 false）、无 API 调用
+      // 触发刷新，SSE 便永久死亡，办公室等纯 SSE 页面冻结到刷新页面。
+      const token = useAuthStore.getState().accessToken
+      if (!token) {
+        scheduleReconnect()
+        return
+      }
       controller = new AbortController()
       try {
         const res = await fetch(SSE_URL, {
-          headers: { Authorization: `Bearer ${accessToken}`, Accept: 'text/event-stream' },
+          headers: { Authorization: `Bearer ${token}`, Accept: 'text/event-stream' },
           signal: controller.signal,
         })
         if (!res.ok || !res.body) throw new Error(`SSE status ${res.status}`)

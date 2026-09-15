@@ -48,6 +48,9 @@ export function useActiveOfficeTasks(): OfficeTaskRow[] {
       queryKey: ['tasks', projectId, undefined],
       queryFn: async () => (await tasksApi.listProjectTasks(projectId)).data.items,
       staleTime: 30_000,
+      // SSE 实时为主，低频轮询兜底：办公室是全站唯一没有其他轮询来源的实时页面，
+      // SSE 断链期间（重连窗/token 过期）没有兜底就会冻结到刷新页面。
+      refetchInterval: 30_000,
     })),
   })
 
@@ -91,6 +94,8 @@ export function useOfficeData() {
       queryKey: ['tasks', projectId, undefined],
       queryFn: async () => (await tasksApi.listProjectTasks(projectId)).data.items,
       staleTime: 30_000,
+      // 同上：办公室无其他轮询来源，SSE 断链期间靠它兜底
+      refetchInterval: 30_000,
     })),
   })
 
@@ -116,6 +121,9 @@ export function useOfficeData() {
       queryKey: ['tasks', 'detail', taskId],
       queryFn: async () => (await tasksApi.getTask(taskId)).data,
       staleTime: 5_000,
+      // 权威快照兜底轮询：SSE 断链时 applyTaskDetail 靠它修复事件推导出的状态
+      // （对齐任务详情页 useTask 的活跃任务轮询策略；SSE 健康时它只是低频校准）
+      refetchInterval: 10_000,
     })),
   })
 
