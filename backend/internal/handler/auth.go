@@ -88,7 +88,10 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		transport.WriteError(c, transport.BadRequest("BAD_REQUEST", "invalid json body"))
 		return
 	}
-	user, ok := h.store.FindUserByEmail(req.Email)
+	// 权威读：多实例下进程内存可能落后（别的实例刚重置过密码/禁用过账号），
+	// 因此登录以 Mongo 文档为准（Mongo 不可用/无该文档时回落内存），见
+	// store.FindUserByEmailAuthoritative 的说明。
+	user, ok := h.store.FindUserByEmailAuthoritative(req.Email)
 	if !ok {
 		transport.WriteError(c, &transport.AppError{Status: 401, Code: "INVALID_CREDENTIALS", Message: "invalid email or password", Details: map[string]any{}})
 		return
@@ -151,8 +154,9 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	// Verify user still exists
-	user, ok := h.store.FindUserByID(claims.UserID)
+	// Verify user still exists（权威读：禁用与改密都以 Mongo 文档为准，见
+	// store.FindUserByIDAuthoritative；否则「换台实例就能靠 refresh 续命」）。
+	user, ok := h.store.FindUserByIDAuthoritative(claims.UserID)
 	if !ok {
 		transport.WriteError(c, transport.Unauthorized("user not found"))
 		return

@@ -891,6 +891,32 @@ func (s *Store) persistUserUnsafe(user *model.User) error {
 	return err
 }
 
+// persistUserFieldsUnsafe 字段级落库（$set / $unset），供「只改少数字段」的账号运维动作使用。
+//
+// 为什么不复用整文档 persistUserUnsafe：多实例共享 Mongo 时，本实例内存可能落后于其它实例
+// 刚写的值；整文档 ReplaceOne 会把那些字段一并覆盖回旧值（2026-09-16 生产实测：一次重置密码
+// 把另一实例刚写的 disabled=true 覆盖丢失，禁用形同虚设）。字段级写只落本次真正改动的字段，
+// 天然免疫这类跨实例覆盖；unset 为空时只发 $set。
+func (s *Store) persistUserFieldsUnsafe(userID string, set, unset bson.M) error {
+	if !s.mongoEnabled || s.mongoUsers == nil || userID == "" {
+		return nil
+	}
+	update := bson.M{}
+	if len(set) > 0 {
+		update["$set"] = set
+	}
+	if len(unset) > 0 {
+		update["$unset"] = unset
+	}
+	if len(update) == 0 {
+		return nil
+	}
+	ctx, cancel := s.mongoContext()
+	defer cancel()
+	_, err := s.mongoUsers.UpdateOne(ctx, bson.M{"_id": userID}, update)
+	return err
+}
+
 func (s *Store) persistAgentUnsafe(agent *model.Agent) error {
 	if !s.mongoEnabled || s.mongoAgents == nil || agent == nil {
 		return nil

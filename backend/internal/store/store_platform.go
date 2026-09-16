@@ -455,12 +455,18 @@ func (s *Store) SetUserDisabled(userID string, disabled bool) (*model.User, *tra
 	now := time.Now().UTC()
 	u.Disabled = disabled
 	u.UpdatedAt = now
+	// 字段级落库（不用整文档 ReplaceOne）：本实例内存可能落后于其它实例，整文档写会把
+	// 它们刚写的字段覆盖回旧值 —— 禁用这种安全控制必须免疫跨实例覆盖。
+	set := bson.M{"disabled": disabled, "updated_at": now}
+	unset := bson.M(nil)
 	if disabled {
 		u.DisabledAt = &now
+		set["disabled_at"] = now
 	} else {
 		u.DisabledAt = nil
+		unset = bson.M{"disabled_at": ""}
 	}
-	if err := s.persistUserUnsafe(u); err != nil {
+	if err := s.persistUserFieldsUnsafe(u.ID, set, unset); err != nil {
 		return nil, mongoWriteError(err)
 	}
 	return copyUser(u), nil

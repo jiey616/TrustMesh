@@ -349,8 +349,11 @@ func TestTaskVersionConflictOnStaleVersion(t *testing.T) {
 	if got.Status != "pending" {
 		t.Fatalf("memory status mutated by conflicted write: %q", got.Status)
 	}
-	if got.Version != after.Version {
-		t.Fatalf("memory version advanced by conflicted write: %d, want %d", got.Version, after.Version)
+	// W1 语义（refresh_on_conflict.go）：冲突后内存会被回源刷新为 Mongo 权威文档，
+	// 所以版本应等于远端（被另一写方推到的）版本，而不是本次写之前的本地旧版本。
+	// 断言「回滚成旧版本」是 W1 之前的行为，会让这条用例与已上线的收敛逻辑互相矛盾。
+	if want := after.Version + 5; got.Version != want {
+		t.Fatalf("memory version after conflict = %d, want %d（应回源刷新为远端权威版本）", got.Version, want)
 	}
 }
 

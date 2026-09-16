@@ -481,8 +481,10 @@ func TestProjectFileVersionConflictOnStaleRename(t *testing.T) {
 	if got.FileName != after.FileName {
 		t.Fatalf("memory file name mutated by conflicted write: %q", got.FileName)
 	}
-	if got.Version != after.Version {
-		t.Fatalf("memory version advanced by conflicted write: %d, want %d", got.Version, after.Version)
+	// W1 语义（refresh_on_conflict.go）：冲突后内存会被回源刷新为 Mongo 权威文档，
+	// 版本应等于远端版本而非本地旧版本（同 task 域用例说明）。
+	if want := after.Version + 5; got.Version != want {
+		t.Fatalf("memory version after conflict = %d, want %d（应回源刷新为远端权威版本）", got.Version, want)
 	}
 }
 
