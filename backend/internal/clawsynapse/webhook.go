@@ -1625,9 +1625,10 @@ var strictDispatchOrgGate = os.Getenv("TRUSTMESH_STRICT_DISPATCH_ORG_GATE") == "
 // 爆炸半径与 2026-09-02 transfer 事故同级且更广。
 //
 // 翻转前置条件（缺一不可）：
-//   ① 迁移 tm-task-plan / tm-task-exec 生产者技能改用协议信封 —— 注意本地技能 ≠
-//      容器 / hermes-data 卷里 agent 实际加载的版本，必须按运行时逐一证伪；
-//   ② 按 type 归因（warn 日志带 type 字段）确认 protocol_schema_warned_total 归零。
+//
+//	① 迁移 tm-task-plan / tm-task-exec 生产者技能改用协议信封 —— 注意本地技能 ≠
+//	   容器 / hermes-data 卷里 agent 实际加载的版本，必须按运行时逐一证伪；
+//	② 按 type 归因（warn 日志带 type 字段）确认 protocol_schema_warned_total 归零。
 //
 // 在此之前：**保持不设置该环境变量**（默认 OFF），本门禁只作为
 // 「机制 + 计数 + 一行回退」存在，不得作为已可启用的能力对外承诺。
