@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { apiClient } from '@/api/client'
 import { useAuthStore } from '@/stores/authStore'
+import { ApiRequestError } from '@/types'
 
 /**
  * 多租户请求头契约（T1.5）。
@@ -123,5 +124,74 @@ describe('apiClient 租户请求头', () => {
     const replay = calls[calls.length - 1]
     expect(replay.headers['authorization']).toBe('Bearer fresh')
     expect(useAuthStore.getState().accessToken).toBe('fresh')
+  })
+
+  // ── 401 刷新重放的上限与甄别（本缺陷的关键闸门）─────────────────────────────
+  // 后端事实：token 过期（middleware/auth.go）与租户非成员（middleware/org_scope.go:29）
+  // 都经 transport.Unauthorized(...)，code 同为 "UNAUTHORIZED"，只有 message 不同。
+  // 因此 client 必须以 message 兜底区分，且刷新重放必须有界、终态必须抛真实 code。
+
+  it('业务端点持续 401 时只刷新一次、至多重放一次，并抛出带真实 code 的 ApiRequestError', async () => {
+    useAuthStore.setState({
+      accessToken: 'stale',
+      refreshToken: 'r-old',
+      activeOrgId: null,
+      personalOrgId: 'org-personal',
+    })
+
+    // 业务端点永远 401（token 过期语义）；刷新端点每次都成功换发新 token。
+    responder = (req) =>
+      req.url.includes('auth/refresh')
+        ? jsonResponse({ data: { access_token: 'fresh', refresh_token: 'r-new', expires_in: 3600 } })
+        : jsonResponse({ error: { code: 'UNAUTHORIZED', message: 'invalid or expired token' } }, 401)
+
+    const err = await apiClient.get('agents').then(
+      () => {
+        throw new Error('expected the request to reject')
+      },
+      (e: unknown) => e,
+    )
+
+    const refreshCalls = calls.filter((c) => c.url.includes('auth/refresh'))
+    const bizCalls = calls.filter((c) => !c.url.includes('auth/refresh'))
+
+    // ① refresh 次数有界：恰好 1 次（不会持续 401 → 不断刷新）
+    expect(refreshCalls).toHaveLength(1)
+    // ② 业务端点请求次数有界：≤2（原始 1 次 + 重放 1 次）
+    expect(bizCalls.length).toBeLessThanOrEqual(2)
+    // ③ 终态失败语义正确：抛 ApiRequestError 且携带后端真实 code（而非 HTTPError）
+    expect(err).toBeInstanceOf(ApiRequestError)
+    expect((err as ApiRequestError).code).toBe('UNAUTHORIZED')
+  })
+
+  it('租户越权 401（非成员 org）不触发 refresh，直接抛出带真实 code 的 ApiRequestError', async () => {
+    // 模拟 authStore——包含已持久化、但用户已不属于的陈旧租户 id（真实触发场景）。
+    useAuthStore.setState({
+      accessToken: 'valid-not-expired',
+      refreshToken: 'r-old',
+      activeOrgId: 'org-stale',
+      personalOrgId: 'org-personal',
+    })
+
+    responder = (req) =>
+      req.url.includes('auth/refresh')
+        ? jsonResponse({ data: { access_token: 'fresh', refresh_token: 'r-new', expires_in: 3600 } })
+        : jsonResponse(
+            { error: { code: 'UNAUTHORIZED', message: 'not a member of the requested organization' } },
+            401,
+          )
+
+    const err = await apiClient.get('agents').then(
+      () => {
+        throw new Error('expected the request to reject')
+      },
+      (e: unknown) => e,
+    )
+
+    // 关键：租户越权 401 绝不能触发 refresh（否则就是无谓的 refresh 风暴源头）。
+    expect(calls.filter((c) => c.url.includes('auth/refresh'))).toHaveLength(0)
+    // 落到统一失败分支，把后端真实 code 交给调用方。
+    expect(err).toBeInstanceOf(ApiRequestError)
+    expect((err as ApiRequestError).code).toBe('UNAUTHORIZED')
   })
 })
