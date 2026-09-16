@@ -27,6 +27,7 @@ import {
 } from '@ant-design/icons'
 import { useState } from 'react'
 import { useAuthStore } from '@/stores/authStore'
+import { resolveWorkspaceTarget } from '@/lib/workspaceMemory'
 import { isElectronRuntime } from '@/stores/serverConfigStore'
 import { useUnreadCount } from '@/hooks/useNotifications'
 import { useRealtimeEvents } from '@/hooks/useRealtimeEvents'
@@ -74,7 +75,16 @@ export function MainLayout() {
   const { data: projects } = useProjects()
   const { data: externalApps } = useExternalApps()
   const { data: orgs } = useOrganizations()
-  const { user, logout, activeOrgId, setActiveOrg, personalOrgId, setPersonalOrgId } = useAuthStore()
+  const {
+    user,
+    logout,
+    activeOrgId,
+    setActiveOrg,
+    personalOrgId,
+    setPersonalOrgId,
+    workspaceMemory,
+    rememberWorkspace,
+  } = useAuthStore()
   const qc = useQueryClient()
   const { theme } = useTheme()
   useRealtimeEvents()
@@ -135,16 +145,26 @@ export function MainLayout() {
   const personalOrg = useMemo(() => (orgs ?? []).find((o) => o.kind === 'personal'), [orgs])
   const enterpriseOrgs = useMemo(() => (orgs ?? []).filter((o) => o.kind === 'enterprise'), [orgs])
 
-  // 水合个人租户 ID：orgs 列表就绪后把 kind=personal 的租户写进 authStore，
-  // 供 apiClient/assistant 在个人空间（activeOrgId 为空）时发 X-Org-Id 真头。
-  // 首次水合或值变化（跨账号/重建）→ 清查询缓存，全部数据按新租户上下文重取。
+  // 统一工作区校准：orgs 就绪后**一次**决定 (a) 个人租户 id 水合 (b) 依「记忆」恢复企业空间。
+  //
+  // 时序保证（照设计 §3.3(c)）：两个运行时 id 在**同一 tick 内**先写个人、再写企业，
+  // 且只有紧随其后的 qc.removeQueries() 会触发重取（setActiveOrg/setPersonalOrgId 不改变
+  // 任何 queryKey）→ 重取时读到的一定是**最终（已校验）**的运行时态，不存在
+  // 「先发个人头、后发企业头」的中间窗口。
+  //
+  // 记忆经 resolveWorkspaceTarget 双守门（userId 匹配 + org 必须 ∈ 本账号 orgs）；
+  // 任一不满足 → 返回 null → activeOrgId 回落 null（个人空间）。绝不写入未校验值。
   useEffect(() => {
-    if (!personalOrg) return
-    if (personalOrgId !== personalOrg.id) {
-      setPersonalOrgId(personalOrg.id)
-      qc.removeQueries()
-    }
-  }, [personalOrg, personalOrgId, qc, setPersonalOrgId])
+    if (!user || !orgs) return
+    const nextPersonal = personalOrg?.id ?? null
+    const nextActive = resolveWorkspaceTarget(workspaceMemory, user.id, orgs)
+    const personalChanged = nextPersonal !== personalOrgId
+    const activeChanged = nextActive !== activeOrgId
+    if (!personalChanged && !activeChanged) return
+    if (personalChanged) setPersonalOrgId(nextPersonal)
+    if (activeChanged) setActiveOrg(nextActive)
+    qc.removeQueries()
+  }, [user, orgs, personalOrg, workspaceMemory, activeOrgId, personalOrgId, qc, setActiveOrg, setPersonalOrgId])
   const roleLabel = (r: string) => (r === 'owner' ? 'Owner' : r === 'admin' ? 'Admin' : '成员')
 
   // 当前生效工作区：activeOrgId 为空 = 个人空间。侧边栏用户区与切换菜单都需要它。
@@ -190,12 +210,16 @@ export function MainLayout() {
     if (key === '__personal__') {
       if (!activeOrgId) return
       setActiveOrg(null)
+      // 记住「上次选中的空间」= 个人（persist 在 set 时同步落盘，先于 reload）
+      rememberWorkspace('personal')
       // 全局刷新：整页重载，所有数据按新租户上下文重新加载
       window.location.reload()
       return
     }
+    // 企业分支：key 已通过 orgs 校验（∈ 本账号租户），故可安全记住
     if (!orgs?.some((o) => o.id === key) || key === activeOrgId) return
     setActiveOrg(key)
+    rememberWorkspace('enterprise', key)
     window.location.reload()
   }
 

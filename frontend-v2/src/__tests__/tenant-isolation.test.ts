@@ -6,6 +6,7 @@ import appSource from '../App.tsx?raw'
 import clientSource from '../api/client.ts?raw'
 import mainLayoutSource from '../layouts/MainLayout.tsx?raw'
 import loginPageSource from '../pages/LoginPage.tsx?raw'
+import authStoreSource from '../stores/authStore.ts?raw'
 
 /**
  * 跨租户隔离契约（T1.5）。
@@ -83,5 +84,45 @@ describe('缓存失效原语行为', () => {
 
     expect(qc.getQueryData(['agents', 'x', 'stats'])).toBeUndefined()
     expect(qc.getQueryData(['meetings'])).toBeUndefined()
+  })
+})
+
+describe('「记住上次选中的空间」契约（源码级，T03）', () => {
+  it('INV-1：partialize 白名单不含运行时租户态（两 id 不落盘）', () => {
+    // 只取 partialize 返回的对象字面量内部（避免把相邻注释里的字段名误当白名单）
+    const match = authStoreSource.match(/partialize:\s*\(state\)[^{]*=>\s*\(\{([\s\S]*?)\}\)/)
+    expect(match).not.toBeNull()
+    const body = match![1]
+    expect(body).not.toMatch(/activeOrgId|personalOrgId/)
+    expect(body).toMatch(/refreshToken/)
+    expect(body).toMatch(/workspaceMemory/)
+  })
+
+  it('persist 显式 version:1，且 merge 无条件把两个运行时 id 置 null', () => {
+    expect(authStoreSource).toMatch(/version:\s*1/)
+    const mergeIdx = authStoreSource.indexOf('merge:')
+    expect(mergeIdx).toBeGreaterThan(-1)
+    const block = authStoreSource.slice(mergeIdx)
+    expect(block).toMatch(/activeOrgId:\s*null/)
+    expect(block).toMatch(/personalOrgId:\s*null/)
+  })
+
+  it('MainLayout 用统一校准 effect：先 setPersonalOrgId 再 setActiveOrg 再 removeQueries', () => {
+    // 记依赖校验纯函数（经 userId 守门 + orgs 校验后才写运行时态）
+    expect(mainLayoutSource).toMatch(/resolveWorkspaceTarget\(/)
+    // 同一 tick 内先写个人、再写企业、最后才 removeQueries —— 杜绝「先个人头、后企业头」中间窗口
+    expect(mainLayoutSource).toMatch(
+      /setPersonalOrgId\(nextPersonal\)[\s\S]*?setActiveOrg\(nextActive\)[\s\S]*?qc\.removeQueries\(\)/,
+    )
+  })
+
+  it('切空间两条分支各写一次记忆（rememberWorkspace，已校验值）', () => {
+    expect(count(mainLayoutSource, /rememberWorkspace\(/g)).toBeGreaterThanOrEqual(2)
+    expect(mainLayoutSource).toMatch(/rememberWorkspace\('personal'\)/)
+    expect(mainLayoutSource).toMatch(/rememberWorkspace\('enterprise',\s*key\)/)
+  })
+
+  it('保留回落防御 effect（qc.removeQueries 出现 ≥2 次）', () => {
+    expect(count(mainLayoutSource, /qc\.removeQueries\(\)/g)).toBeGreaterThanOrEqual(2)
   })
 })
