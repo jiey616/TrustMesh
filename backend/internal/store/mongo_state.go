@@ -75,6 +75,24 @@ func (s *Store) enableMongo(cfg config.Config, log *zap.Logger) error {
 	// T2.6 通用幂等键集合：_id 唯一由 Mongo 隐式保证（E11000 = 命中），
 	// expire_at 上的 TTL 索引（expireAfterSeconds=0）由 ensureMongoIndexes 创建。
 	s.mongoIdempotencyKeys = db.Collection("idempotency_keys")
+	// T3.1 后台循环 leader 租约集合：单文档（_id=leaderLeaseKey），CAS 靠 filter+upsert
+	// 的 E11000 语义，无需 TTL 索引（过期由 expires_at 字段在 filter 里判定，不靠回收）。
+	s.mongoLeaderLeases = db.Collection("leader_leases")
+	// 仅当门禁开启时接线 CAS；关闭时 leaderCAS 保持 nil，StartLeaderElection 不启动，
+	// 三个 ticker 经 isLeaderForBackground 恒走 leader 分支（单实例现状）。
+	if cfg.LeaderElectionEnabled {
+		s.leaderElectionEnabled = true
+		s.leaderCAS = mongoLeaderCAS{col: s.mongoLeaderLeases}
+	}
+	// T3.1 W2 SSE 跨实例广播：outbox 以 _id=seq 存事件（seq 由独立计数器单文档 $inc 分配），
+	// created_at 上的 TTL 索引（见 ensureMongoIndexes）负责回收。
+	s.mongoUserEvents = db.Collection("user_events")
+	s.mongoUserEventsSeq = db.Collection("user_events_seq")
+	if cfg.SSEBroadcastEnabled {
+		s.sseBroadcastEnabled = true
+		s.sseInstanceID = s.leaderID // 同为「本实例稳定唯一标识」，语义一致故复用
+		s.outboxCh = make(chan sseUserEventDoc, sseOutboxCapacity)
+	}
 	s.mongoTimeout = cfg.MongoTimeout
 	if log != nil {
 		s.log = log
@@ -166,6 +184,19 @@ func (s *Store) clearMongoCollections() {
 	s.mongoOpsIncidents = nil
 	s.mongoLLMSettings = nil
 	s.mongoIdempotencyKeys = nil
+	// T3.1：Mongo 不可用时门禁必须自动降级为「恒 leader」，否则 CAS 会对着已断开的
+	// client 一直报错 → isLeader 恒 false → 三个安全网 ticker 永久停摆。
+	s.mongoLeaderLeases = nil
+	s.leaderElectionEnabled = false
+	s.leaderCAS = nil
+	s.isLeader.Store(false)
+	// T3.1 W2：Mongo 不可用时广播必须整体降级为「只走本地投递」，
+	// 否则 writer 会对着已断开的 client 空转、tailer 会反复报错。
+	s.mongoUserEvents = nil
+	s.mongoUserEventsSeq = nil
+	s.sseBroadcastEnabled = false
+	s.outboxCh = nil
+	s.sseCursor = 0
 }
 
 func (s *Store) mongoContext() (context.Context, context.CancelFunc) {
@@ -274,6 +305,13 @@ func (s *Store) ensureMongoIndexes() error {
 			// expire_at 上的 TTL 索引（expireAfterSeconds=0）到点按字段值过期，
 			// 避免集合无限增长。
 			{Keys: bson.D{{Key: "expire_at", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(0)},
+		},
+		s.mongoUserEvents: {
+			// T3.1 W2 SSE outbox：_id 即 seq（天然有序且唯一），无需额外索引；
+			// created_at 上的 TTL 负责回收，避免集合无限增长。
+			// 固定 60s（非 sseEventTTL 常量）：SetExpireAfterSeconds 只收 int64 秒，
+			// 用常量派生需 常量/slice 转换，反而不如显式值 + 注释清晰。改常量须同步这里。
+			{Keys: bson.D{{Key: "created_at", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(60)},
 		},
 	}
 

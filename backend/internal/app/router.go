@@ -260,10 +260,24 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	// Set*Hook 下移到这些 Start* 之后，否则会重新引入读写竞态。
 	//
 	// Start background cleanup ticker to prevent unbounded memory growth (OOM).
+	// 无外部副作用（只清本进程内存 map），故**不受 leader 门禁**：每个实例各自回收
+	// 自己的内存才是正确的。
 	go s.StartCleanupTicker(context.Background())
+	// T3.1：后台循环 leader 选举。仅当 LEADER_ELECTION_ENABLED=1 且 Mongo 可用时启动
+	// （s.LeaderElectionArmed() 判定）。必须在下面三个受门禁 ticker 首轮触发之前启动，
+	// 使其 isLeader 尽早确立。单实例默认关闭 → 不启动，三 ticker 恒跑（现状不变）。
+	if s.LeaderElectionArmed() {
+		go s.StartLeaderElection(context.Background())
+	}
+	// T3.1 W2：SSE 跨实例广播（Mongo outbox + tailer）。仅当 SSE_BROADCAST_ENABLED=1 且
+	// Mongo 可用时启动（StartSSEBroadcast 内部自判 Armed）。关闭时事件只投本实例订阅者，
+	// 行为与改造前逐字节一致。必须在请求开始流入前启动，让 tailer 游标尽早对齐。
+	if s.SSEBroadcastArmed() {
+		go s.StartSSEBroadcast(context.Background())
+	}
 	// Start timeout monitor to detect and retry/fail stuck in_progress todos.
 	// Reads remindHook / planningStallHook — 必须在 SetRemindHook /
-	// SetPlanningStallHook 之后启动。
+	// SetPlanningStallHook 之后启动。多实例下仅 leader 执行（见 StartTimeoutMonitor 内门禁）。
 	go s.StartTimeoutMonitor(context.Background())
 	// Ops scanner: rule-based anomaly discovery feeding ops_incident tickets.
 	// Off by default; flip OPS_ENABLED=1 to enable. Reads opsPublishHook /

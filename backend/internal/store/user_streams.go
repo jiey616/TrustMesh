@@ -65,9 +65,27 @@ func (s *Store) publishUserEventUnsafe(userID, eventType string, payload map[str
 		Payload:    copyMap(payload),
 	}
 
+	// T3.1 W2：先非阻塞塞进 outbox（未启用时 outboxCh==nil，直接返回 false，
+	// 行为与改造前逐字节一致），再投本地订阅者。此处**不做任何 I/O**。
+	s.enqueueSSEEventUnsafe(event, userID)
+
 	s.streamMu.RLock()
 	defer s.streamMu.RUnlock()
 
+	for ch := range s.userSubscribers[userID] {
+		sendLatestUserEvent(ch, event)
+	}
+}
+
+// deliverUserEvent 把（可能来自其他实例的）事件投给本实例的订阅者。
+// 与 publishUserEventUnsafe 的区别：不要求调用方持 s.mu，供 tailer goroutine 独立调用。
+// 自锁 streamMu，因此可在任意非持锁上下文安全调用。
+func (s *Store) deliverUserEvent(userID string, event model.UserStreamEvent) {
+	if userID == "" {
+		return
+	}
+	s.streamMu.RLock()
+	defer s.streamMu.RUnlock()
 	for ch := range s.userSubscribers[userID] {
 		sendLatestUserEvent(ch, event)
 	}

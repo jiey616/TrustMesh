@@ -58,6 +58,16 @@ type Config struct {
 	OpsResolveObserve  time.Duration
 	OpsModel           string // 归因模型，空则回落 AssistantModel
 
+	// T3.1 后台循环 leader 选举。默认 false → 单实例行为与改造前逐字节一致。
+	// 仅当 backend 起多实例（水平扩展）时置 true，让 timeout/reconciler/ops 三个
+	// 有外部副作用的 ticker 只在 leader 上跑，消除 N 倍重复派发/催办/工单。
+	LeaderElectionEnabled bool
+
+	// T3.1 W2 SSE 跨实例广播（Mongo outbox + tailer）。默认 false → 事件只投本实例
+	// 订阅者，行为与改造前逐字节一致。多实例部署时置 true，否则连在实例 A 的用户
+	// 收不到实例 B 处理出的事件。
+	SSEBroadcastEnabled bool
+
 	// Project files
 	FilesStoragePath string
 
@@ -137,6 +147,10 @@ func Load() Config {
 		OpsGuideCooldown:   getEnvDuration("OPS_GUIDE_COOLDOWN", 15*time.Minute),
 		OpsResolveObserve:  getEnvDuration("OPS_RESOLVE_OBSERVE", 10*time.Minute),
 		OpsModel:           getEnv("OPS_MODEL", ""),
+
+		LeaderElectionEnabled: getEnvBool("LEADER_ELECTION_ENABLED", false),
+
+		SSEBroadcastEnabled: getEnvBool("SSE_BROADCAST_ENABLED", false),
 
 		MarketDataPath: getEnv("MARKET_DATA_PATH", "data/roles_index.json"),
 

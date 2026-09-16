@@ -74,6 +74,11 @@ func (s *Store) StartOpsScanner(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// T3.1：多实例下仅 leader 执行（开运维工单 + 下发修复指引有外部副作用）。
+			// 门禁关闭时恒 true，单实例行为不变。
+			if !s.isLeaderForBackground() {
+				continue
+			}
 			s.runOpsScanOnce(rt)
 		}
 	}

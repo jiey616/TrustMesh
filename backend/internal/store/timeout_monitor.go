@@ -135,6 +135,11 @@ func (s *Store) StartTimeoutMonitor(ctx context.Context) {
 			s.log.Info("timeout monitor stopped")
 			return
 		case <-ticker.C:
+			// T3.1：多实例下仅 leader 执行（催办/判死/规划提醒有外部副作用）。
+			// 门禁关闭时恒 true，单实例行为不变。goroutine 保持存活以随时响应身份变化。
+			if !s.isLeaderForBackground() {
+				continue
+			}
 			s.checkTodoTimeouts()
 			s.checkMeetingTimeouts()
 			s.checkPlanningTimeouts()

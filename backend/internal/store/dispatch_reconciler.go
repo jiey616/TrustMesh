@@ -44,6 +44,11 @@ func (s *Store) StartDispatchReconciler(ctx context.Context) {
 			}
 			return
 		case <-ticker.C:
+			// T3.1：多实例下仅 leader 执行（自愈推进 + 重派有外部副作用，N 实例会 N 倍派发）。
+			// 门禁关闭时恒 true，单实例行为不变。
+			if !s.isLeaderForBackground() {
+				continue
+			}
 			// Advance first: promoting a stalled pending todo into in_progress
 			// makes the redispatch pass below skip it (NextDispatchableTodo
 			// returns nil once the leading todo is in_progress), so the two

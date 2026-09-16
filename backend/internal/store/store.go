@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -182,8 +183,27 @@ type Store struct {
 	mongoOpsIncidents      *mongo.Collection
 	mongoLLMSettings       *mongo.Collection
 	mongoIdempotencyKeys   *mongo.Collection // T2.6 通用幂等键集合（唯一键 _id + TTL 索引 expire_at）
+	mongoLeaderLeases      *mongo.Collection // T3.1 后台循环 leader 租约集合（单文档 CAS）
 	mongoTimeout           time.Duration
 	log                    *zap.Logger
+
+	// T3.1 leader 选举：门禁关闭（默认）时 isLeaderForBackground 恒 true，
+	// 三个有外部副作用的 ticker 行为与改造前逐字节一致。
+	leaderElectionEnabled bool
+	leaderID              string      // 本实例唯一持有者标识（进程生命周期内稳定）
+	isLeader              atomic.Bool // 当前是否持有租约；仅 StartLeaderElection 写
+	leaderCAS             leaderCAS   // 测试可注入 fake；生产为 mongoLeaderCAS
+
+	// T3.1 W2 SSE 跨实例广播（Mongo outbox + tailer）。默认关闭 → outboxCh 为 nil，
+	// publishUserEventUnsafe 只走本地投递，行为与改造前逐字节一致。
+	sseBroadcastEnabled bool
+	sseInstanceID       string               // 广播消息的 origin 标识（跳过自己发的）
+	outboxCh            chan sseUserEventDoc // nil = 广播关闭；**永不关闭**（见 sse_bus.go）
+	sseCursor           int64                // tailer 已处理的最大 seq；仅 tailer goroutine 读写
+	sseDropped          atomic.Int64         // outbox 满被丢弃的事件数（告警节流用）
+	sseWriteErrs        atomic.Int64         // 广播链路写失败数（告警节流用）
+	mongoUserEvents     *mongo.Collection    // outbox 集合（_id = seq）
+	mongoUserEventsSeq  *mongo.Collection    // seq 计数器集合（单文档 $inc）
 
 	// persistFailForTest 是仅供测试使用的强制失败开关（生产零成本）：
 	// 置 true 时 persistTaskBundleUnsafe / persistTaskUnsafe 直接返回错误，
@@ -294,6 +314,8 @@ func New() *Store {
 		meetingMessages:     make(map[string]*model.MeetingMessage),
 		meetingMessageIndex: make(map[string][]string),
 		userSubscribers:     make(map[string]map[chan model.UserStreamEvent]struct{}),
+
+		leaderID: "instance-" + newID(),
 	}
 }
 
@@ -543,10 +565,13 @@ func (s *Store) mutateTaskUnsafe(taskID string, fn func(*model.TaskDetail) *tran
 	}
 	if pErr := s.persistTaskBundleUnsafe(taskID); pErr != nil {
 		s.tasks[taskID] = snapshot
-		if ae, ok := pErr.(*transport.AppError); ok {
-			return ae
+		appErr := asAppError(pErr)
+		// T3.1 W1：版本冲突说明本实例内存已落后于 Mongo 权威 → 回源刷新，
+		// 否则本实例的读路径会持续吐旧数据（脏窗口无界）。**不重试**：保持 409 语义。
+		if isTaskVersionConflict(appErr) {
+			s.refreshTaskFromMongoLocked(taskID, snapshot.Version)
 		}
-		return mongoWriteError(pErr)
+		return appErr
 	}
 	return nil
 }
@@ -574,6 +599,10 @@ func (s *Store) mutateProjectUnsafe(projectID string, fn func(*model.Project) *t
 	}
 	if appErr := s.persistProjectUnsafe(p); appErr != nil {
 		s.projects[projectID] = snapshot
+		// T3.1 W1：同 mutateTaskUnsafe —— 冲突即回源，不重试。
+		if isProjectVersionConflict(appErr) {
+			s.refreshProjectFromMongoLocked(projectID, snapshot.Version)
+		}
 		return appErr
 	}
 	return nil
@@ -606,6 +635,10 @@ func (s *Store) mutateProjectFileUnsafe(fileID string, fn func(*model.ProjectFil
 	}
 	if appErr := s.persistProjectFileUnsafe(pf); appErr != nil {
 		s.projectFiles[fileID] = snapshot
+		// T3.1 W1：同 mutateTaskUnsafe —— 冲突即回源，不重试。
+		if isProjectFileVersionConflict(appErr) {
+			s.refreshProjectFileFromMongoLocked(fileID, snapshot.Version)
+		}
 		return appErr
 	}
 	return nil
