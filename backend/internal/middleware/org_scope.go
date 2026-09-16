@@ -16,7 +16,9 @@ const scopeKey = "org_scope"
 // OrgScope 在 RequireAuth 之后解析活跃租户：
 //   - 未带 X-Org-Id（存量客户端一律如此）→ 只注入 UserID，行为与改造前完全一致
 //   - 带了 X-Org-Id 且用户是该租户成员 → 注入完整 Scope（含 OrgID / Role）
-//   - 带了 X-Org-Id 但用户不属于该租户 → 401（防止伪租户头越权）
+//   - 带了 X-Org-Id 但用户不属于该租户 → 401 + code=NOT_A_MEMBER（防止伪租户头越权）。
+//     使用独立 code（而非 token 过期所用的 UNAUTHORIZED），使客户端能靠 code 天然区分
+//     「租户越权」与「token 过期」，不会误触发 refresh 重放。
 func OrgScope(st *store.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID := UserID(c)
@@ -26,7 +28,7 @@ func OrgScope(st *store.Store) gin.HandlerFunc {
 		if orgID != "" && st != nil {
 			m, ok := st.GetMembership(orgID, userID)
 			if !ok {
-				transport.WriteError(c, transport.Unauthorized("not a member of the requested organization"))
+				transport.WriteError(c, transport.OrgScopeDenied("not a member of the requested organization"))
 				c.Abort()
 				return
 			}

@@ -66,6 +66,17 @@ func Unauthorized(message string) *AppError {
 	return NewError(http.StatusUnauthorized, "UNAUTHORIZED", message)
 }
 
+// OrgScopeDenied 用于「已认证，但当前用户不属于请求头 X-Org-Id 指定的租户」这一拒绝场景。
+//
+// 语义上更贴近 403 Forbidden，但本批刻意维持 401，以最小化对既有消费方的破坏
+// （改状态码会牵动未知的既有断言/客户端分支，不在本批范围）。关键点是它携带
+// **独立 code**（"NOT_A_MEMBER"）——使客户端能靠 code 天然区分
+// 「token 过期/无效」（UNAUTHORIZED）与「租户越权」（NOT_A_MEMBER），
+// 无需依赖 message 文案（文案耦合的失效方向是静默的）。
+func OrgScopeDenied(message string) *AppError {
+	return NewError(http.StatusUnauthorized, "NOT_A_MEMBER", message)
+}
+
 func Forbidden(message string) *AppError {
 	return NewError(http.StatusForbidden, "FORBIDDEN", message)
 }

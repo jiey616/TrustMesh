@@ -200,4 +200,37 @@ describe('apiClient 租户请求头', () => {
     expect(err).toBeInstanceOf(ApiRequestError)
     expect((err as ApiRequestError).code).toBe('UNAUTHORIZED')
   })
+
+  // 前瞻契约（配合任务 #28，后端 org_scope 引入独立 code NOT_A_MEMBER）：
+  // 该 code 天然落在 REFRESHABLE_401_CODES 白名单外 → 前端不再把它当 token 过期，
+  // refresh 调用为 0。后端未部署前线上仍会走一次无谓 refresh（见上一条用例），
+  // 本用例把「独立 code → 0 次刷新」的契约锁进客户端测试，防止日后回退。
+  it('租户越权独立码（NOT_A_MEMBER）401：不触发 refresh，直接抛 ApiRequestError', async () => {
+    useAuthStore.setState({
+      accessToken: 'valid-not-expired',
+      refreshToken: 'r-old',
+      activeOrgId: 'org-stale',
+      personalOrgId: 'org-personal',
+    })
+
+    responder = (req) =>
+      req.url.includes('auth/refresh')
+        ? jsonResponse({ data: { access_token: 'fresh', refresh_token: 'r-new', expires_in: 3600 } })
+        : jsonResponse(
+            { error: { code: 'NOT_A_MEMBER', message: 'not a member of the requested organization' } },
+            401,
+          )
+
+    const err = await apiClient.get('agents').then(
+      () => {
+        throw new Error('expected the request to reject')
+      },
+      (e: unknown) => e,
+    )
+
+    // 独立码不在白名单 → 0 次 refresh；直接以真实 code 抛错。
+    expect(calls.filter((c) => c.url.includes('auth/refresh'))).toHaveLength(0)
+    expect(err).toBeInstanceOf(ApiRequestError)
+    expect((err as ApiRequestError).code).toBe('NOT_A_MEMBER')
+  })
 })

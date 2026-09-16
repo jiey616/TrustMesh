@@ -84,14 +84,15 @@ func TestOrgScopeTenantIsolation(t *testing.T) {
 	s, orgA := newOrgScopeFixture(t)
 
 	cases := []struct {
-		name      string
-		userID    string
-		orgHeader string
-		wantCode  int
-		wantOrgID string
-		wantRole  string
-		wantAbort bool
-		wantErrIn string
+		name        string
+		userID      string
+		orgHeader   string
+		wantCode    int
+		wantOrgID   string
+		wantRole    string
+		wantAbort   bool
+		wantErrIn   string
+		wantErrCode string // 断言响应体暴露的 error.code（空 = 不校验）
 	}{
 		{
 			name:      "成员带租户头_注入OrgID与Role",
@@ -103,20 +104,22 @@ func TestOrgScopeTenantIsolation(t *testing.T) {
 			wantAbort: false,
 		},
 		{
-			name:      "非成员带租户头_必须401并拦截",
-			userID:    "u3",
-			orgHeader: orgA,
-			wantCode:  http.StatusUnauthorized,
-			wantAbort: true,
-			wantErrIn: "not a member",
+			name:        "非成员带租户头_必须401并拦截",
+			userID:      "u3",
+			orgHeader:   orgA,
+			wantCode:    http.StatusUnauthorized,
+			wantAbort:   true,
+			wantErrIn:   "not a member",
+			wantErrCode: "NOT_A_MEMBER",
 		},
 		{
-			name:      "伪租户头_必须401并拦截",
-			userID:    "u2",
-			orgHeader: "org-bogus-does-not-exist",
-			wantCode:  http.StatusUnauthorized,
-			wantAbort: true,
-			wantErrIn: "not a member",
+			name:        "伪租户头_必须401并拦截",
+			userID:      "u2",
+			orgHeader:   "org-bogus-does-not-exist",
+			wantCode:    http.StatusUnauthorized,
+			wantAbort:   true,
+			wantErrIn:   "not a member",
+			wantErrCode: "NOT_A_MEMBER",
 		},
 		{
 			name:      "无租户头存量客户端_仅注入UserID不得401",
@@ -149,6 +152,9 @@ func TestOrgScopeTenantIsolation(t *testing.T) {
 			if c.wantErrIn != "" && !strings.Contains(p.body, c.wantErrIn) {
 				t.Fatalf("body %q must contain %q", p.body, c.wantErrIn)
 			}
+			if c.wantErrCode != "" && !strings.Contains(p.body, c.wantErrCode) {
+				t.Fatalf("body %q must expose error code %q", p.body, c.wantErrCode)
+			}
 			// 被拦截的请求绝不允许落到业务 handler。
 			if c.wantAbort && p.reached {
 				t.Fatal("aborted request must NOT reach the downstream handler")
@@ -168,6 +174,28 @@ func TestOrgScopeTenantIsolation(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestOrgScopeDeniedCodeContract 锁定「租户非成员」错误契约：HTTP 状态维持 401，
+// 但 error.code 必须是**独立于 token 过期**的 NOT_A_MEMBER。
+//
+// 为什么需要这条：前端 client.ts 的 401 判据只认 code 白名单（仅 UNAUTHORIZED 才刷新）。
+// 若 org_scope 复用 UNAUTHORIZED，前端就会把「租户越权」误当「token 过期」去 refresh 重放。
+// 此断言把契约钉死：任何回退（改回 UNAUTHORIZED / 改错字面量）都会立刻变红。
+func TestOrgScopeDeniedCodeContract(t *testing.T) {
+	s, orgA := newOrgScopeFixture(t)
+
+	p := runOrgScopeProbe(t, s, "u3", orgA)
+	if p.status != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 (body=%s)", p.status, p.body)
+	}
+	if !strings.Contains(p.body, "NOT_A_MEMBER") {
+		t.Fatalf("body %q must expose code NOT_A_MEMBER", p.body)
+	}
+	// 关键不变量：绝不能复用 token 过期的 UNAUTHORIZED，否则前端会误触发 refresh 重放。
+	if strings.Contains(p.body, `"code":"UNAUTHORIZED"`) {
+		t.Fatalf("org-scope denial must NOT reuse UNAUTHORIZED code (would trigger token refresh); body=%s", p.body)
 	}
 }
 
