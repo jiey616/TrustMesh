@@ -52,7 +52,9 @@
 **三条不变量（Invariant，照做即对）**
 
 - **INV-1（运行时态不进持久化）**：`partialize` 只输出 `{refreshToken, user, workspaceMemory}`；且 `persist.merge` **无条件**把 `activeOrgId`/`personalOrgId` 置 `null`。→ 任何来源（含手工改 localStorage、旧版本残留）都无法让运行时态在恢复前非空。**这是 R1/R2/R4 的根。**
-- **INV-2（唯一写点 + 写前必校验）**：运行时 `activeOrgId` 仅由三处写入：① `setAuth` → `null`；② 校准 effect → **经 `resolveWorkspaceTarget` 校验后的值**；③ `handleOrgSwitch` → **经 `orgs.some(id===key)` 校验后的值**。`personalOrgId` 仅由 ① `setAuth`/`logout` → `null`；② 校准 effect → **来自本账号 `orgs` 的 `kind==='personal'` 项**。→ 无任何路径可写入未校验 id。
+- **INV-2（唯一写点 + 写前必校验）**：运行时 `activeOrgId` 仅由四处写入：① `setAuth` → `null`；② 校准 effect → **经 `resolveWorkspaceTarget` 校验后的值**；③ `handleOrgSwitch` → **经 `orgs.some(id===key)` 校验后的值**；④ **防御性回落 effect（保留的既有 effect）→ 仅 `null`**，触发条件为 `activeOrgId ∉ orgs`。`personalOrgId` 仅由 ① `setAuth`/`logout` → `null`；② 校准 effect → **来自本账号 `orgs` 的 `kind==='personal'` 项**。→ 「写入值」只有两种：`null`，或经校验的值；无任何路径可写入未校验 id。
+
+  > 📌 2026-09-16 T03 复核补正：本项原写「**三处**」，遗漏了第 ④ 处（`MainLayout.tsx` 防御性回落 effect，`setActiveOrg(null)`）。该处**只写 `null`**，故安全结论不变，但枚举必须完整 —— 这是安全审计会逐条核对的声明，数字写错会让后来人误判「自己漏了什么」。代码中该写点见 `layouts/MainLayout.tsx:137-143`（注释已标明为「防御」）。
 - **INV-3（校验请求不带被校验头）**：`GET /organizations` 必然发生在两 id 均为 `null` 的时刻（首帧 → 首轮查询全部无 org 头），故校验请求天然「干净」。→ 破顺序死锁。
 
 **对 PM 建议的评判：采纳 + 1 处强化**
@@ -474,7 +476,7 @@ sequenceDiagram
 2. **存储 key**：`trustmesh-v2:auth` **不变**；显式 `version: 1`。
 3. **请求头来源**：保持 `const orgId = activeOrgId ?? personalOrgId`（`client.ts:61`）——**本设计不触碰 `client.ts`**。
 4. **错误处理约定**：`migrate` / `parseWorkspaceMemory` 必须 **total（绝不抛）**；一切损坏 → `null` → 静默个人空间；**禁止**在记忆失效路径上弹窗/报错。
-5. **唯一写点（INV-2）**：`activeOrgId` 只由 `setAuth`(=null) / 校准 effect(=已校验) / `handleOrgSwitch`(=已校验) 写入；`personalOrgId` 只由 `setAuth|logout`(=null) / 校准 effect(=本账号 orgs) 写入。**新增任何 org id 写点都必须先过校验。**
+5. **唯一写点（INV-2）**：`activeOrgId` 只由 `setAuth`(=null) / 校准 effect(=已校验) / `handleOrgSwitch`(=已校验) / **防御性回落 effect(=null，仅当 `activeOrgId ∉ orgs`)** 四处写入；`personalOrgId` 只由 `setAuth|logout`(=null) / 校准 effect(=本账号 orgs) 写入。**写入值只有 `null` 或已校验值两种；新增任何 org id 写点都必须先过校验。**
 6. **联动**：切空间仍走 `window.location.reload()`（不变）；恢复走原地 `setActiveOrg` + `removeQueries`（不整页刷新）。
 7. **测试放置与命名**：
    - 纯函数 → `src/lib/*.test.ts`；
