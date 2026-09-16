@@ -30,17 +30,23 @@ export function resolveWorkspaceTarget(
   currentUserId: string | null | undefined,
   orgs: ReadonlyArray<WorkspaceOrgRef> | null | undefined,
 ): string | null {
-  // 无记忆 / 未登录 → 无可恢复目标
-  if (!memory || !currentUserId) return null
-  // R3：绝不读取他人记忆（按 userId 严格隔离）
-  if (memory.userId !== currentUserId) return null
-  // 记忆为个人空间 → 明确回落 null（个人空间）
-  if (memory.kind !== 'enterprise') return null
-  if (!memory.orgId) return null
-  // 租户列表未就绪 → 无法校验，保守回落
-  if (!orgs) return null
-  // R5：企业 org 必须 ∈ 本账号 orgs 且确为企业租户，否则视为记忆失效
-  return orgs.some((o) => o.id === memory.orgId && o.kind === 'enterprise') ? memory.orgId : null
+  try {
+    // 无记忆 / 未登录 → 无可恢复目标
+    if (!memory || !currentUserId) return null
+    // R3：绝不读取他人记忆（按 userId 严格隔离）
+    if (memory.userId !== currentUserId) return null
+    // 记忆为个人空间 → 明确回落 null（个人空间）
+    if (memory.kind !== 'enterprise') return null
+    if (!memory.orgId) return null
+    // 租户列表未就绪 → 无法校验，保守回落
+    if (!orgs) return null
+    // R5：企业 org 必须 ∈ 本账号 orgs 且确为企业租户，否则视为记忆失效
+    const targetOrgId = memory.orgId
+    return orgs.some((o) => o.id === targetOrgId && o.kind === 'enterprise') ? targetOrgId : null
+  } catch {
+    // total（设计 §8.4）：任何异常（抛错 getter / 抛错 Proxy / 非法 orgs 元素）→ 保守回落 null，绝不外抛。
+    return null
+  }
 }
 
 /**
@@ -52,16 +58,21 @@ export function resolveWorkspaceTarget(
  * @returns 合法记忆（已裁剪为规范形状），或 null
  */
 export function parseWorkspaceMemory(raw: unknown): WorkspaceMemory | null {
-  if (!raw || typeof raw !== 'object') return null
-  const m = raw as Record<string, unknown>
-  if (typeof m.userId !== 'string' || !m.userId) return null
-  if (m.kind !== 'personal' && m.kind !== 'enterprise') return null
-  if (m.kind === 'enterprise') {
-    if (typeof m.orgId !== 'string' || !m.orgId) return null
-    return { userId: m.userId, kind: 'enterprise', orgId: m.orgId }
+  try {
+    if (!raw || typeof raw !== 'object') return null
+    const m = raw as Record<string, unknown>
+    if (typeof m.userId !== 'string' || !m.userId) return null
+    if (m.kind !== 'personal' && m.kind !== 'enterprise') return null
+    if (m.kind === 'enterprise') {
+      if (typeof m.orgId !== 'string' || !m.orgId) return null
+      return { userId: m.userId, kind: 'enterprise', orgId: m.orgId }
+    }
+    // personal：裁剪掉可能残留的 orgId（个人空间不需要 org id）
+    return { userId: m.userId, kind: 'personal' }
+  } catch {
+    // total（设计 §8.4）：任何异常（如「属性访问即抛错」的 getter / 抛错 Proxy）→ null，绝不外抛。
+    return null
   }
-  // personal：裁剪掉可能残留的 orgId（个人空间不需要 org id）
-  return { userId: m.userId, kind: 'personal' }
 }
 
 /** v1 持久化 schema：**绝不**包含 `activeOrgId` / `personalOrgId`。 */
