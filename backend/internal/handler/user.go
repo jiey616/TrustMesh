@@ -24,7 +24,8 @@ func NewUserHandler(s *store.Store, az *authz.Authorizer) *UserHandler {
 
 // Me 返回当前登录用户的最新资料，并带上前端的权限视图（设计文档 §7）：
 //   - permissions[]：本次请求的实时权限集（按 X-Org-Id 解析，个人空间=owner 全集）
-//   - menu_overrides[]：当前企业租户的菜单隐藏项（只能缩小，仅影响菜单可见性）
+//   - menu_overrides[]：菜单隐藏项 = 平台全局基线 ∪ 当前企业租户的覆盖（都只能缩小，
+//     仅影响菜单可见性，合并见 mergeMenuOverrides）
 //   - is_platform_admin：平台管理员标记（前端据此只显示「平台管理」菜单组）
 //
 // 权限集**每次请求实时解析**，不做跨请求缓存 —— 多实例下角色变更必须即时生效。
@@ -45,7 +46,7 @@ func (h *UserHandler) Me(c *gin.Context) {
 			perms = append(perms, resolved...)
 		}
 	}
-	overrides := h.store.OrgMenuOverrides(sc.OrgID)
+	overrides := mergeMenuOverrides(h.store.PlatformHiddenMenus(), h.store.OrgMenuOverrides(sc.OrgID))
 	if overrides == nil {
 		overrides = []string{}
 	}
@@ -55,6 +56,30 @@ func (h *UserHandler) Me(c *gin.Context) {
 		"menu_overrides":    overrides,
 		"is_platform_admin": h.store.UserIsPlatformAdmin(userID),
 	})
+}
+
+// mergeMenuOverrides 把平台全局菜单基线与租户级 menu_overrides 合并成一份下发清单。
+//
+// 合并放在服务端是刻意的取舍：前端只认一份 menu_overrides（menuDefs.visibleMenus），
+// 三层可见性（基础 ∩ 权限点 ∩ 企业覆盖 ∩ 平台基线）里的后两层在此闭合，
+// 个人空间（OrgID 为空，租户级返回 nil）也自然继承全局基线。
+// 顺序为「全局项在前 + 租户项追加 + 去重」，保证同一输入的返回稳定。
+func mergeMenuOverrides(platformHidden, orgOverrides []string) []string {
+	if len(platformHidden) == 0 && len(orgOverrides) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(platformHidden)+len(orgOverrides))
+	out := make([]string, 0, len(platformHidden)+len(orgOverrides))
+	for _, group := range [][]string{platformHidden, orgOverrides} {
+		for _, key := range group {
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, key)
+		}
+	}
+	return out
 }
 
 type updateProfileRequest struct {

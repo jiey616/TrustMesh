@@ -76,6 +76,7 @@ const menuIcons: Record<string, React.ReactNode> = {
   '/ops': <AlertOutlined />,
   '/organizations': <CrownOutlined />,
   '/platform/orgs': <BankOutlined />,
+  '/platform/users': <TeamOutlined />,
   '/platform/config': <SettingOutlined />,
   '/platform/audit': <AuditOutlined />,
   '/platform/usage': <BarChartOutlined />,
@@ -157,10 +158,14 @@ export function MainLayout() {
   }, [mountedApps, isPlatformAdmin, permissions, menuOverrides, permReady])
 
   const pathSeg = location.pathname.split('/')[1] || 'dashboard'
+  // 平台菜单是两段路径（/platform/xxx）：只取第一段会让所有平台菜单项都不高亮；
+  // 详情页（/platform/orgs/:id）取两段后自然回落到列表项。
   const selectedKey =
     pathSeg === 'app'
       ? `/app/${location.pathname.split('/')[2] ?? ''}`
-      : '/' + (pathSeg === 'agent-invite' ? 'agents' : pathSeg === 'office' ? 'office' : pathSeg)
+      : pathSeg === 'platform'
+        ? `/platform/${location.pathname.split('/')[2] ?? ''}`
+        : '/' + (pathSeg === 'agent-invite' ? 'agents' : pathSeg === 'office' ? 'office' : pathSeg)
 
   const handleLogout = () => {
     logout()

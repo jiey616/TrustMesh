@@ -27,6 +27,8 @@ import { ProfilePage } from '@/pages/ProfilePage'
 import { OpsIncidentsPage } from '@/pages/OpsIncidentsPage'
 import { ForbiddenPage } from '@/pages/ForbiddenPage'
 import { PlatformOrgsPage } from '@/pages/platform/PlatformOrgsPage'
+import { PlatformOrgDetailPage } from '@/pages/platform/PlatformOrgDetailPage'
+import { PlatformUsersPage } from '@/pages/platform/PlatformUsersPage'
 import { PlatformConfigPage } from '@/pages/platform/PlatformConfigPage'
 import { PlatformAuditPage } from '@/pages/platform/PlatformAuditPage'
 import { PlatformUsagePage } from '@/pages/platform/PlatformUsagePage'
@@ -69,6 +71,8 @@ export function AppRouter() {
         >
           <Route index element={<Navigate to="/platform/orgs" replace />} />
           <Route path="orgs" element={<PlatformOrgsPage />} />
+          <Route path="orgs/:id" element={<PlatformOrgDetailPage />} />
+          <Route path="users" element={<PlatformUsersPage />} />
           <Route path="config" element={<PlatformConfigPage />} />
           <Route path="audit" element={<PlatformAuditPage />} />
           <Route path="usage" element={<PlatformUsagePage />} />

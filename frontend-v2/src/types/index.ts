@@ -1257,8 +1257,54 @@ export interface PlatformGlobalConfig {
   default_model: string
   quota: OrgQuota
   node_parameters?: Record<string, string>
+  /** 平台全局菜单基线：对所有租户（企业 + 个人空间）隐藏的菜单键，只能缩小可见性 */
+  hidden_menus?: string[]
   updated_at?: string
   updated_by?: string
+}
+
+// ─── 平台侧用户管理（/api/v1/platform/users*、/platform/orgs/:id/members） ───
+
+/** 用户在某租户下的归属与角色（平台视图） */
+export interface PlatformUserOrgRef {
+  id: string
+  name: string
+  kind: OrgKind
+  role?: string
+  role_id?: string
+  role_name?: string
+}
+
+export interface PlatformUserView {
+  id: string
+  email: string
+  name: string
+  /** 被平台管理员禁用：登录 / refresh 一律拒绝，已发 access token 自然过期 */
+  disabled: boolean
+  disabled_at?: string
+  /** 平台管理员账号（env 种子为准，不可在此禁用） */
+  is_platform_admin: boolean
+  created_at: string
+  orgs?: PlatformUserOrgRef[]
+}
+
+/** 企业成员视图（平台视角，比企业侧多一个账号禁用态） */
+export interface PlatformOrgMemberView {
+  user_id: string
+  email?: string
+  name?: string
+  role: string
+  role_id?: string
+  role_name?: string
+  joined_at: string
+  disabled: boolean
+}
+
+/** 重置密码结果：临时密码只在本次响应里返回一次 */
+export interface ResetPasswordResult {
+  user_id: string
+  email: string
+  temp_password: string
 }
 
 /** 平台用量总览（count 级聚合，不含业务内容） */

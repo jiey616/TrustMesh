@@ -32,6 +32,11 @@ const (
 
 	AuditActionPlatformConfigUpdate = "platform.config.update"
 	AuditActionPlatformAdminLogin   = "platform.admin.login"
+
+	// 平台用户管理（平台管理员视角的账号运维动作）。
+	AuditActionUserPasswordReset = "user.password.reset"
+	AuditActionUserDisable       = "user.disable"
+	AuditActionUserEnable        = "user.enable"
 )
 
 // 审计目标类型（target_type 枚举）。

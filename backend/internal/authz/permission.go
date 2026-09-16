@@ -51,10 +51,12 @@ const (
 
 const (
 	PermPlatformOrgLifecycle = "platform.org.lifecycle" // 企业列表/详情/开通/禁用/恢复
-	PermPlatformConfigRead   = "platform.config.read"   // 全局配置查看
-	PermPlatformConfigWrite  = "platform.config.write"  // 全局配置修改
+	PermPlatformConfigRead   = "platform.config.read"   // 全局配置查看（含全局菜单基线）
+	PermPlatformConfigWrite  = "platform.config.write"  // 全局配置修改（含全局菜单基线）
 	PermPlatformAuditView    = "platform.audit.view"    // 全局审计日志查询
 	PermPlatformUsageView    = "platform.usage.view"    // 全平台用量总览
+	PermPlatformUserRead     = "platform.user.read"     // 用户列表/详情、企业成员查看
+	PermPlatformUserManage   = "platform.user.manage"   // 用户重置密码/禁用/启用
 )
 
 // AllOrgPermissions 返回企业层全部权限点（= owner 权限集）。
@@ -71,5 +73,7 @@ func PlatformPermissions() []string {
 		PermPlatformConfigWrite,
 		PermPlatformAuditView,
 		PermPlatformUsageView,
+		PermPlatformUserRead,
+		PermPlatformUserManage,
 	}
 }

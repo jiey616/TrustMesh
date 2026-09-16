@@ -1,8 +1,19 @@
 import { useEffect } from 'react'
-import { App, Button, Card, Form, Input, InputNumber, Space, Typography } from 'antd'
+import {
+  App,
+  Button,
+  Card,
+  Checkbox,
+  Form,
+  Input,
+  InputNumber,
+  Space,
+  Typography,
+} from 'antd'
 import { DeleteOutlined, PlusOutlined, SaveOutlined } from '@ant-design/icons'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { LLMConfigCard } from '@/components/settings/LLMConfigCard'
+import { HIDEABLE_MENUS } from '@/lib/menuDefs'
 import { usePlatformConfig, useUpdatePlatformConfig } from '@/hooks/usePlatformAdmin'
 import { ApiRequestError } from '@/types'
 import type { PlatformGlobalConfig } from '@/types'
@@ -40,6 +51,7 @@ export function PlatformConfigPage() {
         key,
         value,
       })),
+      hidden_menus: config.hidden_menus ?? [],
     })
   }, [config, form])
 
@@ -61,6 +73,8 @@ export function PlatformConfigPage() {
         max_storage_bytes: values.max_storage_bytes ?? UNLIMITED,
       },
       node_parameters: nodeParameters,
+      // 显式带上：payload 是逐字段构造的，漏了它「保存配额」会顺手清空全局隐藏项。
+      hidden_menus: values.hidden_menus ?? [],
     }
     try {
       await save.mutateAsync(payload)
@@ -153,8 +167,31 @@ export function PlatformConfigPage() {
             )}
           </Form.List>
 
+          <Card
+            size="small"
+            title="菜单可见性（全局基线）"
+            style={{ marginTop: 16, background: 'var(--surface)', border: '1px solid var(--line)' }}
+          >
+            <Paragraph type="secondary" style={{ fontSize: 12 }}>
+              勾选的菜单对全平台所有租户（企业空间与个人空间）全员隐藏，平台管理菜单不受影响。
+              这里只能缩小可见范围，不会放大任何角色的权限；企业 owner 只能在此基础上继续缩小，
+              不能抵消；且只影响菜单显示，不影响接口鉴权。
+            </Paragraph>
+            <Form.Item name="hidden_menus" noStyle>
+              <Checkbox.Group>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {HIDEABLE_MENUS.map((m) => (
+                    <Checkbox key={m.key} value={m.key}>
+                      {m.label}
+                    </Checkbox>
+                  ))}
+                </div>
+              </Checkbox.Group>
+            </Form.Item>
+          </Card>
+
           <Paragraph type="secondary" style={{ fontSize: 12, marginTop: 16, marginBottom: 0 }}>
-            配额变更只影响此后新建的企业租户，不会改动存量企业已有配额。
+            配额变更只影响此后新建的企业租户，不会改动存量企业已有配额；菜单可见性变更即时生效。
           </Paragraph>
         </Form>
       </Card>

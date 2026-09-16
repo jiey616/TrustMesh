@@ -488,7 +488,7 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	// （含 owner）调此处一律 403。反向门禁见上面 authed 组的 RequireBusinessAccount。
 	//
 	// 与公开的 GET /api/v1/platform/info 共存：同一静态前缀下的兄弟静态段，
-	// 无通配冲突（plat 组只新增 orgs/config/audit-logs/usage/llm-config 静态段）。
+	// 无通配冲突（plat 组只新增 orgs/config/audit-logs/usage/llm-config/users 静态段）。
 	platformAdminHandler := handler.NewPlatformAdminHandler(s)
 	plat := v1.Group("/platform")
 	plat.Use(middleware.RequireAuth(jwtManager))
@@ -497,6 +497,15 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	plat.GET("/orgs/:id", authz.RequirePlatformPerm(authz.PermPlatformOrgLifecycle, platformAdminChecker), platformAdminHandler.GetOrg)
 	plat.POST("/orgs/:id/disable", authz.RequirePlatformPerm(authz.PermPlatformOrgLifecycle, platformAdminChecker), platformAdminHandler.DisableOrg)
 	plat.POST("/orgs/:id/restore", authz.RequirePlatformPerm(authz.PermPlatformOrgLifecycle, platformAdminChecker), platformAdminHandler.RestoreOrg)
+	// 平台视角的企业成员（设计文档 §3.2）：只读账号元数据与角色，不读企业业务内容。
+	plat.GET("/orgs/:id/members", authz.RequirePlatformPerm(authz.PermPlatformOrgLifecycle, platformAdminChecker), platformAdminHandler.ListOrgMembers)
+	// 平台用户管理：账号列表/详情（读）+ 重置密码/禁用/启用（写）。
+	// 禁用语义见 handler/platform_user.go（登录与 refresh 一律拒绝，token 自然过期）。
+	plat.GET("/users", authz.RequirePlatformPerm(authz.PermPlatformUserRead, platformAdminChecker), platformAdminHandler.ListUsers)
+	plat.GET("/users/:id", authz.RequirePlatformPerm(authz.PermPlatformUserRead, platformAdminChecker), platformAdminHandler.GetUser)
+	plat.POST("/users/:id/reset-password", authz.RequirePlatformPerm(authz.PermPlatformUserManage, platformAdminChecker), platformAdminHandler.ResetUserPassword)
+	plat.POST("/users/:id/disable", authz.RequirePlatformPerm(authz.PermPlatformUserManage, platformAdminChecker), platformAdminHandler.DisableUser)
+	plat.POST("/users/:id/enable", authz.RequirePlatformPerm(authz.PermPlatformUserManage, platformAdminChecker), platformAdminHandler.EnableUser)
 	plat.GET("/config", authz.RequirePlatformPerm(authz.PermPlatformConfigRead, platformAdminChecker), platformAdminHandler.GetConfig)
 	plat.PUT("/config", authz.RequirePlatformPerm(authz.PermPlatformConfigWrite, platformAdminChecker), platformAdminHandler.PutConfig)
 	plat.GET("/audit-logs", authz.RequirePlatformPerm(authz.PermPlatformAuditView, platformAdminChecker), platformAdminHandler.ListAuditLogs)

@@ -196,7 +196,11 @@ func (h *PlatformAdminHandler) PutConfig(c *gin.Context) {
 	}
 	recordAudit(c, h.store, model.AuditScopePlatform, model.AuditActionPlatformConfigUpdate,
 		model.AuditTargetPlatformConf, model.PlatformGlobalConfigID,
-		map[string]any{"default_model": cfg.DefaultModel, "quota": cfg.Quota})
+		map[string]any{
+			"default_model": cfg.DefaultModel,
+			"quota":         cfg.Quota,
+			"hidden_menus":  cfg.HiddenMenus,
+		})
 	transport.WriteData(c, http.StatusOK, gin.H{"config": cfg})
 }
 

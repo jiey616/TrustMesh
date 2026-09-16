@@ -6,8 +6,11 @@ import type {
   AuditLogView,
   CreatePlatformOrgRequest,
   PlatformGlobalConfig,
+  PlatformOrgMemberView,
   PlatformOrgView,
   PlatformUsage,
+  PlatformUserView,
+  ResetPasswordResult,
 } from '@/types'
 
 // ─── 平台管理 API（设计文档 §3.2 / §6.4，/api/v1/platform/*） ───
@@ -65,4 +68,46 @@ export async function listAuditLogs(query?: AuditLogQuery) {
 
 export async function getPlatformUsage() {
   return apiClient.get('platform/usage').json<ApiResponse<{ usage: PlatformUsage }>>()
+}
+
+// ─── 平台侧用户管理 ───
+
+export async function listPlatformUsers(params?: {
+  keyword?: string
+  org_id?: string
+  status?: string
+}) {
+  const searchParams: Record<string, string> = {}
+  if (params?.keyword) searchParams.keyword = params.keyword
+  if (params?.org_id) searchParams.org_id = params.org_id
+  if (params?.status) searchParams.status = params.status
+  return apiClient
+    .get('platform/users', { searchParams })
+    .json<ApiListResponse<PlatformUserView>>()
+}
+
+export async function getPlatformUser(id: string) {
+  return apiClient.get(`platform/users/${id}`).json<ApiResponse<PlatformUserView>>()
+}
+
+/** 平台管理员重置账号密码：临时密码只在本次响应里返回一次，不落库、不写日志 */
+export async function resetPlatformUserPassword(id: string) {
+  return apiClient
+    .post(`platform/users/${id}/reset-password`)
+    .json<ApiResponse<ResetPasswordResult>>()
+}
+
+/** 禁用账号：登录 / refresh 一律拒绝（已发 access token 自然过期） */
+export async function setPlatformUserDisabled(id: string, disabled: boolean) {
+  const action = disabled ? 'disable' : 'enable'
+  return apiClient
+    .post(`platform/users/${id}/${action}`)
+    .json<ApiResponse<PlatformUserView>>()
+}
+
+/** 企业成员列表（平台视角）：仅企业租户，个人租户返回 404 */
+export async function listPlatformOrgMembers(orgId: string) {
+  return apiClient
+    .get(`platform/orgs/${orgId}/members`)
+    .json<ApiListResponse<PlatformOrgMemberView>>()
 }

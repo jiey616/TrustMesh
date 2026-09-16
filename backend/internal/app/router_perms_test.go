@@ -199,6 +199,13 @@ var routePermManifest = map[string]string{
 	"GET /api/v1/platform/llm-config":        authz.PermPlatformConfigRead,
 	"PUT /api/v1/platform/llm-config":        authz.PermPlatformConfigWrite,
 	"DELETE /api/v1/platform/llm-config":     authz.PermPlatformConfigWrite,
+	// 平台用户管理：查看（列表/详情/企业成员）与账号运维动作分两个权限点。
+	"GET /api/v1/platform/orgs/:id/members":          authz.PermPlatformOrgLifecycle,
+	"GET /api/v1/platform/users":                     authz.PermPlatformUserRead,
+	"GET /api/v1/platform/users/:id":                 authz.PermPlatformUserRead,
+	"POST /api/v1/platform/users/:id/reset-password": authz.PermPlatformUserManage,
+	"POST /api/v1/platform/users/:id/disable":        authz.PermPlatformUserManage,
+	"POST /api/v1/platform/users/:id/enable":         authz.PermPlatformUserManage,
 
 	// ── LLM 助手与配置 ──
 	// 租户层 LLM 配置在 handler 层已有细粒度守卫（租户层 owner-admin / 个人层本人），

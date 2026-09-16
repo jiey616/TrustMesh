@@ -156,6 +156,11 @@ func (s *Store) SetPlatformGlobalConfig(setterID string, in model.PlatformGlobal
 	if appErr != nil {
 		return nil, appErr
 	}
+	// 全局菜单基线与 org.menu_overrides 同规则（去空白/去重/上限），复用同一份规范化。
+	hiddenMenus, appErr := normalizeMenuOverrides(in.HiddenMenus)
+	if appErr != nil {
+		return nil, appErr
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -164,6 +169,7 @@ func (s *Store) SetPlatformGlobalConfig(setterID string, in model.PlatformGlobal
 		DefaultModel:   in.DefaultModel,
 		Quota:          in.Quota,
 		NodeParameters: params,
+		HiddenMenus:    hiddenMenus,
 		UpdatedAt:      time.Now().UTC(),
 		UpdatedBy:      setterID,
 	}
@@ -220,7 +226,22 @@ func clonePlatformGlobalConfig(cfg *model.PlatformGlobalConfig) *model.PlatformG
 			out.NodeParameters[k] = v
 		}
 	}
+	// HiddenMenus 是切片：不深拷贝会让调用方经返回值改写 store 内部状态。
+	if len(cfg.HiddenMenus) > 0 {
+		out.HiddenMenus = append([]string(nil), cfg.HiddenMenus...)
+	}
 	return &out
+}
+
+// PlatformHiddenMenus 返回平台全局菜单基线（未落库配置时为空）。
+// 供 /users/me 与企业级 menu_overrides 合并下发；返回副本，调用方改动不回流。
+func (s *Store) PlatformHiddenMenus() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.platformGlobalCfg == nil || len(s.platformGlobalCfg.HiddenMenus) == 0 {
+		return nil
+	}
+	return append([]string(nil), s.platformGlobalCfg.HiddenMenus...)
 }
 
 func validateQuota(q model.OrgQuota) *transport.AppError {
@@ -392,6 +413,63 @@ func sortOrgsByCreatedAt(orgs []*model.Organization) {
 	for i := 1; i < len(orgs); i++ {
 		for j := i; j > 0 && orgs[j].CreatedAt.Before(orgs[j-1].CreatedAt); j-- {
 			orgs[j], orgs[j-1] = orgs[j-1], orgs[j]
+		}
+	}
+}
+
+// ---------- 平台侧用户管理 ----------
+
+// ListAllUsers 列出全部账号（按注册时间升序），返回只读副本。
+// 平台视角的账号清单：不区分租户归属（归属关系由 handler 用 userOrgIndex 组合）。
+func (s *Store) ListAllUsers() []*model.User {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*model.User, 0, len(s.users))
+	for _, u := range s.users {
+		out = append(out, copyUser(u))
+	}
+	sortUsersByCreatedAt(out)
+	return out
+}
+
+// SetUserDisabled 切换账号的禁用状态（幂等：无变化不写库，handler 据此决定是否落审计）。
+//
+// 平台管理员账号（IsAdmin）拒绝操作：其账号集合以 env PLATFORM_ADMIN_EMAILS 为唯一权威
+// （见 SeedPlatformAdmins），控制台改不了 —— 禁用会造成 env 与库长期不一致，且重启后
+// 种子逻辑只同步 IsAdmin 标记、不会把账号重新启用。
+func (s *Store) SetUserDisabled(userID string, disabled bool) (*model.User, *transport.AppError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	u, ok := s.users[userID]
+	if !ok {
+		return nil, transport.NotFound("user not found")
+	}
+	if u.IsAdmin {
+		return nil, transport.Forbidden("platform admin accounts are managed by the deployment env seed")
+	}
+	if u.Disabled == disabled {
+		return copyUser(u), nil
+	}
+
+	now := time.Now().UTC()
+	u.Disabled = disabled
+	u.UpdatedAt = now
+	if disabled {
+		u.DisabledAt = &now
+	} else {
+		u.DisabledAt = nil
+	}
+	if err := s.persistUserUnsafe(u); err != nil {
+		return nil, mongoWriteError(err)
+	}
+	return copyUser(u), nil
+}
+
+func sortUsersByCreatedAt(users []*model.User) {
+	for i := 1; i < len(users); i++ {
+		for j := i; j > 0 && users[j].CreatedAt.Before(users[j-1].CreatedAt); j-- {
+			users[j], users[j-1] = users[j-1], users[j]
 		}
 	}
 }

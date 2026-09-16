@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -10,6 +11,13 @@ import (
 	"trustmesh/backend/internal/store"
 	"trustmesh/backend/internal/transport"
 )
+
+// disabledAccountError 是「账号已被平台管理员禁用」的统一响应。
+// 用独立 code（USER_DISABLED）而非笼统 FORBIDDEN，使客户端能靠 code 区分
+// 「被禁用」与「token 过期/租户越权」，不会误触发 refresh 重放。
+func disabledAccountError() *transport.AppError {
+	return transport.NewError(http.StatusForbidden, "USER_DISABLED", "account has been disabled by platform admin")
+}
 
 type AuthHandler struct {
 	store *store.Store
@@ -89,6 +97,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		transport.WriteError(c, &transport.AppError{Status: 401, Code: "INVALID_CREDENTIALS", Message: "invalid email or password", Details: map[string]any{}})
 		return
 	}
+	// 平台管理员禁用（平台用户管理）：口令校验**之后**才报禁用态 ——
+	// 反过来会把「账号是否被禁用」变成账号存在性的探针。
+	if user.Disabled {
+		transport.WriteError(c, disabledAccountError())
+		return
+	}
 	// 平台管理员登录落审计（设计文档 §6.4）：这条链路上 RequireAuth 还没跑，
 	// 因此直接构造审计记录（不经过 recordAudit 的中间件取 actor 逻辑）。
 	if h.store.UserIsPlatformAdmin(user.ID) {
@@ -138,8 +152,14 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	}
 
 	// Verify user still exists
-	if _, ok := h.store.FindUserByID(claims.UserID); !ok {
+	user, ok := h.store.FindUserByID(claims.UserID)
+	if !ok {
 		transport.WriteError(c, transport.Unauthorized("user not found"))
+		return
+	}
+	// 被禁用的账号不得靠 refresh token 续命（否则禁用形同虚设）。
+	if user.Disabled {
+		transport.WriteError(c, disabledAccountError())
 		return
 	}
 

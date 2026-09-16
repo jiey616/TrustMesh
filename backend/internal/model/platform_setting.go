@@ -85,8 +85,11 @@ type PlatformGlobalConfig struct {
 	Quota OrgQuota `json:"quota" bson:"quota"`
 	// NodeParameters 预留的节点级参数键值对（≤20 项，键值均 ≤64 字符）。
 	NodeParameters map[string]string `json:"node_parameters,omitempty" bson:"node_parameters,omitempty"`
-	UpdatedAt      time.Time         `json:"updated_at" bson:"updated_at"`
-	UpdatedBy      string            `json:"updated_by" bson:"updated_by"`
+	// HiddenMenus 平台全局菜单基线：被点名的菜单键对**所有租户**（企业 + 个人空间）隐藏。
+	// 语义与 org.menu_overrides 一致 —— 只能缩小可见范围，且只影响菜单显示、不改 API 鉴权。
+	HiddenMenus []string  `json:"hidden_menus,omitempty" bson:"hidden_menus,omitempty"`
+	UpdatedAt   time.Time `json:"updated_at" bson:"updated_at"`
+	UpdatedBy   string    `json:"updated_by" bson:"updated_by"`
 }
 
 // DefaultPlatformGlobalConfig 未落库时的默认全局配置（全部不限）。

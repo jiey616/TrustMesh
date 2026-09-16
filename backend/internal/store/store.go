@@ -351,6 +351,11 @@ func newID() string {
 
 func copyUser(u *model.User) *model.User {
 	clone := *u
+	// DisabledAt 是指针：不深拷贝会让调用方经返回值改写 store 内部状态。
+	if u.DisabledAt != nil {
+		t := *u.DisabledAt
+		clone.DisabledAt = &t
+	}
 	return &clone
 }
 

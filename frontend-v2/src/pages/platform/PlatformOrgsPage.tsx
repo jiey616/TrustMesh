@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   App,
   Button,
@@ -89,6 +90,7 @@ function CreateOrgModal({ open, onClose }: { open: boolean; onClose: () => void 
  */
 export function PlatformOrgsPage() {
   const { message } = App.useApp()
+  const navigate = useNavigate()
   const [keyword, setKeyword] = useState('')
   const [status, setStatus] = useState<string | undefined>(undefined)
   const [createOpen, setCreateOpen] = useState(false)
@@ -157,23 +159,28 @@ export function PlatformOrgsPage() {
     {
       title: '操作',
       key: 'actions',
-      width: 110,
+      width: 160,
       render: (_: unknown, o: PlatformOrgView) => (
-        <Popconfirm
-          title={o.status === 'disabled' ? '恢复该企业？' : '禁用该企业？'}
-          description={
-            o.status === 'disabled'
-              ? '恢复后其成员可立即正常访问。'
-              : '禁用后该企业成员的请求一律 403，恢复前无法使用。'
-          }
-          okText="确认"
-          cancelText="取消"
-          onConfirm={() => void handleToggle(o)}
-        >
-          <Button size="small" danger={o.status !== 'disabled'} loading={setStatusMutation.isPending}>
-            {o.status === 'disabled' ? '恢复' : '禁用'}
+        <Space size={8}>
+          <Button size="small" onClick={() => navigate(`/platform/orgs/${o.id}`)}>
+            详情
           </Button>
-        </Popconfirm>
+          <Popconfirm
+            title={o.status === 'disabled' ? '恢复该企业？' : '禁用该企业？'}
+            description={
+              o.status === 'disabled'
+                ? '恢复后其成员可立即正常访问。'
+                : '禁用后该企业成员的请求一律 403，恢复前无法使用。'
+            }
+            okText="确认"
+            cancelText="取消"
+            onConfirm={() => void handleToggle(o)}
+          >
+            <Button size="small" danger={o.status !== 'disabled'} loading={setStatusMutation.isPending}>
+              {o.status === 'disabled' ? '恢复' : '禁用'}
+            </Button>
+          </Popconfirm>
+        </Space>
       ),
     },
   ]
