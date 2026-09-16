@@ -2,13 +2,15 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as projectsApi from '@/api/projects'
 import type { CreateProjectRequest, UpdateProjectRequest, WorkflowProgress } from '@/types'
 
-export function useProjects() {
+// enabled 供 F2 门控使用：MainLayout 校准前传 false 挡住无头请求；默认 true 保持既有调用点零改动。
+export function useProjects(enabled = true) {
   return useQuery({
     queryKey: ['projects'],
     queryFn: async () => {
       const res = await projectsApi.listProjects()
       return res.data.items
     },
+    enabled,
   })
 }
 

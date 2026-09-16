@@ -10,10 +10,12 @@ export const externalAppKeys = {
   all: ['external-apps'] as const,
 }
 
-export function useExternalApps() {
+// enabled 供 F2 门控使用：MainLayout 校准前传 false 挡住无头请求；默认 true 保持既有调用点零改动。
+export function useExternalApps(enabled = true) {
   return useQuery({
     queryKey: externalAppKeys.all,
     queryFn: async () => (await externalAppsApi.listExternalApps()).data.external_apps,
+    enabled,
   })
 }
 

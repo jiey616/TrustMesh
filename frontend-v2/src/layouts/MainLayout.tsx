@@ -37,6 +37,7 @@ import { useOrganizations } from '@/hooks/useOrgs'
 import { useQueryClient } from '@tanstack/react-query'
 import { FloatingOrbs } from '@/components/FloatingOrbs'
 import { AssistantFab } from '@/components/assistant/AssistantFab'
+import { WorkspaceCalibratingSkeleton } from '@/components/workspace/WorkspaceCalibratingSkeleton'
 import { GradientText } from '@/components/GradientText'
 import { ThemeSwitch } from '@/components/ThemeSwitch'
 import { useTheme } from '@/theme/useTheme'
@@ -71,10 +72,6 @@ export function MainLayout() {
   const [collapsed, setCollapsed] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
-  const { data: unreadCount } = useUnreadCount()
-  const { data: projects } = useProjects()
-  const { data: externalApps } = useExternalApps()
-  const { data: orgs } = useOrganizations()
   const {
     user,
     logout,
@@ -84,7 +81,16 @@ export function MainLayout() {
     setPersonalOrgId,
     workspaceMemory,
     rememberWorkspace,
+    workspaceCalibrated,
+    setWorkspaceCalibrated,
   } = useAuthStore()
+  // F2 门控：校准完成前（workspaceCalibrated=false），这三个 hook 不发无头请求。
+  const { data: unreadCount } = useUnreadCount(workspaceCalibrated)
+  const { data: projects } = useProjects(workspaceCalibrated)
+  const { data: externalApps } = useExternalApps(workspaceCalibrated)
+  // INV-3 红线：useOrganizations 绝不门控（无参调用）——它必须最先、无头发出，
+  // 否则校准永不完成、门控永不打开 → 白屏级死锁。
+  const { data: orgs, isError: orgsError } = useOrganizations()
   const qc = useQueryClient()
   const { theme } = useTheme()
   useRealtimeEvents()
@@ -145,7 +151,8 @@ export function MainLayout() {
   const personalOrg = useMemo(() => (orgs ?? []).find((o) => o.kind === 'personal'), [orgs])
   const enterpriseOrgs = useMemo(() => (orgs ?? []).filter((o) => o.kind === 'enterprise'), [orgs])
 
-  // 统一工作区校准：orgs 就绪后**一次**决定 (a) 个人租户 id 水合 (b) 依「记忆」恢复企业空间。
+  // 统一工作区校准：orgs 就绪后**一次**决定 (a) 个人租户 id 水合 (b) 依「记忆」恢复企业空间，
+  // 并在**写完最终运行时态之后**打开 F2 门控（setWorkspaceCalibrated(true)）。
   //
   // 时序保证（照设计 §3.3(c)）：两个运行时 id 在**同一 tick 内**先写个人、再写企业，
   // 且只有紧随其后的 qc.removeQueries() 会触发重取（setActiveOrg/setPersonalOrgId 不改变
@@ -154,17 +161,38 @@ export function MainLayout() {
   //
   // 记忆经 resolveWorkspaceTarget 双守门（userId 匹配 + org 必须 ∈ 本账号 orgs）；
   // 任一不满足 → 返回 null → activeOrgId 回落 null（个人空间）。绝不写入未校验值。
+  //
+  // 🔴 开闸顺序不可写反：`setWorkspaceCalibrated(true)` 必须在 id 写入（及可能的
+  // removeQueries）之后——写反会静默复现 F2，且没有任何既有测试会失败。
+  // 注意：不再有「无变化就 return」的早退——即使幂等重跑也要（幂等地）开闸。
   useEffect(() => {
     if (!user || !orgs) return
     const nextPersonal = personalOrg?.id ?? null
     const nextActive = resolveWorkspaceTarget(workspaceMemory, user.id, orgs)
     const personalChanged = nextPersonal !== personalOrgId
     const activeChanged = nextActive !== activeOrgId
-    if (!personalChanged && !activeChanged) return
     if (personalChanged) setPersonalOrgId(nextPersonal)
     if (activeChanged) setActiveOrg(nextActive)
-    qc.removeQueries()
-  }, [user, orgs, personalOrg, workspaceMemory, activeOrgId, personalOrgId, qc, setActiveOrg, setPersonalOrgId])
+    if (personalChanged || activeChanged) qc.removeQueries()
+    setWorkspaceCalibrated(true)
+  }, [user, orgs, personalOrg, workspaceMemory, activeOrgId, personalOrgId, qc, setActiveOrg, setPersonalOrgId, setWorkspaceCalibrated])
+
+  // F2 门控 fail-open（有界，绝不永久卡住）：orgs 查询失败（重试耗尽）→ 立即开闸，
+  // 退化为「无头首轮」（= 改造前行为，后端无跨用户泄露，安全可接受）。
+  useEffect(() => {
+    if (orgsError) setWorkspaceCalibrated(true)
+  }, [orgsError, setWorkspaceCalibrated])
+
+  // F2 门控 fail-open 兜底：挂载 6s 仍未开闸（orgs 悬挂既不成功也不失败）→ 强制开闸。
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (!useAuthStore.getState().workspaceCalibrated) {
+        console.warn('[workspace-gate] fail-open: 校准超时，强制开闸')
+        setWorkspaceCalibrated(true)
+      }
+    }, 6000)
+    return () => window.clearTimeout(timer)
+  }, [setWorkspaceCalibrated])
   const roleLabel = (r: string) => (r === 'owner' ? 'Owner' : r === 'admin' ? 'Admin' : '成员')
 
   // 当前生效工作区：activeOrgId 为空 = 个人空间。侧边栏用户区与切换菜单都需要它。
@@ -172,7 +200,12 @@ export function MainLayout() {
     () => (orgs ?? []).find((o) => o.id === activeOrgId),
     [orgs, activeOrgId],
   )
-  const activeWorkspaceName = activeOrg?.name || personalOrg?.name || '个人空间'
+  // orgs 未就绪时显示中性占位，避免校准期短暂显示错误工作区名。
+  // 注意绑 `orgs` 而非 `workspaceCalibrated`：校准后的 removeQueries 会让 orgs 再短暂
+  // 变 undefined，此时用占位比用「个人空间」兜底更诚实。
+  const activeWorkspaceName = orgs
+    ? activeOrg?.name || personalOrg?.name || '个人空间'
+    : '工作区'
 
   const orgMenuItems: MenuProps['items'] = useMemo(
     () => [
@@ -344,7 +377,7 @@ export function MainLayout() {
               style={{ background: 'transparent', borderInlineEnd: 'none', marginTop: 8 }}
             />
 
-            {!collapsed && recentProjects.length > 0 && (
+            {!collapsed && workspaceCalibrated && recentProjects.length > 0 && (
               <div style={{ margin: '10px 8px 6px' }}>
                 <div
                   style={{
@@ -531,11 +564,11 @@ export function MainLayout() {
             key={isProjectDetail ? location.pathname.split('/')[2] : location.pathname}
             style={{ height: '100%' }}
           >
-            <Outlet />
+            {workspaceCalibrated ? <Outlet /> : <WorkspaceCalibratingSkeleton />}
           </motion.div>
         </Content>
-        {/* AI 助手悬浮入口（Ctrl+K） */}
-        <AssistantFab />
+        {/* AI 助手悬浮入口（Ctrl+K）——F2 门控：校准前不挂载，封死窗口内助手发起的无头写 */}
+        {workspaceCalibrated && <AssistantFab />}
       </Layout>
     </Layout>
   )

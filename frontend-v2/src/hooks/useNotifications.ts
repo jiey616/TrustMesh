@@ -33,7 +33,8 @@ export function useNotifications(filter = 'recent', limit = 50) {
   })
 }
 
-export function useUnreadCount() {
+// enabled 供 F2 门控使用：MainLayout 校准前传 false 挡住无头请求；默认 true 保持既有调用点零改动。
+export function useUnreadCount(enabled = true) {
   return useQuery({
     queryKey: ['notifications', 'unread-count'],
     queryFn: async () => {
@@ -42,6 +43,7 @@ export function useUnreadCount() {
     },
     staleTime: 15_000,
     refetchInterval: 30_000,
+    enabled,
   })
 }
 

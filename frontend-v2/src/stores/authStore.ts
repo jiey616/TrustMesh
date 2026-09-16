@@ -24,6 +24,16 @@ interface AuthState {
   personalOrgId: string | null
   /** 记忆（提示数据）：按 userId 维度记录上次选中的空间；校验通过后才被采用。 */
   workspaceMemory: WorkspaceMemory | null
+  /**
+   * F2 门控信号：本账号会话是否已完成一次工作区校准（`orgs` 就绪且最终运行时 id 已写入）。
+   *
+   * 三条硬约束（见 docs/remember-last-workspace-f2-gate-design-2026-09-16.md §1.5）：
+   *   - **非持久化**：不进 `partialize`，冷启动必为 false。
+   *   - **单调**：会话内只有 `setAuth`/`logout` 能写 false；校准后的 `orgs` 重取抖动
+   *     不会让它回落，故 gate 不可能 flap。
+   *   - **不可由 `orgs` 派生**：`!!orgs` 会随 `removeQueries()` 触发的重取抖动。
+   */
+  workspaceCalibrated: boolean
   setActiveOrg: (orgId: string | null) => void
   setPersonalOrgId: (orgId: string | null) => void
   setAuth: (accessToken: string, refreshToken: string, user: User) => void
@@ -31,6 +41,8 @@ interface AuthState {
   setTokens: (accessToken: string, refreshToken: string) => void
   /** 记录当前登录用户「上次选中的空间」；未登录（无 userId）时忽略。 */
   rememberWorkspace: (kind: WorkspaceKind, orgId?: string | null) => void
+  /** 开闸：校准提交 / fail-open 兜底。复位只发生在 setAuth / logout。 */
+  setWorkspaceCalibrated: (v: boolean) => void
   logout: () => void
   isAuthenticated: () => boolean
 }
@@ -44,11 +56,20 @@ export const useAuthStore = create<AuthState>()(
       activeOrgId: null,
       personalOrgId: null,
       workspaceMemory: null,
+      workspaceCalibrated: false,
       setActiveOrg: (orgId) => set({ activeOrgId: orgId }),
       setPersonalOrgId: (orgId) => set({ personalOrgId: orgId }),
-      // R1：换账号不继承租户上下文——两个运行时 id 一律复位为 null。
+      setWorkspaceCalibrated: (v) => set({ workspaceCalibrated: v }),
+      // R1：换账号不继承租户上下文——两个运行时 id 一律复位为 null，门控同步关闸。
       setAuth: (accessToken, refreshToken, user) =>
-        set({ accessToken, refreshToken, user, activeOrgId: null, personalOrgId: null }),
+        set({
+          accessToken,
+          refreshToken,
+          user,
+          activeOrgId: null,
+          personalOrgId: null,
+          workspaceCalibrated: false,
+        }),
       setUser: (user) => set({ user }),
       setTokens: (accessToken, refreshToken) => set({ accessToken, refreshToken }),
       // 记忆写入带 userId 守门：只写当前登录用户的记忆（R3 落到存储层）。
@@ -71,6 +92,7 @@ export const useAuthStore = create<AuthState>()(
           user: null,
           activeOrgId: null,
           personalOrgId: null,
+          workspaceCalibrated: false,
         }),
       isAuthenticated: () => !!get().refreshToken,
     }),

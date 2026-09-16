@@ -46,6 +46,8 @@ describe('authStore 持久化 rehydrate', () => {
     expect(state.activeOrgId).toBeNull()
     expect(state.personalOrgId).toBeNull()
     expect(state.workspaceMemory).toBeNull()
+    // F2 门控信号非持久化 → 冷启动必为 false（关闸）
+    expect(state.workspaceCalibrated).toBe(false)
   })
 
   it('v0 旧结构（含两个 org id）→ 剥离运行时态 + 合成企业记忆', async () => {
@@ -148,6 +150,8 @@ describe('authStore 持久化 rehydrate', () => {
         activeOrgId: 'org-hacked',
         personalOrgId: 'org-hacked-personal',
         workspaceMemory: { userId: 123, kind: 'bogus' },
+        // 篡改者试图伪造门控已开：merge 不读该字段 → 仍取 current 的 false
+        workspaceCalibrated: true,
       },
       version: 1,
     })
@@ -157,6 +161,8 @@ describe('authStore 持久化 rehydrate', () => {
     expect(state.personalOrgId).toBeNull()
     // 非法记忆 → parse 归一为 null
     expect(state.workspaceMemory).toBeNull()
+    // F2 门控非持久化：伪造的 true 不会穿过 merge，冷启动仍关闸
+    expect(state.workspaceCalibrated).toBe(false)
   })
 
   it('R10：JSON 损坏 → 静默降级为全空（不抛、不白屏）', async () => {

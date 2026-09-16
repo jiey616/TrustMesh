@@ -29,6 +29,7 @@ const resetState = {
   activeOrgId: null,
   personalOrgId: null,
   workspaceMemory: null,
+  workspaceCalibrated: false,
 }
 
 describe('authStore 租户上下文', () => {
@@ -87,6 +88,8 @@ describe('authStore 租户上下文', () => {
     expect(persisted.state.accessToken).toBeUndefined()
     expect(persisted.state.activeOrgId).toBeUndefined()
     expect(persisted.state.personalOrgId).toBeUndefined()
+    // F2 门控信号非持久化，同样绝不落盘
+    expect(persisted.state.workspaceCalibrated).toBeUndefined()
     expect(Object.keys(persisted.state).sort()).toEqual(['refreshToken', 'user', 'workspaceMemory'])
   })
 })
@@ -184,5 +187,40 @@ describe('authStore 工作区记忆与跨账号隔离（T2.5）', () => {
       kind: 'enterprise',
       orgId: 'org-B-ent',
     })
+  })
+})
+
+describe('authStore F2 门控信号 workspaceCalibrated', () => {
+  beforeEach(() => {
+    useAuthStore.setState(resetState)
+  })
+
+  it('R-init：初值为 false（冷启动默认关闸）', () => {
+    expect(useAuthStore.getState().workspaceCalibrated).toBe(false)
+  })
+
+  it('setWorkspaceCalibrated 可开闸 / 手动关闸', () => {
+    useAuthStore.getState().setWorkspaceCalibrated(true)
+    expect(useAuthStore.getState().workspaceCalibrated).toBe(true)
+
+    useAuthStore.getState().setWorkspaceCalibrated(false)
+    expect(useAuthStore.getState().workspaceCalibrated).toBe(false)
+  })
+
+  it('R-reset：setAuth（换账号）把已开闸的门控复位为 false', () => {
+    useAuthStore.getState().setWorkspaceCalibrated(true)
+
+    useAuthStore.getState().setAuth('tok-B', 'ref-B', userB)
+
+    expect(useAuthStore.getState().workspaceCalibrated).toBe(false)
+  })
+
+  it('R-reset：logout 把已开闸的门控复位为 false', () => {
+    useAuthStore.getState().setAuth('tok-A', 'ref-A', userA)
+    useAuthStore.getState().setWorkspaceCalibrated(true)
+
+    useAuthStore.getState().logout()
+
+    expect(useAuthStore.getState().workspaceCalibrated).toBe(false)
   })
 })

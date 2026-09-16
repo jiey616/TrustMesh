@@ -126,3 +126,40 @@ describe('「记住上次选中的空间」契约（源码级，T03）', () => {
     expect(count(mainLayoutSource, /qc\.removeQueries\(\)/g)).toBeGreaterThanOrEqual(2)
   })
 })
+
+describe('F2 门控契约（源码级，T-G3）', () => {
+  it('MainLayout 消费门控信号：读 workspaceCalibrated 并以 setWorkspaceCalibrated(true) 开闸', () => {
+    expect(mainLayoutSource).toMatch(/workspaceCalibrated/)
+    expect(mainLayoutSource).toMatch(/setWorkspaceCalibrated\(true\)/)
+  })
+
+  it('🔴 开闸顺序：removeQueries 之后才 setWorkspaceCalibrated(true)（写反=静默复现 F2）', () => {
+    expect(mainLayoutSource).toMatch(/qc\.removeQueries\(\)[\s\S]*?setWorkspaceCalibrated\(true\)/)
+  })
+
+  it('INV-3 护栏：useOrganizations 以无参调用，绝不接门控', () => {
+    expect(mainLayoutSource).toMatch(/useOrganizations\(\)/)
+    expect(mainLayoutSource).not.toMatch(/useOrganizations\(\s*workspaceCalibrated\s*\)/)
+  })
+
+  it('查询门控存在：三个 MainLayout 顶层 hook 以 workspaceCalibrated 为 enabled', () => {
+    expect(mainLayoutSource).toMatch(/useProjects\(workspaceCalibrated\)/)
+    expect(mainLayoutSource).toMatch(/useExternalApps\(workspaceCalibrated\)/)
+    expect(mainLayoutSource).toMatch(/useUnreadCount\(workspaceCalibrated\)/)
+  })
+
+  it('单调性护栏：MainLayout 中绝不出现 setWorkspaceCalibrated(false)（唯一写 false 的是 store 的 setAuth/logout）', () => {
+    expect(mainLayoutSource).not.toMatch(/setWorkspaceCalibrated\(false\)/)
+  })
+
+  it('渲染门控三处：Outlet 骨架切换 / 最近项目 / AssistantFab', () => {
+    expect(mainLayoutSource).toMatch(/workspaceCalibrated \? <Outlet \/> : <WorkspaceCalibratingSkeleton \/>/)
+    expect(mainLayoutSource).toMatch(/workspaceCalibrated && recentProjects\.length > 0/)
+    expect(mainLayoutSource).toMatch(/workspaceCalibrated && <AssistantFab \/>/)
+  })
+
+  it('fail-open 有界：orgs error 与 6s 超时兜底都在', () => {
+    expect(mainLayoutSource).toMatch(/orgsError/)
+    expect(mainLayoutSource).toMatch(/6000/)
+  })
+})
