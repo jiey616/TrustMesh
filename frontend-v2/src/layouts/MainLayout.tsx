@@ -72,9 +72,7 @@ const menuIcons: Record<string, React.ReactNode> = {
   '/meetings': <TeamOutlined />,
   '/knowledge': <BookOutlined />,
   '/market': <ShopOutlined />,
-  '/external-apps': <AppstoreOutlined />,
   '/ops': <AlertOutlined />,
-  '/organizations': <CrownOutlined />,
   '/platform/orgs': <BankOutlined />,
   '/platform/users': <TeamOutlined />,
   '/platform/config': <SettingOutlined />,
@@ -295,9 +293,9 @@ export function MainLayout() {
 
   const userMenuItems = [
     { key: 'orgs', icon: <SwapOutlined />, label: '切换工作区', children: orgMenuItems },
-    // 企业管理入口与侧边栏菜单同规则（组织域任一权限点）；平台管理员不显示（他碰不到业务）
+    // 组织管理入口与「个人信息」页同规则（组织域任一权限点）；平台管理员不显示（他碰不到业务）
     ...(!isPlatformAdmin && (!permReady || ORG_DOMAIN_PERMS.some((p) => permissions.includes(p)))
-      ? ([{ key: 'org-manage', icon: <CrownOutlined />, label: '企业管理' }] as const)
+      ? ([{ key: 'org-manage', icon: <CrownOutlined />, label: '组织管理' }] as const)
       : []),
     { type: 'divider' as const },
     { key: 'profile', icon: <UserOutlined />, label: '个人信息' },

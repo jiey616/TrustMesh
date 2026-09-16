@@ -103,7 +103,7 @@ export function PlatformAuditPage() {
     <div style={{ paddingBottom: 40 }}>
       <PageHeader
         title="平台管理 · 审计日志"
-        subtitle="全局操作留痕（企业敏感操作 + 平台操作），保留 180 天"
+        subtitle="全局操作留痕（组织敏感操作 + 平台操作），保留 180 天"
         actions={
           <Button icon={<ReloadOutlined />} onClick={() => void refetch()} loading={isFetching}>
             刷新

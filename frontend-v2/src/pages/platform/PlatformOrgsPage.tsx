@@ -45,7 +45,7 @@ function CreateOrgModal({ open, onClose }: { open: boolean; onClose: () => void 
         slug: values.slug?.trim() || undefined,
         owner_email: values.owner_email.trim(),
       })
-      message.success('企业已开通')
+      message.success('组织已开通')
       form.resetFields()
       onClose()
     } catch (e) {
@@ -55,7 +55,7 @@ function CreateOrgModal({ open, onClose }: { open: boolean; onClose: () => void 
 
   return (
     <Modal
-      title="代开企业"
+      title="代开组织"
       open={open}
       onCancel={onClose}
       onOk={handleOk}
@@ -64,7 +64,7 @@ function CreateOrgModal({ open, onClose }: { open: boolean; onClose: () => void 
       destroyOnHidden
     >
       <Form form={form} layout="vertical">
-        <Form.Item name="name" label="企业名称" rules={[{ required: true, message: '请输入企业名称' }]}>
+        <Form.Item name="name" label="组织名称" rules={[{ required: true, message: '请输入组织名称' }]}>
           <Input placeholder="例如：山雨影业" maxLength={64} />
         </Form.Item>
         <Form.Item name="slug" label="标识（可选）" extra="留空自动从名称生成">
@@ -74,7 +74,7 @@ function CreateOrgModal({ open, onClose }: { open: boolean; onClose: () => void 
           name="owner_email"
           label="Owner 账号邮箱"
           rules={[{ required: true, message: '请输入 Owner 邮箱' }]}
-          extra="必须是平台上已注册的账号；企业租户恒有唯一 Owner"
+          extra="必须是平台上已注册的账号；组织租户恒有唯一 Owner"
         >
           <Input placeholder="owner@example.com" />
         </Form.Item>
@@ -102,7 +102,7 @@ export function PlatformOrgsPage() {
     const disabled = org.status === 'disabled'
     try {
       await setStatusMutation.mutateAsync({ id: org.id, disabled: !disabled })
-      message.success(disabled ? '企业已恢复' : '企业已禁用（该企业成员立即被拦截）')
+      message.success(disabled ? '组织已恢复' : '组织已禁用（该组织成员立即被拦截）')
     } catch (e) {
       message.error(errMessage(e))
     }
@@ -110,7 +110,7 @@ export function PlatformOrgsPage() {
 
   const columns = [
     {
-      title: '企业',
+      title: '组织',
       key: 'name',
       render: (_: unknown, o: PlatformOrgView) => (
         <Space direction="vertical" size={0}>
@@ -166,11 +166,11 @@ export function PlatformOrgsPage() {
             详情
           </Button>
           <Popconfirm
-            title={o.status === 'disabled' ? '恢复该企业？' : '禁用该企业？'}
+            title={o.status === 'disabled' ? '恢复该组织？' : '禁用该组织？'}
             description={
               o.status === 'disabled'
                 ? '恢复后其成员可立即正常访问。'
-                : '禁用后该企业成员的请求一律 403，恢复前无法使用。'
+                : '禁用后该组织成员的请求一律 403，恢复前无法使用。'
             }
             okText="确认"
             cancelText="取消"
@@ -188,15 +188,15 @@ export function PlatformOrgsPage() {
   return (
     <div style={{ paddingBottom: 40 }}>
       <PageHeader
-        title="平台管理 · 企业"
-        subtitle="企业生命周期（元数据 / 开通 / 禁用 / 恢复）。平台管理员不接入企业业务数据"
+        title="平台管理 · 组织"
+        subtitle="组织生命周期（元数据 / 开通 / 禁用 / 恢复）。平台管理员不接入组织业务数据"
         actions={
           <Space>
             <Button icon={<ReloadOutlined />} onClick={() => void refetch()} loading={isFetching}>
               刷新
             </Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-              代开企业
+              代开组织
             </Button>
           </Space>
         }

@@ -119,7 +119,7 @@ export function PlatformUsersPage() {
       ),
     },
     {
-      title: '所属企业',
+      title: '所属组织',
       key: 'orgs',
       width: 180,
       render: (_: unknown, u: PlatformUserView) => (
@@ -191,7 +191,7 @@ export function PlatformUsersPage() {
     <div style={{ paddingBottom: 40 }}>
       <PageHeader
         title="平台管理 · 用户"
-        subtitle="账号运维：重置密码、禁用 / 启用。平台管理员只碰账号元数据，不读企业业务内容"
+        subtitle="账号运维：重置密码、禁用 / 启用。平台管理员只碰账号元数据，不读组织业务内容"
         actions={
           <Button icon={<ReloadOutlined />} onClick={() => void refetch()} loading={isFetching}>
             刷新

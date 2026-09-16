@@ -129,7 +129,7 @@ function RoleEditor({
         <Form.Item
           name="permissions"
           label="权限点（只能勾选内置 Admin 全集的子集）"
-          extra="企业设置与角色管理为 Owner 专属，不可授予自定义角色；菜单是否可见还会再受「企业级菜单可见性」缩小。"
+          extra="组织设置与角色管理为 Owner 专属，不可授予自定义角色；菜单是否可见还会再受「组织级菜单可见性」缩小。"
         >
           <Checkbox.Group style={{ width: '100%' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -275,7 +275,7 @@ export function OrgRolesCard({ orgId }: { orgId: string }) {
       />
       <Paragraph type="secondary" style={{ fontSize: 12, marginTop: 12, marginBottom: 0 }}>
         内置角色（Owner / Admin / 成员）权限集锁定不可改；需要差异化权限请新建自定义角色。
-        自定义角色最多拥有内置 Admin 的全集，且不能授予「企业设置」「角色管理」。
+        自定义角色最多拥有内置 Admin 的全集，且不能授予「组织设置」「角色管理」。
       </Paragraph>
 
       {editorOpen && (

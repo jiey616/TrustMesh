@@ -50,7 +50,7 @@ export function MenuVisibilityCard({ org }: { org: OrgView }) {
       }
     >
       <Paragraph type="secondary" style={{ fontSize: 12 }}>
-        勾选的菜单对本企业全员隐藏（包括你自己）。这里只能缩小可见范围，不会放大任何角色的权限；
+        勾选的菜单对本组织全员隐藏（包括你自己）。这里只能缩小可见范围，不会放大任何角色的权限；
         且只影响菜单显示，不影响接口鉴权。
       </Paragraph>
       <Checkbox.Group value={hidden} onChange={(v) => setHidden(v as string[])}>

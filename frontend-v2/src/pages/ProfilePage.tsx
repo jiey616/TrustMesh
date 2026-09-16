@@ -16,10 +16,18 @@ import {
   Tag,
   Typography,
 } from 'antd'
-import { EditOutlined, LockOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons'
+import {
+  AppstoreOutlined,
+  EditOutlined,
+  LockOutlined,
+  LogoutOutlined,
+  UserOutlined,
+} from '@ant-design/icons'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { ServerConfigCard } from '@/components/settings/ServerConfigCard'
+import { ORG_DOMAIN_PERMS } from '@/lib/perms'
 import { useAuthStore } from '@/stores/authStore'
+import { usePermStore } from '@/stores/permStore'
 import { isElectronRuntime } from '@/stores/serverConfigStore'
 import { useOrganizations, orgKeys } from '@/hooks/useOrgs'
 import { updateProfile, changePassword } from '@/api/user'
@@ -60,6 +68,17 @@ export function ProfilePage() {
 
   const activeOrg = (orgs ?? []).find((o) => o.id === activeOrgId)
   const enterpriseOrgs = (orgs ?? []).filter((o) => o.kind === 'enterprise')
+
+  // 「组织管理」「外部应用」两个入口原本在左侧主菜单，现统一收在本页。
+  // 可见性规则与各自路由的门禁对齐：平台管理员碰不到业务页（业务命名空间整体 403），
+  // 故一律不展示；组织管理再按组织域任一权限点判定。权限视图未就绪时 fail-open，
+  // 由路由 / 后端鉴权兜底（与 MainLayout 侧边栏同一规则）。
+  const permReady = usePermStore((s) => s.ready)
+  const permissions = usePermStore((s) => s.permissions)
+  const isPlatformAdmin = usePermStore((s) => s.isPlatformAdmin)
+  const canManageOrg =
+    !isPlatformAdmin && (!permReady || ORG_DOMAIN_PERMS.some((p) => permissions.includes(p)))
+  const showExternalApps = !isPlatformAdmin
 
   const handleLogout = () => {
     modal.confirm({
@@ -157,10 +176,17 @@ export function ProfilePage() {
 
       <Card
         title="工作区"
+        style={{ marginBottom: 16 }}
         extra={
-          <Button type="link" onClick={() => navigate('/organizations')} style={{ paddingInline: 4 }}>
-            企业管理
-          </Button>
+          canManageOrg ? (
+            <Button
+              type="link"
+              onClick={() => navigate('/organizations')}
+              style={{ paddingInline: 4 }}
+            >
+              组织管理
+            </Button>
+          ) : null
         }
       >
         {isLoading ? (
@@ -182,11 +208,11 @@ export function ProfilePage() {
               </Descriptions.Item>
             </Descriptions>
 
-            <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 13 }}>我所属的企业</div>
+            <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 13 }}>我所属的组织</div>
             {enterpriseOrgs.length === 0 ? (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="尚未加入任何企业"
+                description="尚未加入任何组织"
                 style={{ margin: '12px 0' }}
               />
             ) : (
@@ -196,7 +222,7 @@ export function ProfilePage() {
                 size="small"
                 pagination={false}
                 columns={[
-                  { title: '企业名称', dataIndex: 'name', key: 'name' },
+                  { title: '组织名称', dataIndex: 'name', key: 'name' },
                   {
                     title: '标识',
                     dataIndex: 'slug',
@@ -225,6 +251,27 @@ export function ProfilePage() {
           </>
         )}
       </Card>
+
+      {showExternalApps && (
+        <Card
+          title="外部应用"
+          style={{ marginBottom: 16 }}
+          extra={
+            <Button
+              type="link"
+              icon={<AppstoreOutlined />}
+              onClick={() => navigate('/external-apps')}
+              style={{ paddingInline: 4 }}
+            >
+              管理外部应用
+            </Button>
+          }
+        >
+          <Text type="secondary" style={{ fontSize: 13 }}>
+            查看可用的外部应用与 SSO 连接状态，管理打开方式（内嵌 / 新窗口）。
+          </Text>
+        </Card>
+      )}
 
       <EditProfileModal
         open={editOpen}

@@ -25,8 +25,8 @@ export function PlatformUsagePage() {
 
   const items: { title: string; value: number | string }[] = [
     { title: '租户总数', value: usage?.orgs_total ?? 0 },
-    { title: '企业租户', value: usage?.orgs_enterprise ?? 0 },
-    { title: '已禁用企业', value: usage?.orgs_disabled ?? 0 },
+    { title: '组织租户', value: usage?.orgs_enterprise ?? 0 },
+    { title: '已禁用组织', value: usage?.orgs_disabled ?? 0 },
     { title: '用户数', value: usage?.users ?? 0 },
     { title: '数字员工数', value: usage?.agents ?? 0 },
     { title: '项目数', value: usage?.projects ?? 0 },

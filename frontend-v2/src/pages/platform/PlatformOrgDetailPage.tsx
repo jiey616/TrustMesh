@@ -163,8 +163,8 @@ export function PlatformOrgDetailPage() {
   return (
     <div style={{ paddingBottom: 40 }}>
       <PageHeader
-        title={org ? `平台管理 · ${org.name}` : '平台管理 · 企业详情'}
-        subtitle="企业元数据与成员构成（成员只有账号信息与角色，不含业务数据）"
+        title={org ? `平台管理 · ${org.name}` : '平台管理 · 组织详情'}
+        subtitle="组织元数据与成员构成（成员只有账号信息与角色，不含业务数据）"
         actions={
           <Space>
             <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/platform/orgs')}>
@@ -186,7 +186,7 @@ export function PlatformOrgDetailPage() {
         style={{ background: 'var(--surface)', border: '1px solid var(--line)', marginBottom: 16 }}
       >
         <Descriptions size="small" column={3}>
-          <Descriptions.Item label="企业名称">{org?.name ?? '—'}</Descriptions.Item>
+          <Descriptions.Item label="组织名称">{org?.name ?? '—'}</Descriptions.Item>
           <Descriptions.Item label="标识">{org?.slug ?? '—'}</Descriptions.Item>
           <Descriptions.Item label="状态">
             {org ? (
@@ -214,7 +214,7 @@ export function PlatformOrgDetailPage() {
                   org.quota.max_projects,
                 )} / ${fmtQuota(org.quota.max_storage_bytes)}`
               : '—'}
-            <Tooltip title="企业 owner 可在企业设置里继续限制成员可见的菜单">
+            <Tooltip title="组织 owner 可在组织设置里继续限制成员可见的菜单">
               <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
                 菜单隐藏项：{org?.menu_overrides?.length ?? 0}
               </Text>

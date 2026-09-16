@@ -1,4 +1,4 @@
-import { ORG_DOMAIN_PERMS, PERM } from './perms'
+import { PERM } from './perms'
 
 /**
  * 菜单声明（设计文档 §4）：每个菜单项声明 `perm`（权限点）或 `anyPerms`（任一命中），
@@ -13,7 +13,12 @@ export interface MenuDef {
   anyPerms?: readonly string[]
 }
 
-/** 业务菜单（平台管理员一律不可见）。 */
+/**
+ * 业务菜单（平台管理员一律不可见）。
+ *
+ * 注意：`/organizations`（组织管理）与 `/external-apps`（外部应用）**不在**侧边栏，
+ * 它们的入口统一收在「个人信息」页（ProfilePage），路由本身保持不变（深链仍可用）。
+ */
 export const BUSINESS_MENUS: MenuDef[] = [
   { key: '/dashboard', label: '仪表盘' },
   { key: '/office', label: 'AI 办公室' },
@@ -23,14 +28,12 @@ export const BUSINESS_MENUS: MenuDef[] = [
   { key: '/meetings', label: '会议' },
   { key: '/knowledge', label: '知识库' },
   { key: '/market', label: '市场', perm: PERM.MARKET_BROWSE },
-  { key: '/external-apps', label: '外部应用' },
   { key: '/ops', label: '运维工单', perm: PERM.OPS_VIEW },
-  { key: '/organizations', label: '企业管理', anyPerms: ORG_DOMAIN_PERMS },
 ]
 
 /** 平台管理菜单组（仅平台管理员可见，设计文档 §3.2）。 */
 export const PLATFORM_MENUS: MenuDef[] = [
-  { key: '/platform/orgs', label: '企业管理' },
+  { key: '/platform/orgs', label: '组织管理' },
   { key: '/platform/users', label: '用户管理' },
   { key: '/platform/config', label: '全局配置' },
   { key: '/platform/audit', label: '审计日志' },

@@ -54,8 +54,10 @@ export function hasAnyPerm(perms: readonly string[], candidates: readonly string
 }
 
 /**
- * 「企业管理」菜单/路由的可见条件：组织域任一权限点（设计文档 §4）。
- * admin 有 org.member.mgr 所以能进，页内「企业设置」标签再按 org.settings 单独隐藏。
+ * 「组织管理」入口/路由的可见条件：组织域任一权限点（设计文档 §4）。
+ * admin 有 org.member.mgr 所以能进，页内「组织设置」标签再按 org.settings 单独隐藏。
+ *
+ * 入口位置：不在左侧主菜单，收在「个人信息」页（ProfilePage）与用户下拉菜单。
  */
 export const ORG_DOMAIN_PERMS = [
   PERM.ORG_SETTINGS,
@@ -68,7 +70,7 @@ export const PERM_GROUPS: { group: string; items: { perm: string; label: string 
   {
     group: '组织',
     items: [
-      { perm: PERM.ORG_SETTINGS, label: '企业设置（信息/菜单可见性）' },
+      { perm: PERM.ORG_SETTINGS, label: '组织设置（信息/菜单可见性）' },
       { perm: PERM.ORG_MEMBER_MGR, label: '成员管理（邀请/移除/改角色）' },
       { perm: PERM.ORG_ROLE_MGR, label: '角色管理' },
     ],

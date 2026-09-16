@@ -14,7 +14,7 @@ export function ForbiddenPage() {
     <Result
       status="403"
       title="403"
-      subTitle="抱歉，你没有访问该页面的权限。如需要请联系企业管理员调整你的角色。"
+      subTitle="抱歉，你没有访问该页面的权限。如需要请联系组织管理员调整你的角色。"
       extra={
         <Button type="primary" onClick={() => navigate('/dashboard')}>
           返回仪表盘

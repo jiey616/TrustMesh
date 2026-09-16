@@ -78,7 +78,7 @@ export function PlatformConfigPage() {
     }
     try {
       await save.mutateAsync(payload)
-      message.success('全局配置已保存（对新建企业生效）')
+      message.success('全局配置已保存（对新建组织生效）')
     } catch (e) {
       message.error(e instanceof ApiRequestError ? e.message : '保存失败')
     }
@@ -88,7 +88,7 @@ export function PlatformConfigPage() {
     <div style={{ maxWidth: 880, paddingBottom: 40 }}>
       <PageHeader
         title="平台管理 · 全局配置"
-        subtitle="默认模型、新建企业默认配额与节点参数；-1 表示不限"
+        subtitle="默认模型、新建组织默认配额与节点参数；-1 表示不限"
       />
 
       <Card
@@ -173,8 +173,8 @@ export function PlatformConfigPage() {
             style={{ marginTop: 16, background: 'var(--surface)', border: '1px solid var(--line)' }}
           >
             <Paragraph type="secondary" style={{ fontSize: 12 }}>
-              勾选的菜单对全平台所有租户（企业空间与个人空间）全员隐藏，平台管理菜单不受影响。
-              这里只能缩小可见范围，不会放大任何角色的权限；企业 owner 只能在此基础上继续缩小，
+              勾选的菜单对全平台所有租户（组织空间与个人空间）全员隐藏，平台管理菜单不受影响。
+              这里只能缩小可见范围，不会放大任何角色的权限；组织 owner 只能在此基础上继续缩小，
               不能抵消；且只影响菜单显示，不影响接口鉴权。
             </Paragraph>
             <Form.Item name="hidden_menus" noStyle>
@@ -191,7 +191,7 @@ export function PlatformConfigPage() {
           </Card>
 
           <Paragraph type="secondary" style={{ fontSize: 12, marginTop: 16, marginBottom: 0 }}>
-            配额变更只影响此后新建的企业租户，不会改动存量企业已有配额；菜单可见性变更即时生效。
+            配额变更只影响此后新建的组织租户，不会改动存量组织已有配额；菜单可见性变更即时生效。
           </Paragraph>
         </Form>
       </Card>

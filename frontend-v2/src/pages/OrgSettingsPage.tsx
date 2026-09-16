@@ -74,7 +74,7 @@ function CreateOrgModal({ open, onClose }: { open: boolean; onClose: () => void 
     const values = await form.validateFields()
     try {
       await createOrg.mutateAsync({ name: values.name.trim(), slug: values.slug?.trim() || undefined })
-      message.success('企业已创建，已切换到新企业')
+      message.success('组织已创建，已切换到新组织')
       onClose()
     } catch (e) {
       message.error(errMessage(e))
@@ -83,7 +83,7 @@ function CreateOrgModal({ open, onClose }: { open: boolean; onClose: () => void 
 
   return (
     <Modal
-      title="创建企业"
+      title="创建组织"
       open={open}
       onCancel={onClose}
       onOk={handleOk}
@@ -94,8 +94,8 @@ function CreateOrgModal({ open, onClose }: { open: boolean; onClose: () => void 
       <Form form={form} layout="vertical">
         <Form.Item
           name="name"
-          label="企业名称"
-          rules={[{ required: true, message: '请输入企业名称' }]}
+          label="组织名称"
+          rules={[{ required: true, message: '请输入组织名称' }]}
         >
           <Input placeholder="例如：山雨影业" maxLength={64} />
         </Form.Item>
@@ -107,7 +107,7 @@ function CreateOrgModal({ open, onClose }: { open: boolean; onClose: () => void 
           <Input placeholder="例如：shanyu-studio" maxLength={64} />
         </Form.Item>
         <Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
-          创建后你将成为该企业的 Owner，可在成员管理中邀请已有账号加入。
+          创建后你将成为该组织的 Owner，可在成员管理中邀请已有账号加入。
         </Paragraph>
       </Form>
     </Modal>
@@ -289,7 +289,7 @@ function MembersCard({ org }: { org: OrgView }) {
       {canManage && (
         <Paragraph type="secondary" style={{ fontSize: 12, marginTop: 12, marginBottom: 0 }}>
           仅能邀请已在平台注册的账号；Owner 不可移除或降级（转让功能二期提供）。
-          角色下拉包含本企业的自定义角色，其权限集在「角色管理」中维护。
+          角色下拉包含本组织的自定义角色，其权限集在「角色管理」中维护。
         </Paragraph>
       )}
     </Card>
@@ -328,7 +328,7 @@ export function OrgSettingsPage() {
                       color={isPersonal ? 'default' : 'blue'}
                       style={{ borderRadius: 'var(--radius-control)' }}
                     >
-                      {isPersonal ? '个人空间' : '企业'}
+                      {isPersonal ? '个人空间' : '组织'}
                     </Tag>
                     <Tag
                       color={current.my_role === 'owner' ? 'gold' : 'default'}
@@ -366,7 +366,7 @@ export function OrgSettingsPage() {
           ? [
               {
                 key: 'settings',
-                label: '企业设置',
+                label: '组织设置',
                 children: <MenuVisibilityCard org={current} />,
               },
             ]
@@ -404,11 +404,11 @@ export function OrgSettingsPage() {
   return (
     <div style={{ maxWidth: 880, margin: '0 auto', paddingBottom: 40 }}>
       <PageHeader
-        title="企业管理"
+        title="组织管理"
         subtitle="租户信息、成员、角色与菜单可见性（配额为预留字段，当前不做限额执行）"
         actions={
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-            创建企业
+            创建组织
           </Button>
         }
       />
