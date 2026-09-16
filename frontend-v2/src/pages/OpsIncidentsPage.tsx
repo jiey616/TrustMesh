@@ -26,6 +26,8 @@ import { PageHeader } from '@/components/shared/PageHeader'
 import { useCloseOpsIncident, useIgnoreOpsIncident, useOpsIncidents } from '@/hooks/useOps'
 import { ApiRequestError } from '@/types'
 import type { OpsAction, OpsIncident, OpsIncidentStatus } from '@/types/ops'
+import { usePermStore } from '@/stores/permStore'
+import { PERM } from '@/lib/perms'
 
 const { Text, Paragraph } = Typography
 
@@ -88,6 +90,10 @@ export function OpsIncidentsPage() {
     incident: OpsIncident
   } | null>(null)
   const [reason, setReason] = useState('')
+  // 关闭/忽略工单 = POST /ops/incidents/:id/close|ignore（ops.manage），
+  // 无权限时隐藏入口（权限视图未就绪时 fail-open，由后端 403 兜底）；
+  // 详情/刷新/筛选都是 GET 查询，不加门禁。
+  const canManageOps = usePermStore((s) => s.hasPerm(PERM.OPS_MANAGE))
 
   const { data: incidents, isLoading, isFetching, refetch } = useOpsIncidents(filter)
   const ignoreMut = useIgnoreOpsIncident()
@@ -220,7 +226,7 @@ export function OpsIncidentsPage() {
             >
               详情
             </Button>
-            {active && (
+            {active && canManageOps && (
               <>
                 <Button
                   size="small"
@@ -356,7 +362,7 @@ export function OpsIncidentsPage() {
         onClose={() => setDetailId(null)}
         styles={{ body: { padding: '16px 20px' } }}
         footer={
-          detail && detail.status !== 'resolved' && detail.status !== 'ignored' ? (
+          detail && canManageOps && detail.status !== 'resolved' && detail.status !== 'ignored' ? (
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <Button
                 icon={<CheckOutlined />}

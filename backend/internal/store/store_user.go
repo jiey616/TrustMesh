@@ -25,14 +25,17 @@ func (s *Store) CreateUser(email, name, passwordHash string) (*model.User, *tran
 	}
 	now := time.Now().UTC()
 	id := newID()
-	// A1：首个注册用户自动成为平台管理员（可管平台级 LLM 配置）。
+	// 平台管理员打标（权限体系 §6.3）：
+	//   - 配了 PLATFORM_ADMIN_EMAILS（种子模式）→ 只认 env 白名单（不需要重启即生效）；
+	//   - 未配 env → 保持历史行为：首个注册用户自动成为平台管理员（可管平台级配置）。
 	firstUser := len(s.users) == 0
+	seedMode := len(s.platformAdminEmails) > 0
 	u := &model.User{
 		ID:           id,
 		Email:        normalized,
 		Name:         strings.TrimSpace(name),
 		PasswordHash: passwordHash,
-		IsAdmin:      firstUser,
+		IsAdmin:      s.platformAdminEmails[normalized] || (!seedMode && firstUser),
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}

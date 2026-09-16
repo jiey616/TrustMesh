@@ -24,6 +24,8 @@ import {
   useCronExecutions,
 } from '@/hooks/useAgents'
 import { fetchLLMModels, testLLMConfig } from '@/api/llmConfig'
+import { usePermStore } from '@/stores/permStore'
+import { PERM } from '@/lib/perms'
 import type { CapabilityExecution, CapabilityJob, SetCapabilityResult } from '@/types'
 
 interface Props {
@@ -143,6 +145,8 @@ function SkillAddModal({ agentId, open, onClose }: { agentId: string; open: bool
 function HermesSkillsTab({ agentId }: Props) {
   const { data, isLoading } = useAgentCapabilities(agentId)
   const [addOpen, setAddOpen] = useState(false)
+  // 技能部署 = POST /agents/:id/capabilities + 技能上传（agent.manage），无权限隐藏入口。
+  const canManageAgent = usePermStore((s) => s.hasPerm(PERM.AGENT_MANAGE))
 
   if (isLoading) return <Spin />
   if (!data?.available)
@@ -162,9 +166,11 @@ function HermesSkillsTab({ agentId }: Props) {
           <BookOutlined className="text-[color:var(--text-tertiary)]" />
           <span className="text-sm font-semibold text-[color:var(--text-primary)]">技能</span>
           <Tag className="!text-xs" color="default">{skills.length}</Tag>
-          <Button size="small" className="ml-auto" icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>
-            部署技能
-          </Button>
+          {canManageAgent && (
+            <Button size="small" className="ml-auto" icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>
+              部署技能
+            </Button>
+          )}
         </div>
         {skills.length === 0 ? (
           <p className="px-1 py-3 text-sm text-[color:var(--text-quaternary)]">该节点暂无可展示的技能，点击右上角部署新技能</p>
@@ -395,6 +401,8 @@ function HermesModelsTab({ agentId }: Props) {
   const { message } = App.useApp()
   const [addOpen, setAddOpen] = useState(false)
   const setCapabilities = useSetAgentCapabilities(agentId)
+  // 模型新增/设为默认/删除 = POST /agents/:id/capabilities（agent.manage），无权限隐藏入口。
+  const canManageAgent = usePermStore((s) => s.hasPerm(PERM.AGENT_MANAGE))
 
   if (isLoading) return <Spin />
   if (!data?.available)
@@ -446,9 +454,11 @@ function HermesModelsTab({ agentId }: Props) {
           <ExperimentOutlined className="text-[color:var(--text-tertiary)]" />
           <span className="text-sm font-semibold text-[color:var(--text-primary)]">推理模型</span>
           <Tag className="!text-xs" color="default">{models.length}</Tag>
-          <Button size="small" className="ml-auto" icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>
-            添加 provider
-          </Button>
+          {canManageAgent && (
+            <Button size="small" className="ml-auto" icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>
+              添加 provider
+            </Button>
+          )}
         </div>
         {models.length === 0 ? (
           <p className="px-1 py-3 text-sm text-[color:var(--text-quaternary)]">该节点暂无可展示的模型，点击右上角添加 provider</p>
@@ -463,7 +473,7 @@ function HermesModelsTab({ agentId }: Props) {
                   </div>
                   <p className="mt-0.5 text-xs text-[color:var(--text-tertiary)] truncate font-mono">{m.provider}</p>
                 </div>
-                {!m.isDefault && (
+                {canManageAgent && !m.isDefault && (
                   <div className="flex items-center gap-1 shrink-0">
                     <Button size="small" type="link" onClick={() => switchDefault(m.id ?? m.model)} disabled={setCapabilities.isPending}>
                       设为默认
@@ -573,6 +583,8 @@ function JobRow({ job, agentId }: { job: CapabilityJob; agentId: string }) {
   const { message } = App.useApp()
   const setCapabilities = useSetAgentCapabilities(agentId)
   const [historyOpen, setHistoryOpen] = useState(false)
+  // 立即运行/暂停/恢复/删除定时任务 = POST /agents/:id/capabilities（agent.manage），无权限隐藏按钮组。
+  const canManageAgent = usePermStore((s) => s.hasPerm(PERM.AGENT_MANAGE))
   const latest = job.executions?.[0]
   const latestStatus = latest ? executionStatusStyle[latest.status] : null
 
@@ -614,13 +626,17 @@ function JobRow({ job, agentId }: { job: CapabilityJob; agentId: string }) {
       </div>
       <div className="flex items-center gap-1 shrink-0">
         <Button size="small" type="text" icon={<HistoryOutlined />} onClick={() => setHistoryOpen(true)} title="执行历史" />
-        <Button size="small" type="text" icon={<PlayCircleOutlined />} onClick={() => runAction('run')} loading={setCapabilities.isPending} title="立即运行" />
-        {job.enabled ? (
-          <Button size="small" type="text" icon={<PauseCircleOutlined />} onClick={() => runAction('pause')} loading={setCapabilities.isPending} title="暂停" />
-        ) : (
-          <Button size="small" type="text" icon={<RedoOutlined />} onClick={() => runAction('resume')} loading={setCapabilities.isPending} title="恢复" />
+        {canManageAgent && (
+          <>
+            <Button size="small" type="text" icon={<PlayCircleOutlined />} onClick={() => runAction('run')} loading={setCapabilities.isPending} title="立即运行" />
+            {job.enabled ? (
+              <Button size="small" type="text" icon={<PauseCircleOutlined />} onClick={() => runAction('pause')} loading={setCapabilities.isPending} title="暂停" />
+            ) : (
+              <Button size="small" type="text" icon={<RedoOutlined />} onClick={() => runAction('resume')} loading={setCapabilities.isPending} title="恢复" />
+            )}
+            <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => runAction('delete')} loading={setCapabilities.isPending} title="删除" />
+          </>
         )}
-        <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => runAction('delete')} loading={setCapabilities.isPending} title="删除" />
       </div>
       <JobExecutionsModal agentId={agentId} job={job} open={historyOpen} onClose={() => setHistoryOpen(false)} />
     </div>
@@ -691,6 +707,8 @@ function JobAddModal({ agentId, open, onClose }: { agentId: string; open: boolea
 function HermesJobsTab({ agentId }: Props) {
   const { data, isLoading } = useAgentCapabilities(agentId)
   const [addOpen, setAddOpen] = useState(false)
+  // 新建定时任务 = POST /agents/:id/capabilities（agent.manage），无权限隐藏入口。
+  const canManageAgent = usePermStore((s) => s.hasPerm(PERM.AGENT_MANAGE))
 
   if (isLoading) return <Spin />
   if (!data?.available)
@@ -710,9 +728,11 @@ function HermesJobsTab({ agentId }: Props) {
           <ScheduleOutlined className="text-[color:var(--text-tertiary)]" />
           <span className="text-sm font-semibold text-[color:var(--text-primary)]">定时任务</span>
           <Tag className="!text-xs" color="default">{jobs.length}</Tag>
-          <Button size="small" className="ml-auto" icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>
-            新建任务
-          </Button>
+          {canManageAgent && (
+            <Button size="small" className="ml-auto" icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>
+              新建任务
+            </Button>
+          )}
         </div>
         {jobs.length === 0 ? (
           <p className="px-1 py-3 text-sm text-[color:var(--text-quaternary)]">该节点暂无定时任务，点击右上角新建</p>

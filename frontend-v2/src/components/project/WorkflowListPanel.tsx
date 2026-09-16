@@ -23,6 +23,8 @@ import {
 import { useAgents } from '@/hooks/useAgents'
 import { WorkflowCanvasEditor } from '@/components/project/WorkflowCanvasEditor'
 import { AgentAvatar } from '@/components/shared/AgentAvatar'
+import { usePermStore } from '@/stores/permStore'
+import { PERM } from '@/lib/perms'
 import type { Project, Workflow } from '@/types'
 
 const { Text, Paragraph } = Typography
@@ -49,6 +51,10 @@ export function WorkflowListPanel({ project }: Props) {
   const inheritMutation = useInheritWorkflowTemplate()
   const applySyncMutation = useApplyWorkflowSync()
   const detachMutation = useDetachWorkflowTemplate()
+  // 工作流列表整体覆盖保存 / 设为总流程 = PATCH /projects/:id（project.manage），无权限隐藏入口。
+  const canManageProject = usePermStore((s) => s.hasPerm(PERM.PROJECT_MANAGE))
+  // 继承 / 同步 / 拆离模板 = workflow-templates 相关写操作（workflow.template.mgr），无权限隐藏入口。
+  const canManageWorkflow = usePermStore((s) => s.hasPerm(PERM.WORKFLOW_TEMPLATE_MGR))
 
   const [editing, setEditing] = useState<{ index: number; wf: Workflow } | null>(null)
   const [pending, setPending] = useState(false)
@@ -199,21 +205,25 @@ export function WorkflowListPanel({ project }: Props) {
           </Text>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <Button
-            icon={<LinkOutlined />}
-            disabled={!project}
-            onClick={() => setInheritOpen(true)}
-          >
-            从模板继承
-          </Button>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            disabled={!project}
-            onClick={() => setEditing({ index: -1, wf: { name: '', steps: [] } })}
-          >
-            新建工作流
-          </Button>
+          {canManageWorkflow && (
+            <Button
+              icon={<LinkOutlined />}
+              disabled={!project}
+              onClick={() => setInheritOpen(true)}
+            >
+              从模板继承
+            </Button>
+          )}
+          {canManageProject && (
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              disabled={!project}
+              onClick={() => setEditing({ index: -1, wf: { name: '', steps: [] } })}
+            >
+              新建工作流
+            </Button>
+          )}
         </div>
       </div>
 
@@ -227,9 +237,11 @@ export function WorkflowListPanel({ project }: Props) {
             }
             style={{ padding: '48px 0' }}
           >
-            <Button type="primary" icon={<PlusOutlined />} disabled={!project} onClick={() => setEditing({ index: -1, wf: { name: '', steps: [] } })}>
-              新建工作流
-            </Button>
+            {canManageProject && (
+              <Button type="primary" icon={<PlusOutlined />} disabled={!project} onClick={() => setEditing({ index: -1, wf: { name: '', steps: [] } })}>
+                新建工作流
+              </Button>
+            )}
           </Empty>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: 12 }}>
@@ -306,7 +318,8 @@ export function WorkflowListPanel({ project }: Props) {
                       模板可更新
                     </span>
                   )}
-                  {primaryIndex === idx ? (
+                  {/* 设为/取消总流程 = PATCH /projects/:id（project.manage），无权限隐藏入口 */}
+                  {canManageProject && (primaryIndex === idx ? (
                     <Tooltip title="取消总流程标记">
                       <Button type="text" size="small" icon={<FlagOutlined />} style={{ color: 'var(--warning)' }} onClick={() => handleSetPrimary(-1)} />
                     </Tooltip>
@@ -314,23 +327,30 @@ export function WorkflowListPanel({ project }: Props) {
                     <Tooltip title="设为项目总流程（项目详情顶部展示整体进度）">
                       <Button type="text" size="small" icon={<FlagOutlined />} style={{ color: 'var(--text-quaternary)' }} onClick={() => handleSetPrimary(idx)} />
                     </Tooltip>
-                  )}
-                  {wf.parent_template_id && hasUpdate(wf) && (
+                  ))}
+                  {/* 同步模板更新 = POST .../sync（workflow.template.mgr），仅隐藏入口，diff 预览仍是只读查询 */}
+                  {canManageWorkflow && wf.parent_template_id && hasUpdate(wf) && (
                     <Tooltip title="同步模板更新">
                       <Button type="text" size="small" icon={<SyncOutlined />} style={{ color: 'var(--success)' }} onClick={() => openSync(wf.id!)} />
                     </Tooltip>
                   )}
-                  {wf.parent_template_id && (
+                  {/* 解除继承 = POST .../detach（workflow.template.mgr），无权限隐藏入口 */}
+                  {canManageWorkflow && wf.parent_template_id && (
                     <Tooltip title="解除继承">
                       <Button type="text" size="small" icon={<DisconnectOutlined />} style={{ color: 'var(--text-quaternary)' }} onClick={() => handleDetach(wf.id!)} />
                     </Tooltip>
                   )}
-                  <Tooltip title="编辑">
-                    <Button type="text" size="small" icon={<EditOutlined />} style={{ color: 'var(--text-tertiary)' }} onClick={() => setEditing({ index: idx, wf: cloneWorkflow(wf) })} />
-                  </Tooltip>
-                  <Tooltip title="删除">
-                    <Button type="text" size="small" icon={<DeleteOutlined />} style={{ color: 'var(--text-quaternary)' }} onClick={() => setDeleting(idx)} />
-                  </Tooltip>
+                  {/* 编辑/删除工作流 = PATCH /projects/:id 整体覆盖保存（project.manage），无权限隐藏入口 */}
+                  {canManageProject && (
+                    <Tooltip title="编辑">
+                      <Button type="text" size="small" icon={<EditOutlined />} style={{ color: 'var(--text-tertiary)' }} onClick={() => setEditing({ index: idx, wf: cloneWorkflow(wf) })} />
+                    </Tooltip>
+                  )}
+                  {canManageProject && (
+                    <Tooltip title="删除">
+                      <Button type="text" size="small" icon={<DeleteOutlined />} style={{ color: 'var(--text-quaternary)' }} onClick={() => setDeleting(idx)} />
+                    </Tooltip>
+                  )}
                 </div>
 
                 {/* 步骤链预览 */}

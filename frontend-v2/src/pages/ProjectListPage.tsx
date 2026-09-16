@@ -9,6 +9,8 @@ import { useWorkflowTemplates } from '@/hooks/useWorkflows'
 import { PageHeader } from '@/components/shared/PageHeader'
 import type { ApiListResponse, Project, ProjectWorkStatus, AgentStatus } from '@/types'
 import dayjs from 'dayjs'
+import { usePermStore } from '@/stores/permStore'
+import { PERM } from '@/lib/perms'
 
 const { Text } = Typography
 
@@ -35,6 +37,9 @@ export function ProjectListPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { message } = App.useApp()
+  // 新建项目 = POST /projects（project.create），member 已收紧，
+  // 无权限时隐藏入口（权限视图未就绪时 fail-open，由后端 403 兜底）。
+  const canCreateProject = usePermStore((s) => s.hasPerm(PERM.PROJECT_CREATE))
 
   // 进入项目：从抽屉里点进去时顺手关掉抽屉，避免返回后还挂着一层。
   const goProject = (id: string) => {
@@ -188,12 +193,16 @@ export function ProjectListPage() {
         icon={<ProjectOutlined />}
         actions={
           <>
+            {/* 已归档项目抽屉只是查询（GET /projects），不加门禁 */}
             <Button icon={<InboxOutlined />} onClick={() => setArchivedOpen(true)}>
               已归档项目{archivedProjects.length > 0 ? ` (${archivedProjects.length})` : ''}
             </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
-              新建项目
-            </Button>
+            {/* 新建项目 = project.create */}
+            {canCreateProject && (
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
+                新建项目
+              </Button>
+            )}
           </>
         }
       />

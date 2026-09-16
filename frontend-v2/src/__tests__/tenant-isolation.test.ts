@@ -142,9 +142,12 @@ describe('F2 门控契约（源码级，T-G3）', () => {
     expect(mainLayoutSource).not.toMatch(/useOrganizations\(\s*workspaceCalibrated\s*\)/)
   })
 
-  it('查询门控存在：三个 MainLayout 顶层 hook 以 workspaceCalibrated 为 enabled', () => {
-    expect(mainLayoutSource).toMatch(/useProjects\(workspaceCalibrated\)/)
-    expect(mainLayoutSource).toMatch(/useExternalApps\(workspaceCalibrated\)/)
+  it('查询门控存在：三个 MainLayout 顶层 hook 以 workspaceCalibrated 派生的开关为 enabled', () => {
+    // 业务查询门控开关必须由 workspaceCalibrated 派生（叠加「平台管理员不发业务请求」的排除），
+    // 不允许绕过校准直接传字面量 true / 裸调用。
+    expect(mainLayoutSource).toMatch(/const businessEnabled = workspaceCalibrated && !isPlatformAdmin/)
+    expect(mainLayoutSource).toMatch(/useProjects\(businessEnabled\)/)
+    expect(mainLayoutSource).toMatch(/useExternalApps\(businessEnabled\)/)
     expect(mainLayoutSource).toMatch(/useUnreadCount\(workspaceCalibrated\)/)
   })
 

@@ -1424,7 +1424,12 @@ func seedEnterpriseJoinRequestFixture(s *Store, inviter, trID, nodeID string) (*
 	return orgA, jr
 }
 
-// 发起时锁定语义：企业锁定申请由该企业 owner/admin 审批，agent 归属继承申请。
+// 发起时锁定语义：企业锁定申请由该企业成员上下文审批，agent 归属继承申请。
+//
+// 权限体系落地后（docs/permission-system-design-2026-09-16.md §6.2），
+// 「谁能审批」的能力门禁已上移到路由层 RequirePerm(join_request.approve)
+// （member 在那里被 403，见 authz 包中间件测试）；store 层只保留
+// 租户匹配这一数据级约束 —— 本测试据此分两路断言。
 func TestApproveJoinRequestOwnerOrg(t *testing.T) {
 	s := New()
 	orgA, jr := seedEnterpriseJoinRequestFixture(s, "u1", "tr-lock-1", "node-lock-1")
@@ -1432,18 +1437,11 @@ func TestApproveJoinRequestOwnerOrg(t *testing.T) {
 		t.Fatalf("add member: %v", err)
 	}
 
-	// member 带企业头：可见但无权审批
-	if _, err := s.ApproveJoinRequest(Scope{UserID: "u2", OrgID: orgA.ID, Role: model.OrgRoleMember}, jr.ID, JoinRequestOverrides{}); err == nil {
-		t.Fatal("member must not approve enterprise-locked join request")
-	}
-	// owner 无企业头：无权审批
-	if _, err := s.ApproveJoinRequest(Scope{UserID: jr.UserID}, jr.ID, JoinRequestOverrides{}); err == nil {
-		t.Fatal("owner without org ctx must not approve enterprise-locked join request")
-	}
-	// owner 带企业头：可审批，agent 继承申请归属（该企业 + 邀请人）
-	agent, err := s.ApproveJoinRequest(Scope{UserID: jr.UserID, OrgID: orgA.ID, Role: model.OrgRoleOwner}, jr.ID, JoinRequestOverrides{})
+	// member 带本企业头：store 层不再按角色拦截（能力门禁在路由层），
+	// 审批通过且 agent 归属继承申请（该企业 + 邀请人）。
+	agent, err := s.ApproveJoinRequest(Scope{UserID: "u2", OrgID: orgA.ID, Role: model.OrgRoleMember}, jr.ID, JoinRequestOverrides{})
 	if err != nil {
-		t.Fatalf("approve: %v", err)
+		t.Fatalf("member with matching org ctx must pass store-level tenant check: %v", err)
 	}
 	if agent.OrgID != orgA.ID {
 		t.Fatalf("agent.OrgID = %q, want %q", agent.OrgID, orgA.ID)
@@ -1452,10 +1450,7 @@ func TestApproveJoinRequestOwnerOrg(t *testing.T) {
 		t.Fatalf("agent.UserID = %q, want inviter", agent.UserID)
 	}
 
-	// admin 同样可审（第二条申请）
-	if _, err := s.AddOrgMember(orgA.ID, "u3", model.OrgRoleAdmin); err != nil {
-		t.Fatalf("add admin: %v", err)
-	}
+	// 租户不匹配（owner 无企业头）：store 层数据级约束仍拦截。
 	jr2, err := s.CreateJoinRequest(CreateJoinRequestInput{
 		TrustRequestID: "tr-lock-2",
 		UserID:         jr.UserID,
@@ -1468,7 +1463,31 @@ func TestApproveJoinRequestOwnerOrg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed jr2: %v", err)
 	}
-	if _, err := s.ApproveJoinRequest(Scope{UserID: "u3", OrgID: orgA.ID, Role: model.OrgRoleAdmin}, jr2.ID, JoinRequestOverrides{}); err != nil {
+	if _, err := s.ApproveJoinRequest(Scope{UserID: jr.UserID}, jr2.ID, JoinRequestOverrides{}); err == nil {
+		t.Fatal("owner without org ctx must not approve enterprise-locked join request")
+	}
+	// owner 带企业头：可审批。
+	if _, err := s.ApproveJoinRequest(Scope{UserID: jr.UserID, OrgID: orgA.ID, Role: model.OrgRoleOwner}, jr2.ID, JoinRequestOverrides{}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+
+	// admin 同样可审（第三条申请）
+	if _, err := s.AddOrgMember(orgA.ID, "u3", model.OrgRoleAdmin); err != nil {
+		t.Fatalf("add admin: %v", err)
+	}
+	jr3, err := s.CreateJoinRequest(CreateJoinRequestInput{
+		TrustRequestID: "tr-lock-3",
+		UserID:         jr.UserID,
+		OrgID:          orgA.ID,
+		NodeID:         "node-lock-3",
+		Name:           "locked-agent-3",
+		Role:           "developer",
+		ReceivedAt:     time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("seed jr3: %v", err)
+	}
+	if _, err := s.ApproveJoinRequest(Scope{UserID: "u3", OrgID: orgA.ID, Role: model.OrgRoleAdmin}, jr3.ID, JoinRequestOverrides{}); err != nil {
 		t.Fatalf("admin approve: %v", err)
 	}
 }

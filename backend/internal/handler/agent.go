@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"trustmesh/backend/internal/clawsynapse"
+	"trustmesh/backend/internal/model"
 	"trustmesh/backend/internal/store"
 	"trustmesh/backend/internal/transport"
 )
@@ -140,6 +141,9 @@ func (h *AgentHandler) Delete(c *gin.Context) {
 		defer cancel()
 		_ = h.clawClient.RevokeTrust(ctx, agent.NodeID, "agent removed from TrustMesh")
 	}
+
+	recordAudit(c, h.store, agent.OrgID, model.AuditActionAgentDelete, model.AuditTargetAgent, agent.ID,
+		map[string]any{"name": agent.Name, "node_id": agent.NodeID})
 
 	c.Status(http.StatusNoContent)
 }

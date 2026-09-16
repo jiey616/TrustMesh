@@ -24,9 +24,16 @@ import {
   BankOutlined,
   AlertOutlined,
   ApiOutlined,
+  SettingOutlined,
+  AuditOutlined,
+  BarChartOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
 import { useAuthStore } from '@/stores/authStore'
+import { usePermStore } from '@/stores/permStore'
+import { ORG_DOMAIN_PERMS } from '@/lib/perms'
+import { BUSINESS_MENUS, PLATFORM_MENUS, visibleMenus } from '@/lib/menuDefs'
+import { usePermView } from '@/hooks/usePermView'
 import { resolveWorkspaceTarget } from '@/lib/workspaceMemory'
 import { isElectronRuntime } from '@/stores/serverConfigStore'
 import { useUnreadCount } from '@/hooks/useNotifications'
@@ -55,18 +62,24 @@ const workStatusMap: Record<ProjectWorkStatus, { color: string; label: string }>
   archived: { color: 'default', label: '归档' },
 }
 
-const staticMenuItems: MenuProps['items'] = [
-  { key: '/dashboard', icon: <DashboardOutlined />, label: '仪表盘' },
-  { key: '/office', icon: <HomeOutlined />, label: 'AI 办公室' },
-  { key: '/projects', icon: <ProjectOutlined />, label: '项目' },
-  { key: '/workflows', icon: <ApartmentOutlined />, label: '工作流' },
-  { key: '/agents', icon: <RobotOutlined />, label: '数字员工' },
-  { key: '/meetings', icon: <TeamOutlined />, label: '会议' },
-  { key: '/knowledge', icon: <BookOutlined />, label: '知识库' },
-  { key: '/market', icon: <ShopOutlined />, label: '市场' },
-  { key: '/external-apps', icon: <AppstoreOutlined />, label: '外部应用' },
-  { key: '/ops', icon: <AlertOutlined />, label: '运维工单' },
-]
+/** 菜单键 → 图标（菜单的标题/权限绑定见 lib/menuDefs.ts，此处只补展示细节）。 */
+const menuIcons: Record<string, React.ReactNode> = {
+  '/dashboard': <DashboardOutlined />,
+  '/office': <HomeOutlined />,
+  '/projects': <ProjectOutlined />,
+  '/workflows': <ApartmentOutlined />,
+  '/agents': <RobotOutlined />,
+  '/meetings': <TeamOutlined />,
+  '/knowledge': <BookOutlined />,
+  '/market': <ShopOutlined />,
+  '/external-apps': <AppstoreOutlined />,
+  '/ops': <AlertOutlined />,
+  '/organizations': <CrownOutlined />,
+  '/platform/orgs': <BankOutlined />,
+  '/platform/config': <SettingOutlined />,
+  '/platform/audit': <AuditOutlined />,
+  '/platform/usage': <BarChartOutlined />,
+}
 
 export function MainLayout() {
   const [collapsed, setCollapsed] = useState(false)
@@ -84,10 +97,15 @@ export function MainLayout() {
     workspaceCalibrated,
     setWorkspaceCalibrated,
   } = useAuthStore()
+  const { permissions, menuOverrides, isPlatformAdmin, ready: permReady } = usePermStore()
   // F2 门控：校准完成前（workspaceCalibrated=false），这三个 hook 不发无头请求。
   const { data: unreadCount } = useUnreadCount(workspaceCalibrated)
-  const { data: projects } = useProjects(workspaceCalibrated)
-  const { data: externalApps } = useExternalApps(workspaceCalibrated)
+  // 权限视图同样挂 F2 门控：permissions 按 X-Org-Id 解析，校准前的结果不可信。
+  usePermView(workspaceCalibrated)
+  // 平台管理员调业务 API 一律 403，不必发注定失败的请求（有界省流，非安全边界）。
+  const businessEnabled = workspaceCalibrated && !isPlatformAdmin
+  const { data: projects } = useProjects(businessEnabled)
+  const { data: externalApps } = useExternalApps(businessEnabled)
   // INV-3 红线：useOrganizations 绝不门控（无参调用）——它必须最先、无头发出，
   // 否则校准永不完成、门控永不打开 → 白屏级死锁。
   const { data: orgs, isError: orgsError } = useOrganizations()
@@ -105,10 +123,22 @@ export function MainLayout() {
     [externalApps],
   )
 
+  // 菜单过滤（设计文档 §4）：平台管理员只见平台菜单组，业务菜单全隐藏；
+  // 业务菜单按「权限点命中 + 企业覆盖未隐藏」过滤。
   const menuItems = useMemo<MenuProps['items']>(() => {
-    if (mountedApps.length === 0) return staticMenuItems
+    const baseItems: MenuProps['items'] = (isPlatformAdmin
+      ? visibleMenus(PLATFORM_MENUS, {
+          permissions,
+          menuOverrides: [],
+          isPlatformAdmin,
+          ready: permReady,
+        })
+      : visibleMenus(BUSINESS_MENUS, { permissions, menuOverrides, isPlatformAdmin, ready: permReady })
+    ).map((m) => ({ key: m.key, icon: menuIcons[m.key], label: m.label }))
+
+    if (isPlatformAdmin || mountedApps.length === 0) return baseItems
     return [
-      ...(staticMenuItems ?? []),
+      ...(baseItems ?? []),
       { type: 'divider' },
       ...mountedApps.map((a) => ({
         key: `/app/${a.id}`,
@@ -124,7 +154,7 @@ export function MainLayout() {
         label: a.name,
       })),
     ]
-  }, [mountedApps])
+  }, [mountedApps, isPlatformAdmin, permissions, menuOverrides, permReady])
 
   const pathSeg = location.pathname.split('/')[1] || 'dashboard'
   const selectedKey =
@@ -134,6 +164,8 @@ export function MainLayout() {
 
   const handleLogout = () => {
     logout()
+    // 权限视图是运行时数据，登出即复位（换账号登录前不允许残留上一个账号的权限集）。
+    usePermStore.getState().reset()
     // 清掉 react-query 缓存：QueryClient 是模块级单例，跨账号存活，
     // 不清会导致换账号登录后命中上一个账号的 orgs/项目等缓存数据。
     qc.clear()
@@ -258,7 +290,10 @@ export function MainLayout() {
 
   const userMenuItems = [
     { key: 'orgs', icon: <SwapOutlined />, label: '切换工作区', children: orgMenuItems },
-    { key: 'org-manage', icon: <CrownOutlined />, label: '企业管理' },
+    // 企业管理入口与侧边栏菜单同规则（组织域任一权限点）；平台管理员不显示（他碰不到业务）
+    ...(!isPlatformAdmin && (!permReady || ORG_DOMAIN_PERMS.some((p) => permissions.includes(p)))
+      ? ([{ key: 'org-manage', icon: <CrownOutlined />, label: '企业管理' }] as const)
+      : []),
     { type: 'divider' as const },
     { key: 'profile', icon: <UserOutlined />, label: '个人信息' },
     // 服务器地址配置仅桌面端可用（Web/容器部署固定走同源 /api/v1/）

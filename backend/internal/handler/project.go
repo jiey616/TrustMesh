@@ -163,5 +163,7 @@ func (h *ProjectHandler) Archive(c *gin.Context) {
 		transport.WriteError(c, appErr)
 		return
 	}
+	recordAudit(c, h.store, project.OrgID, model.AuditActionProjectArchive, model.AuditTargetProject, project.ID,
+		map[string]any{"name": project.Name})
 	transport.WriteData(c, http.StatusOK, project)
 }

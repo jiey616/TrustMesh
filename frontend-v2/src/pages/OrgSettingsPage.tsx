@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   App,
   Button,
@@ -12,13 +12,19 @@ import {
   Select,
   Skeleton,
   Table,
+  Tabs,
   Tag,
   Typography,
 } from 'antd'
+import type { TabsProps } from 'antd'
 import { PlusOutlined, TeamOutlined } from '@ant-design/icons'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { useAuthStore } from '@/stores/authStore'
+import { usePermStore } from '@/stores/permStore'
+import { PERM } from '@/lib/perms'
 import { LLMConfigCard } from '@/components/settings/LLMConfigCard'
+import { OrgRolesCard } from '@/components/settings/OrgRolesCard'
+import { MenuVisibilityCard } from '@/components/settings/MenuVisibilityCard'
 import {
   useAddOrgMember,
   useCreateOrg,
@@ -27,20 +33,15 @@ import {
   useRemoveOrgMember,
   useUpdateOrgMemberRole,
 } from '@/hooks/useOrgs'
+import { useOrgRoles } from '@/hooks/useOrgRoles'
 import { ApiRequestError } from '@/types'
-import type { OrgMemberView, OrgView } from '@/types'
+import type { OrgMemberView, OrgRoleView, OrgView } from '@/types'
 
 const { Text, Paragraph } = Typography
 
-const roleTagColor: Record<string, string> = {
-  owner: 'gold',
-  admin: 'purple',
-  member: 'default',
-}
-const roleLabels: Record<string, string> = {
-  owner: 'Owner',
-  admin: 'Admin',
-  member: '成员',
+/** 内置角色 ID 是确定性的（后端 model.BuiltinOrgRoleID：role_<orgId>_<key>）。 */
+function builtinRoleId(orgId: string, key: 'owner' | 'admin' | 'member') {
+  return `role_${orgId}_${key}`
 }
 
 function formatBytes(n: number) {
@@ -58,7 +59,10 @@ function formatBytes(n: number) {
 const fmtDate = (s?: string) => (s ? new Date(s).toLocaleDateString() : '—')
 
 function errMessage(e: unknown) {
-  return e instanceof ApiRequestError ? e.message : '操作失败'
+  if (!(e instanceof ApiRequestError)) return '操作失败'
+  if (e.code === 'PERSONAL_ORG') return '个人空间不支持成员管理'
+  if (e.code === 'VALIDATION_ERROR') return '角色不可指派（Owner 角色只能通过转让流程变更）'
+  return e.message
 }
 
 function CreateOrgModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -113,12 +117,23 @@ function CreateOrgModal({ open, onClose }: { open: boolean; onClose: () => void 
 function MembersCard({ org }: { org: OrgView }) {
   const { message } = App.useApp()
   const { data: members, isLoading } = useOrgMembers(org.id)
+  const { data: roles } = useOrgRoles(org.id)
   const addMember = useAddOrgMember(org.id)
   const updateRole = useUpdateOrgMemberRole(org.id)
   const removeMember = useRemoveOrgMember(org.id)
 
   const [email, setEmail] = useState('')
-  const [role, setRole] = useState<'admin' | 'member'>('member')
+  const [roleId, setRoleId] = useState<string>(builtinRoleId(org.id, 'member'))
+
+  // 可指派角色：Owner 角色不可通过成员管理授予（只能走转让流程），故从选项中剔除。
+  const assignableRoles = useMemo(
+    () => (roles ?? []).filter((r) => r.id !== builtinRoleId(org.id, 'owner')),
+    [roles, org.id],
+  )
+  const roleOptions = assignableRoles.map((r: OrgRoleView) => ({
+    value: r.id,
+    label: r.builtin ? r.name : `${r.name}（自定义）`,
+  }))
 
   const canManage = org.my_role === 'owner' || org.my_role === 'admin'
 
@@ -126,13 +141,20 @@ function MembersCard({ org }: { org: OrgView }) {
     const addr = email.trim()
     if (!addr) return
     try {
-      await addMember.mutateAsync({ email: addr, role })
+      await addMember.mutateAsync({ email: addr, role_id: roleId })
       message.success(`已添加 ${addr}`)
       setEmail('')
     } catch (e) {
       message.error(errMessage(e))
     }
   }
+
+  /** 成员当前的 role_id：新数据直接取；兼容期未回填时按内置语义键推导。 */
+  const roleIdOf = (m: OrgMemberView) =>
+    m.role_id ||
+    (m.role === 'owner' || m.role === 'admin' || m.role === 'member'
+      ? builtinRoleId(org.id, m.role)
+      : m.role)
 
   const columns = [
     {
@@ -148,12 +170,21 @@ function MembersCard({ org }: { org: OrgView }) {
     {
       title: '角色',
       key: 'role',
-      width: 130,
-      render: (_: unknown, m: OrgMemberView) => (
-        <Tag color={roleTagColor[m.role]} style={{ borderRadius: 'var(--radius-control)' }}>
-          {roleLabels[m.role] ?? m.role}
-        </Tag>
-      ),
+      width: 200,
+      render: (_: unknown, m: OrgMemberView) => {
+        const isOwner = roleIdOf(m) === builtinRoleId(org.id, 'owner')
+        const label =
+          m.role_name ?? (roles ?? []).find((r) => r.id === roleIdOf(m))?.name ?? m.role
+        const custom = !isOwner && !/^(owner|admin|member)$/.test(m.role)
+        return (
+          <Tag
+            color={isOwner ? 'gold' : custom ? 'purple' : 'default'}
+            style={{ borderRadius: 'var(--radius-control)' }}
+          >
+            {label}
+          </Tag>
+        )
+      },
     },
     {
       title: '加入时间',
@@ -168,31 +199,28 @@ function MembersCard({ org }: { org: OrgView }) {
           {
             title: '操作',
             key: 'actions',
-            width: 150,
+            width: 260,
             render: (_: unknown, m: OrgMemberView) => {
-              const isSelf = false // owner 行在下方被禁用操作
-              const isOwner = m.role === 'owner'
-              const canTouch =
-                !isOwner && (org.my_role === 'owner' || m.role === 'member') && !isSelf
+              const isOwner = roleIdOf(m) === builtinRoleId(org.id, 'owner')
+              // 内置 admin 只能由 owner 调整；owner 不可动
+              const isAdmin = m.role === 'admin'
+              const canTouch = !isOwner && (org.my_role === 'owner' || !isAdmin)
               return (
                 <span style={{ display: 'inline-flex', gap: 8 }}>
                   <Select
                     size="small"
-                    value={m.role === 'owner' ? 'owner' : m.role}
+                    value={roleIdOf(m)}
                     disabled={isOwner || !canTouch || updateRole.isPending}
-                    style={{ width: 96 }}
-                    onChange={async (r) => {
+                    style={{ width: 130 }}
+                    options={roleOptions}
+                    onChange={async (next: string) => {
                       try {
-                        await updateRole.mutateAsync({ userId: m.user_id, role: r as 'admin' | 'member' })
+                        await updateRole.mutateAsync({ userId: m.user_id, ref: { role_id: next } })
                         message.success('角色已更新')
                       } catch (e) {
                         message.error(errMessage(e))
                       }
                     }}
-                    options={[
-                      { value: 'admin', label: 'Admin' },
-                      { value: 'member', label: '成员' },
-                    ]}
                   />
                   <Popconfirm
                     title="确定移除该成员？"
@@ -239,13 +267,10 @@ function MembersCard({ org }: { org: OrgView }) {
             disabled={addMember.isPending}
           />
           <Select
-            value={role}
-            onChange={setRole}
-            style={{ width: 110 }}
-            options={[
-              { value: 'member', label: '成员' },
-              { value: 'admin', label: 'Admin' },
-            ]}
+            value={roleId}
+            onChange={setRoleId}
+            style={{ width: 150 }}
+            options={roleOptions}
           />
           <Button type="primary" loading={addMember.isPending} onClick={handleAdd}>
             添加
@@ -264,6 +289,7 @@ function MembersCard({ org }: { org: OrgView }) {
       {canManage && (
         <Paragraph type="secondary" style={{ fontSize: 12, marginTop: 12, marginBottom: 0 }}>
           仅能邀请已在平台注册的账号；Owner 不可移除或降级（转让功能二期提供）。
+          角色下拉包含本企业的自定义角色，其权限集在「角色管理」中维护。
         </Paragraph>
       )}
     </Card>
@@ -272,21 +298,114 @@ function MembersCard({ org }: { org: OrgView }) {
 
 export function OrgSettingsPage() {
   const { activeOrgId } = useAuthStore()
-  const { user } = useAuthStore()
   const { data: orgs, isLoading } = useOrganizations()
+  const permissions = usePermStore((s) => s.permissions)
+  const permReady = usePermStore((s) => s.ready)
   const [createOpen, setCreateOpen] = useState(false)
+
+  // 权限视图未就绪时 fail-open（菜单/标签先按可见渲染，后端 API 兜底鉴权）。
+  const can = (perm: string) => !permReady || permissions.includes(perm)
 
   const orgsList = orgs ?? []
   const current: OrgView | undefined =
     orgsList.find((o) => o.id === activeOrgId) ?? orgsList.find((o) => o.kind === 'personal')
 
   const isPersonal = !current || current.kind === 'personal'
+  const isOrgAdmin = !!current && (current.my_role === 'owner' || current.my_role === 'admin')
+
+  const tabs: TabsProps['items'] = current
+    ? [
+        {
+          key: 'overview',
+          label: '概况',
+          children: (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <Card
+                title={
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    {current.name}
+                    <Tag
+                      color={isPersonal ? 'default' : 'blue'}
+                      style={{ borderRadius: 'var(--radius-control)' }}
+                    >
+                      {isPersonal ? '个人空间' : '企业'}
+                    </Tag>
+                    <Tag
+                      color={current.my_role === 'owner' ? 'gold' : 'default'}
+                      style={{ borderRadius: 'var(--radius-control)' }}
+                    >
+                      我的角色：{current.my_role === 'owner' ? 'Owner' : current.my_role === 'admin' ? 'Admin' : '成员'}
+                    </Tag>
+                  </span>
+                }
+                style={{ background: 'var(--surface)', border: '1px solid var(--line)' }}
+              >
+                <Descriptions size="small" column={2}>
+                  <Descriptions.Item label="标识">{current.slug}</Descriptions.Item>
+                  <Descriptions.Item label="创建时间">{fmtDate(current.created_at)}</Descriptions.Item>
+                  <Descriptions.Item label="成员上限">
+                    {current.quota.max_members < 0 ? '不限' : current.quota.max_members}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="节点上限">
+                    {current.quota.max_nodes < 0 ? '不限' : current.quota.max_nodes}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="项目上限">
+                    {current.quota.max_projects < 0 ? '不限' : current.quota.max_projects}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="存储上限">
+                    {formatBytes(current.quota.max_storage_bytes)}
+                  </Descriptions.Item>
+                </Descriptions>
+              </Card>
+              {isPersonal && <LLMConfigCard scope="personal" />}
+            </div>
+          ),
+        },
+        // 「企业设置」标签按 org.settings 单独隐藏（admin 有成员管理但没有企业设置）
+        ...(!isPersonal && can(PERM.ORG_SETTINGS)
+          ? [
+              {
+                key: 'settings',
+                label: '企业设置',
+                children: <MenuVisibilityCard org={current} />,
+              },
+            ]
+          : []),
+        ...(!isPersonal && can(PERM.ORG_MEMBER_MGR)
+          ? [
+              {
+                key: 'members',
+                label: '成员管理',
+                children: <MembersCard org={current} />,
+              },
+            ]
+          : []),
+        ...(!isPersonal && can(PERM.ORG_ROLE_MGR)
+          ? [
+              {
+                key: 'roles',
+                label: '角色管理',
+                children: <OrgRolesCard orgId={current.id} />,
+              },
+            ]
+          : []),
+        ...(!isPersonal && isOrgAdmin
+          ? [
+              {
+                key: 'llm',
+                label: 'LLM 配置',
+                children: <LLMConfigCard scope="org" orgId={current.id} />,
+              },
+            ]
+          : []),
+      ]
+    : []
 
   return (
     <div style={{ maxWidth: 880, margin: '0 auto', paddingBottom: 40 }}>
       <PageHeader
         title="企业管理"
-        subtitle="租户信息、成员与权限（配额为预留字段，当前不做限额执行）"
+        subtitle="租户信息、成员、角色与菜单可见性（配额为预留字段，当前不做限额执行）"
         actions={
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
             创建企业
@@ -299,49 +418,7 @@ export function OrgSettingsPage() {
       ) : !current ? (
         <Empty description="没有可用租户" />
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <Card
-            title={
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                {current.name}
-                <Tag color={isPersonal ? 'default' : 'blue'} style={{ borderRadius: 'var(--radius-control)' }}>
-                  {isPersonal ? '个人空间' : '企业'}
-                </Tag>
-                <Tag color={roleTagColor[current.my_role]} style={{ borderRadius: 'var(--radius-control)' }}>
-                  我的角色：{roleLabels[current.my_role]}
-                </Tag>
-              </span>
-            }
-            style={{ background: 'var(--surface)', border: '1px solid var(--line)' }}
-          >
-            <Descriptions size="small" column={2}>
-              <Descriptions.Item label="标识">{current.slug}</Descriptions.Item>
-              <Descriptions.Item label="创建时间">{fmtDate(current.created_at)}</Descriptions.Item>
-              <Descriptions.Item label="成员上限">{current.quota.max_members < 0 ? '不限' : current.quota.max_members}</Descriptions.Item>
-              <Descriptions.Item label="节点上限">{current.quota.max_nodes < 0 ? '不限' : current.quota.max_nodes}</Descriptions.Item>
-              <Descriptions.Item label="项目上限">{current.quota.max_projects < 0 ? '不限' : current.quota.max_projects}</Descriptions.Item>
-              <Descriptions.Item label="存储上限">{formatBytes(current.quota.max_storage_bytes)}</Descriptions.Item>
-            </Descriptions>
-          </Card>
-
-          {isPersonal ? (
-            <Card style={{ background: 'var(--surface)', border: '1px solid var(--line)' }}>
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="个人空间不支持成员管理。创建企业后即可邀请其他账号协同。"
-              />
-            </Card>
-          ) : (
-            <MembersCard org={current} />
-          )}
-
-          {/* LLM 配置：平台默认层（仅平台管理员）+ 本租户覆盖层（org owner/admin) + 个人空间层（所有用户） */}
-          {user?.is_admin && <LLMConfigCard scope="platform" />}
-          {!isPersonal && (current.my_role === 'owner' || current.my_role === 'admin') && (
-            <LLMConfigCard scope="org" orgId={current.id} />
-          )}
-          {isPersonal && <LLMConfigCard scope="personal" />}
-        </div>
+        <Tabs items={tabs} />
       )}
 
       <CreateOrgModal open={createOpen} onClose={() => setCreateOpen(false)} />

@@ -10,12 +10,14 @@ import (
 	"trustmesh/backend/internal/agentfile"
 	"trustmesh/backend/internal/assistant"
 	"trustmesh/backend/internal/auth"
+	"trustmesh/backend/internal/authz"
 	"trustmesh/backend/internal/clawsynapse"
 	"trustmesh/backend/internal/config"
 	"trustmesh/backend/internal/embedding"
 	"trustmesh/backend/internal/handler"
 	"trustmesh/backend/internal/knowledge"
 	"trustmesh/backend/internal/middleware"
+	"trustmesh/backend/internal/model"
 	"trustmesh/backend/internal/project"
 	"trustmesh/backend/internal/store"
 )
@@ -43,7 +45,20 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	clawClient := clawsynapse.NewClient(cfg.ClawSynapseAPIURL, cfg.ClawSynapseTimeout, cfg.ClawSynapseAPIToken)
 	// LLM 配置（A1+B2+C1）：env 兜底注入 + 平台/租户两级 UI 配置，热生效。
 	s.SetLLMEnvDefaults(cfg.AssistantAPIURL, cfg.AssistantAPIKey, cfg.AssistantModel)
-	s.EnsurePlatformAdminExists()
+	// 平台管理员账号集合（设计文档 §6.3）：PLATFORM_ADMIN_EMAILS 非空 = 种子模式
+	// （账号集合以 env 为唯一权威，未命中者撤销标记）；未配置时回落历史行为
+	// （首个注册用户自动提升），避免锁死存量环境。
+	s.SeedPlatformAdmins(cfg.PlatformAdminEmails)
+	// 企业角色（设计文档 §5）：内置角色权限模板从 authz 矩阵注入（store 不反向依赖
+	// authz），随后跑一次幂等迁移 —— 给存量租户补种内置角色 + 回填 membership.role_id。
+	// 必须早于任何请求：解析链依赖 role_id 与 org_roles 的存在性，晚于此窗口的请求
+	// 会走「内置矩阵回落」分支（结果一致，但没必要让它发生）。
+	s.SetBuiltinRoleTemplates(map[string][]string{
+		model.OrgRoleOwner:  authz.BuiltinPermissions(model.OrgRoleOwner, cfg.PermLegacyMember),
+		model.OrgRoleAdmin:  authz.BuiltinPermissions(model.OrgRoleAdmin, cfg.PermLegacyMember),
+		model.OrgRoleMember: authz.BuiltinPermissions(model.OrgRoleMember, cfg.PermLegacyMember),
+	})
+	s.MigrateOrgRoles()
 	llmProvider := assistant.NewLLMProvider(func(orgID, userID string) (assistant.LLMParams, bool) {
 		url, key, _, opsModel, source := s.ResolveLLMParams(orgID, userID)
 		if url == "" || key == "" {
@@ -65,8 +80,20 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 		trustRequestSyncer.Start()
 	}
 
+	// 权限体系（docs/permission-system-design-2026-09-16.md）：功能级鉴权入口。
+	// 权限集每请求实时解析（membership.role_id → org_roles → 内置矩阵回落），
+	// 禁止跨请求进程内缓存 —— T3.1 多实例下角色变更必须即时生效。
+	az := authz.NewAuthorizer(authz.NewStoreResolver(s, cfg.PermLegacyMember))
+	// platformAdminChecker 供平台命名空间门禁（/api/v1/platform/*）与业务 API 反向
+	// 门禁（authed 组）共用 —— authz 不反向依赖 store，故由 app 层注入。
+	platformAdminChecker := func(userID string) bool { return s.UserIsPlatformAdmin(userID) }
+	// 种子模式下（PLATFORM_ADMIN_EMAILS 已配置）平台管理员与业务账号严格分离：
+	// 调业务 API 一律 403（账号/会话类白名单除外）。未配置 env 的环境不做反向拒绝，
+	// 避免把历史上自动提升的管理员锁在自己的业务之外。
+	platformSeparationStrict := len(cfg.PlatformAdminEmails) > 0
+
 	authHandler := handler.NewAuthHandler(s, jwtManager)
-	userHandler := handler.NewUserHandler(s)
+	userHandler := handler.NewUserHandler(s, az)
 	agentHandler := handler.NewAgentHandler(s, clawClient)
 	agentChatHandler := handler.NewAgentChatHandler(s, clawClient, cfg.ExternalURL, []byte(cfg.JWTSecret), cfg.DownloadTokenTTL, log)
 	projectHandler := handler.NewProjectHandler(s)
@@ -82,6 +109,7 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	externalAppHandler := handler.NewExternalAppHandler(s, auth.ExternalTokenIssuer, cfg.ExternalAppTokenTTL)
 	workflowTemplateHandler := handler.NewWorkflowTemplateHandler(s)
 	orgHandler := handler.NewOrgHandler(s)
+	orgRoleHandler := handler.NewOrgRoleHandler(s, cfg.PermLegacyMember)
 
 	// Knowledge base components (optional - requires EMBEDDING_API_KEY)
 	var knowledgeHandler *handler.KnowledgeHandler
@@ -133,53 +161,60 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	// 多租户阶段 0：解析 X-Org-Id 并注入 Scope。存量客户端不带该头，
 	// 中间件直接放行（只带 UserID），行为与改造前完全一致。
 	authed.Use(middleware.OrgScope(s))
+	// 平台管理员的业务 API 反向门禁（设计文档 §6.3）：种子模式下平台管理员只能走
+	// /api/v1/platform/*，业务路由一律 403；账号/会话类外壳能力（/users、/organizations、
+	// /notifications、/events、/llm-config）仍放行。未配置 env 时恒放行（见上文）。
+	authed.Use(authz.RequireBusinessAccount(platformSeparationStrict, platformAdminChecker))
 
-	authed.POST("/agents", agentHandler.Create)
-	authed.GET("/agents", agentHandler.List)
+	authed.POST("/agents", az.RequirePerm(authz.PermAgentManage), agentHandler.Create)
+	authed.GET("/agents", az.RequirePerm(authz.PermAgentView), agentHandler.List)
 	authed.GET("/agents/invite-prompt", joinRequestHandler.GetInvitePrompt)
-	authed.GET("/agents/join-requests", joinRequestHandler.List)
-	authed.POST("/agents/join-requests/:id/approve", joinRequestHandler.Approve)
-	authed.POST("/agents/join-requests/:id/reject", joinRequestHandler.Reject)
-	authed.GET("/agents/:id", agentHandler.Get)
-	authed.PATCH("/agents/:id", agentHandler.Update)
-	authed.DELETE("/agents/:id", agentHandler.Delete)
-	authed.GET("/agents/:id/stats", agentHandler.Stats)
-	authed.GET("/agents/:id/insights", agentHandler.Insights)
-	authed.GET("/agents/:id/tasks", agentHandler.Tasks)
-	authed.GET("/agents/:id/capabilities", agentHandler.GetCapabilities)
-	authed.POST("/agents/:id/capabilities", agentHandler.SetCapabilities)
-	authed.GET("/agents/:id/cron/executions", agentHandler.ListCronExecutions)
-	authed.POST("/agents/:id/skills/upload", agentHandler.UploadSkillFile)
+	authed.GET("/agents/join-requests", az.RequirePerm(authz.PermJoinRequestApprove), joinRequestHandler.List)
+	authed.POST("/agents/join-requests/:id/approve", az.RequirePerm(authz.PermJoinRequestApprove), joinRequestHandler.Approve)
+	authed.POST("/agents/join-requests/:id/reject", az.RequirePerm(authz.PermJoinRequestApprove), joinRequestHandler.Reject)
+	authed.GET("/agents/:id", az.RequirePerm(authz.PermAgentView), agentHandler.Get)
+	authed.PATCH("/agents/:id", az.RequirePerm(authz.PermAgentManage), agentHandler.Update)
+	authed.DELETE("/agents/:id", az.RequirePerm(authz.PermAgentManage), agentHandler.Delete)
+	authed.GET("/agents/:id/stats", az.RequirePerm(authz.PermAgentView), agentHandler.Stats)
+	authed.GET("/agents/:id/insights", az.RequirePerm(authz.PermAgentView), agentHandler.Insights)
+	authed.GET("/agents/:id/tasks", az.RequirePerm(authz.PermAgentView), agentHandler.Tasks)
+	authed.GET("/agents/:id/capabilities", az.RequirePerm(authz.PermAgentView), agentHandler.GetCapabilities)
+	authed.POST("/agents/:id/capabilities", az.RequirePerm(authz.PermAgentManage), agentHandler.SetCapabilities)
+	authed.GET("/agents/:id/cron/executions", az.RequirePerm(authz.PermAgentView), agentHandler.ListCronExecutions)
+	authed.POST("/agents/:id/skills/upload", az.RequirePerm(authz.PermAgentManage), agentHandler.UploadSkillFile)
+	// agent 对话是 AI办公室日常基础交互，属基础权限（登录即可用）。
 	authed.GET("/agents/:id/chat", agentChatHandler.Get)
 	authed.GET("/agents/:id/chat/sessions", agentChatHandler.ListSessions)
 	authed.GET("/agents/:id/chat/sessions/:sessionId", agentChatHandler.GetSession)
 	authed.POST("/agents/:id/chat/messages", agentChatHandler.SendMessage)
 	authed.POST("/agents/:id/chat/reset", agentChatHandler.Reset)
 
-	authed.POST("/projects", projectHandler.Create)
+	authed.POST("/projects", az.RequirePerm(authz.PermProjectCreate), projectHandler.Create)
 	authed.GET("/projects", projectHandler.List)
 	authed.GET("/projects/:projectId", projectHandler.Get)
 	authed.GET("/projects/:projectId/workflow-progress", projectHandler.WorkflowProgress)
 	// 项目流程 · 手工绑定交付物：任意文件（含用户手工上传的）→ 任意步骤输出位。
 	authed.POST("/projects/:projectId/workflow/steps/:stepIndex/outputs/bind", projectHandler.BindStepOutput)
-	authed.PATCH("/projects/:projectId", projectHandler.Update)
-	authed.DELETE("/projects/:projectId", projectHandler.Archive)
+	authed.PATCH("/projects/:projectId", az.RequirePerm(authz.PermProjectManage), projectHandler.Update)
+	authed.DELETE("/projects/:projectId", az.RequirePerm(authz.PermProjectManage), projectHandler.Archive)
 
 	// Global workflow templates (user-scoped) + project inherit/sync.
-	authed.POST("/workflow-templates", workflowTemplateHandler.Create)
+	// 模板的浏览（List/Get/sync-diff 只读预览）属基础权限；增删改与同步动作走
+	// workflow.template.mgr（owner/admin）。
+	authed.POST("/workflow-templates", az.RequirePerm(authz.PermWorkflowTemplateMgr), workflowTemplateHandler.Create)
 	authed.GET("/workflow-templates", workflowTemplateHandler.List)
 	authed.GET("/workflow-templates/:templateId", workflowTemplateHandler.Get)
-	authed.PATCH("/workflow-templates/:templateId", workflowTemplateHandler.Update)
-	authed.POST("/workflow-templates/:templateId/copy", workflowTemplateHandler.Copy)
-	authed.POST("/workflow-templates/:templateId/curate", workflowTemplateHandler.Curate)
-	authed.DELETE("/workflow-templates/:templateId", workflowTemplateHandler.Delete)
+	authed.PATCH("/workflow-templates/:templateId", az.RequirePerm(authz.PermWorkflowTemplateMgr), workflowTemplateHandler.Update)
+	authed.POST("/workflow-templates/:templateId/copy", az.RequirePerm(authz.PermWorkflowTemplateMgr), workflowTemplateHandler.Copy)
+	authed.POST("/workflow-templates/:templateId/curate", az.RequirePerm(authz.PermWorkflowTemplateMgr), workflowTemplateHandler.Curate)
+	authed.DELETE("/workflow-templates/:templateId", az.RequirePerm(authz.PermWorkflowTemplateMgr), workflowTemplateHandler.Delete)
 	// T1.9: 从成功任务一键沉淀工作流模板（挂在 /tasks/:id 下，避开
 	// /workflow-templates/:templateId 通配段的兄弟节点冲突）。
-	authed.POST("/tasks/:id/distill-template", workflowTemplateHandler.Distill)
-	authed.POST("/projects/:projectId/workflows/inherit", workflowTemplateHandler.Inherit)
+	authed.POST("/tasks/:id/distill-template", az.RequirePerm(authz.PermWorkflowTemplateMgr), workflowTemplateHandler.Distill)
+	authed.POST("/projects/:projectId/workflows/inherit", az.RequirePerm(authz.PermWorkflowTemplateMgr), workflowTemplateHandler.Inherit)
 	authed.GET("/projects/:projectId/workflows/:workflowId/sync-diff", workflowTemplateHandler.SyncDiff)
-	authed.POST("/projects/:projectId/workflows/:workflowId/sync", workflowTemplateHandler.ApplySync)
-	authed.POST("/projects/:projectId/workflows/:workflowId/detach", workflowTemplateHandler.Detach)
+	authed.POST("/projects/:projectId/workflows/:workflowId/sync", az.RequirePerm(authz.PermWorkflowTemplateMgr), workflowTemplateHandler.ApplySync)
+	authed.POST("/projects/:projectId/workflows/:workflowId/detach", az.RequirePerm(authz.PermWorkflowTemplateMgr), workflowTemplateHandler.Detach)
 
 	// Project files
 	projectFileStorage := project.NewLocalFileStorage(cfg.FilesStoragePath)
@@ -307,19 +342,21 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	authed.PATCH("/projects/:projectId/files/:fileId/move", projectFileHandler.Move)
 	authed.POST("/projects/:projectId/files/batch-delete", projectFileHandler.BatchDelete)
 
-	// Meeting Room routes
-	authed.POST("/projects/:projectId/meetings", meetingHandler.Create)
+	// Meeting Room routes。参与/发言属基础权限（日常协作）；
+	// 会议生命周期（创建/开始/结束）统一走 meeting.manage：只读旁听仍对所有人开放，
+	// 否则「能建会但开不了会」会留下永远 waiting 的僵尸会议（设计 §4 语义自洽）。
+	authed.POST("/projects/:projectId/meetings", az.RequirePerm(authz.PermMeetingManage), meetingHandler.Create)
 	authed.GET("/projects/:projectId/meetings", meetingHandler.List)
 	authed.GET("/meetings/:id", meetingHandler.Get)
 	authed.POST("/meetings/:id/messages", meetingHandler.SendMessage)
 	authed.GET("/meetings/:id/messages", meetingHandler.ListMessages)
-	authed.POST("/meetings/:id/start", meetingHandler.Start)
-	authed.POST("/meetings/:id/end", meetingHandler.End)
+	authed.POST("/meetings/:id/start", az.RequirePerm(authz.PermMeetingManage), meetingHandler.Start)
+	authed.POST("/meetings/:id/end", az.RequirePerm(authz.PermMeetingManage), meetingHandler.End)
 	authed.POST("/meetings/:id/todos", meetingHandler.AddTodo)
 
-	authed.POST("/projects/:projectId/tasks", taskHandler.Create)
-	authed.POST("/projects/:projectId/tasks/planning", taskHandler.CreatePlanning)
-	authed.POST("/projects/:projectId/tasks/from-text", taskHandler.CreateFromText)
+	authed.POST("/projects/:projectId/tasks", az.RequirePerm(authz.PermTaskCreate), taskHandler.Create)
+	authed.POST("/projects/:projectId/tasks/planning", az.RequirePerm(authz.PermTaskCreate), taskHandler.CreatePlanning)
+	authed.POST("/projects/:projectId/tasks/from-text", az.RequirePerm(authz.PermTaskCreate), taskHandler.CreateFromText)
 	authed.GET("/projects/:projectId/tasks", taskHandler.ListByProject)
 	authed.GET("/tasks/:id", taskHandler.Get)
 	authed.GET("/tasks/:id/events", taskHandler.ListEvents)
@@ -332,7 +369,7 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	authed.PATCH("/tasks/:id/todos/:todoId", taskHandler.UpdateTodo)
 	authed.DELETE("/tasks/:id/todos/:todoId", taskHandler.RemoveTodo)
 	authed.PUT("/tasks/:id/todos/reorder", taskHandler.ReorderTodos)
-	authed.POST("/tasks/:id/todos/:todoId/dispatch", taskHandler.DispatchTodo)
+	authed.POST("/tasks/:id/todos/:todoId/dispatch", az.RequirePerm(authz.PermTaskDispatch), taskHandler.DispatchTodo)
 	authed.POST("/tasks/:id/todos/:todoId/outputs/bind", taskHandler.BindTodoOutput)
 	authed.POST("/tasks/:id/todos/:todoId/review", taskHandler.ReviewTodo)
 	authed.POST("/tasks/:id/todos/:todoId/reopen", taskHandler.ReopenTodo)
@@ -340,7 +377,8 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	authed.GET("/tasks/:id/comments", taskHandler.ListComments)
 	authed.POST("/tasks/:id/comments", taskHandler.AddComment)
 	authed.GET("/action-items", actionItemsHandler.List)
-	authed.POST("/action-items/convert", actionItemsHandler.Convert)
+	// 待办转任务 = 建任务的一种入口，与 task.create 同级。
+	authed.POST("/action-items/convert", az.RequirePerm(authz.PermTaskCreate), actionItemsHandler.Convert)
 	authed.GET("/tasks/:id/artifacts/:artifactId/content", transferHandler.GetTaskArtifactContent)
 
 	authed.GET("/dashboard/stats", dashboardHandler.Stats)
@@ -366,16 +404,18 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	ext.POST("/:id/launch", externalAppHandler.Launch)
 
 	// Ops incidents: rule-based anomaly tickets + manual intervention (ignore/close).
+	// 权限：查看 ops.view / 人工干预 ops.manage（owner/admin；member 不可见）。
 	opsHandler := handler.NewOpsHandler(s)
 	ops := authed.Group("/ops")
-	ops.GET("/incidents", opsHandler.List)
-	ops.GET("/incidents/:id", opsHandler.Get)
-	ops.POST("/incidents/:id/ignore", opsHandler.Ignore)
-	ops.POST("/incidents/:id/close", opsHandler.Close)
+	ops.GET("/incidents", az.RequirePerm(authz.PermOpsView), opsHandler.List)
+	ops.GET("/incidents/:id", az.RequirePerm(authz.PermOpsView), opsHandler.Get)
+	ops.POST("/incidents/:id/ignore", az.RequirePerm(authz.PermOpsManage), opsHandler.Ignore)
+	ops.POST("/incidents/:id/close", az.RequirePerm(authz.PermOpsManage), opsHandler.Close)
 	// Phase 0 observability export (T0.11): process-wide counters, histograms
-	// (step-advance latency, stall duration) and the alert rule set. Gated to
-	// org owner/admin inside the handler.
-	ops.GET("/metrics", opsHandler.Metrics)
+	// (step-advance latency, stall duration) and the alert rule set.
+	// 路由层 ops.view 之外，handler 仍保留「必须带企业租户上下文」的数据级门禁
+	// （指标是跨租户进程级聚合，个人空间语境下不暴露）。
+	ops.GET("/metrics", az.RequirePerm(authz.PermOpsView), opsHandler.Metrics)
 
 	// Current user account: rename + password change.
 	// 账号是 user 维度资源，不参与租户裁决（不受 X-Org-Id 影响）。
@@ -384,23 +424,35 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	authed.POST("/users/me/password", userHandler.ChangePassword)
 
 	// Multi-tenant organizations (stage 4-A): org CRUD + member management.
+	// 组织浏览/创建属基础权限；成员管理走 org.member.mgr（owner/admin）。
 	orgs := authed.Group("/organizations")
 	orgs.GET("", orgHandler.List)
 	orgs.POST("", orgHandler.Create)
 	orgs.GET("/:id", orgHandler.Get)
 	orgs.GET("/:id/members", orgHandler.ListMembers)
-	orgs.POST("/:id/members", orgHandler.AddMember)
-	orgs.PATCH("/:id/members/:userId", orgHandler.UpdateMemberRole)
-	orgs.DELETE("/:id/members/:userId", orgHandler.RemoveMember)
+	orgs.POST("/:id/members", az.RequirePerm(authz.PermOrgMemberMgr), orgHandler.AddMember)
+	orgs.PATCH("/:id/members/:userId", az.RequirePerm(authz.PermOrgMemberMgr), orgHandler.UpdateMemberRole)
+	orgs.DELETE("/:id/members/:userId", az.RequirePerm(authz.PermOrgMemberMgr), orgHandler.RemoveMember)
+	// 企业级菜单覆盖（只能缩小可见菜单）：属企业设置项，走 org.settings（owner）。
+	orgs.PATCH("/:id/menu-overrides", az.RequirePerm(authz.PermOrgSettings), orgHandler.SetMenuOverrides)
 
+	// 企业角色（设计文档 §5）：列表供成员改角色的下拉使用（org.member.mgr），
+	// 增删改仅 owner（org.role.mgr）。参数名与上面的 orgs 组保持一致（同为 :id）。
+	roles := authed.Group("/organizations/:id/roles")
+	roles.GET("", az.RequirePerm(authz.PermOrgMemberMgr), orgRoleHandler.List)
+	roles.POST("", az.RequirePerm(authz.PermOrgRoleMgr), orgRoleHandler.Create)
+	roles.PATCH("/:roleId", az.RequirePerm(authz.PermOrgRoleMgr), orgRoleHandler.Update)
+	roles.DELETE("/:roleId", az.RequirePerm(authz.PermOrgRoleMgr), orgRoleHandler.Delete)
+
+	// 知识库：浏览/检索属基础权限；条目增删改与重建走 knowledge.manage。
 	kb := authed.Group("/knowledge")
-	kb.POST("/documents", knowledgeHandler.Upload)
+	kb.POST("/documents", az.RequirePerm(authz.PermKnowledgeManage), knowledgeHandler.Upload)
 	kb.GET("/documents", knowledgeHandler.List)
 	kb.GET("/documents/:id", knowledgeHandler.Get)
-	kb.PATCH("/documents/:id", knowledgeHandler.Update)
-	kb.DELETE("/documents/:id", knowledgeHandler.Delete)
+	kb.PATCH("/documents/:id", az.RequirePerm(authz.PermKnowledgeManage), knowledgeHandler.Update)
+	kb.DELETE("/documents/:id", az.RequirePerm(authz.PermKnowledgeManage), knowledgeHandler.Delete)
 	kb.GET("/documents/:id/chunks", knowledgeHandler.ListChunks)
-	kb.POST("/documents/:id/reprocess", knowledgeHandler.Reprocess)
+	kb.POST("/documents/:id/reprocess", az.RequirePerm(authz.PermKnowledgeManage), knowledgeHandler.Reprocess)
 	kb.POST("/search", knowledgeHandler.Search)
 
 	// Market (job role marketplace)
@@ -410,9 +462,11 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	} else {
 		marketHandler := handler.NewMarketHandler(marketStore)
 		mkt := authed.Group("/market")
-		mkt.GET("/departments", marketHandler.ListDepts)
-		mkt.GET("/roles", marketHandler.ListRoles)
-		mkt.GET("/roles/:id", marketHandler.GetRole)
+		// 市场浏览走 market.browse（member 可看）；安装角色包落地为建 agent
+		// （POST /agents → agent.manage），member 天然被拦住，无需独立端点。
+		mkt.GET("/departments", az.RequirePerm(authz.PermMarketBrowse), marketHandler.ListDepts)
+		mkt.GET("/roles", az.RequirePerm(authz.PermMarketBrowse), marketHandler.ListRoles)
+		mkt.GET("/roles/:id", az.RequirePerm(authz.PermMarketBrowse), marketHandler.GetRole)
 	}
 
 	// Assistant (LLM-powered): 配置解析已热生效化（平台/租户 UI 配置 > env），
@@ -428,10 +482,31 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 
 	// Platform/org LLM configuration UI endpoints (A1+B2+D1).
 	llmConfigHandler := handler.NewLLMConfigHandler(s)
-	platLLM := authed.Group("/platform/llm-config")
-	platLLM.GET("", llmConfigHandler.GetPlatform)
-	platLLM.PUT("", llmConfigHandler.PutPlatform)
-	platLLM.DELETE("", llmConfigHandler.DeletePlatform)
+
+	// ── 平台命名空间（设计文档 §3.2 / §6.3）────────────────────────────────
+	// 独立命名空间，只认平台管理员标记（env 种子），**不看企业角色**：企业角色
+	// （含 owner）调此处一律 403。反向门禁见上面 authed 组的 RequireBusinessAccount。
+	//
+	// 与公开的 GET /api/v1/platform/info 共存：同一静态前缀下的兄弟静态段，
+	// 无通配冲突（plat 组只新增 orgs/config/audit-logs/usage/llm-config 静态段）。
+	platformAdminHandler := handler.NewPlatformAdminHandler(s)
+	plat := v1.Group("/platform")
+	plat.Use(middleware.RequireAuth(jwtManager))
+	plat.GET("/orgs", authz.RequirePlatformPerm(authz.PermPlatformOrgLifecycle, platformAdminChecker), platformAdminHandler.ListOrgs)
+	plat.POST("/orgs", authz.RequirePlatformPerm(authz.PermPlatformOrgLifecycle, platformAdminChecker), platformAdminHandler.CreateOrg)
+	plat.GET("/orgs/:id", authz.RequirePlatformPerm(authz.PermPlatformOrgLifecycle, platformAdminChecker), platformAdminHandler.GetOrg)
+	plat.POST("/orgs/:id/disable", authz.RequirePlatformPerm(authz.PermPlatformOrgLifecycle, platformAdminChecker), platformAdminHandler.DisableOrg)
+	plat.POST("/orgs/:id/restore", authz.RequirePlatformPerm(authz.PermPlatformOrgLifecycle, platformAdminChecker), platformAdminHandler.RestoreOrg)
+	plat.GET("/config", authz.RequirePlatformPerm(authz.PermPlatformConfigRead, platformAdminChecker), platformAdminHandler.GetConfig)
+	plat.PUT("/config", authz.RequirePlatformPerm(authz.PermPlatformConfigWrite, platformAdminChecker), platformAdminHandler.PutConfig)
+	plat.GET("/audit-logs", authz.RequirePlatformPerm(authz.PermPlatformAuditView, platformAdminChecker), platformAdminHandler.ListAuditLogs)
+	plat.GET("/usage", authz.RequirePlatformPerm(authz.PermPlatformUsageView, platformAdminChecker), platformAdminHandler.Usage)
+	// 平台默认 LLM 配置：从 authed 组（企业角色可及）收敛进平台命名空间。
+	plat.GET("/llm-config", authz.RequirePlatformPerm(authz.PermPlatformConfigRead, platformAdminChecker), llmConfigHandler.GetPlatform)
+	plat.PUT("/llm-config", authz.RequirePlatformPerm(authz.PermPlatformConfigWrite, platformAdminChecker), llmConfigHandler.PutPlatform)
+	plat.DELETE("/llm-config", authz.RequirePlatformPerm(authz.PermPlatformConfigWrite, platformAdminChecker), llmConfigHandler.DeletePlatform)
+
+	// 企业层 LLM 配置：handler 层已有 owner/admin 守卫，路由层维持基础权限。
 	orgLLM := authed.Group("/organizations/:id/llm-config")
 	orgLLM.GET("", llmConfigHandler.GetOrg)
 	orgLLM.PUT("", llmConfigHandler.PutOrg)

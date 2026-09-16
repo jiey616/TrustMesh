@@ -34,9 +34,14 @@ export async function addOrgMember(id: string, input: AddOrgMemberRequest) {
     .json<ApiResponse<OrgMemberView>>()
 }
 
-export async function updateOrgMemberRole(id: string, userId: string, role: 'admin' | 'member') {
+/** 改成员角色：传 role_id（自定义角色优先）或内置角色串 role。 */
+export async function updateOrgMemberRole(
+  id: string,
+  userId: string,
+  ref: { role?: string; role_id?: string },
+) {
   return apiClient
-    .patch(`organizations/${id}/members/${userId}`, { json: { role } })
+    .patch(`organizations/${id}/members/${userId}`, { json: ref })
     .json<ApiResponse<OrgMemberView>>()
 }
 
@@ -44,4 +49,11 @@ export async function removeOrgMember(id: string, userId: string) {
   return apiClient
     .delete(`organizations/${id}/members/${userId}`)
     .json<ApiResponse<{ removed: string }>>()
+}
+
+/** 企业级菜单覆盖（只能缩小）：被点名的菜单键对全员隐藏（需 org.settings）。 */
+export async function updateOrgMenuOverrides(id: string, menuOverrides: string[]) {
+  return apiClient
+    .patch(`organizations/${id}/menu-overrides`, { json: { menu_overrides: menuOverrides } })
+    .json<ApiResponse<OrgView>>()
 }

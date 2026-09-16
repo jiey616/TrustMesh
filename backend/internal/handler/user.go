@@ -6,19 +6,28 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
+	"trustmesh/backend/internal/authz"
+	"trustmesh/backend/internal/middleware"
 	"trustmesh/backend/internal/store"
 	"trustmesh/backend/internal/transport"
 )
 
 type UserHandler struct {
 	store *store.Store
+	// az 用于 /users/me 回传权限集（前端菜单过滤的唯一依据）。nil = 只回基础字段。
+	az *authz.Authorizer
 }
 
-func NewUserHandler(s *store.Store) *UserHandler {
-	return &UserHandler{store: s}
+func NewUserHandler(s *store.Store, az *authz.Authorizer) *UserHandler {
+	return &UserHandler{store: s, az: az}
 }
 
-// Me 返回当前登录用户的最新资料（改名后前端用其刷新本地缓存）。
+// Me 返回当前登录用户的最新资料，并带上前端的权限视图（设计文档 §7）：
+//   - permissions[]：本次请求的实时权限集（按 X-Org-Id 解析，个人空间=owner 全集）
+//   - menu_overrides[]：当前企业租户的菜单隐藏项（只能缩小，仅影响菜单可见性）
+//   - is_platform_admin：平台管理员标记（前端据此只显示「平台管理」菜单组）
+//
+// 权限集**每次请求实时解析**，不做跨请求缓存 —— 多实例下角色变更必须即时生效。
 func (h *UserHandler) Me(c *gin.Context) {
 	userID, ok := currentUserID(c)
 	if !ok {
@@ -29,7 +38,23 @@ func (h *UserHandler) Me(c *gin.Context) {
 		transport.WriteError(c, transport.NotFound("user not found"))
 		return
 	}
-	transport.WriteData(c, http.StatusOK, gin.H{"user": user})
+	sc := middleware.Scope(c)
+	perms := []string{}
+	if h.az != nil {
+		if resolved := h.az.Resolve(sc); len(resolved) > 0 {
+			perms = append(perms, resolved...)
+		}
+	}
+	overrides := h.store.OrgMenuOverrides(sc.OrgID)
+	if overrides == nil {
+		overrides = []string{}
+	}
+	transport.WriteData(c, http.StatusOK, gin.H{
+		"user":              user,
+		"permissions":       perms,
+		"menu_overrides":    overrides,
+		"is_platform_admin": h.store.UserIsPlatformAdmin(userID),
+	})
 }
 
 type updateProfileRequest struct {

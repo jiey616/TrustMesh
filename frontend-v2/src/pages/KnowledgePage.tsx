@@ -5,6 +5,8 @@ import dayjs from 'dayjs'
 import { useKnowledgeDocs, useUploadDocument, useDeleteDocument, useReprocessDocument, useKnowledgeSearch, useKnowledgeChunks } from '@/hooks/useKnowledge'
 import { PageHeader } from '@/components/shared/PageHeader'
 import type { KnowledgeDocument, KnowledgeSearchResult } from '@/types'
+import { usePermStore } from '@/stores/permStore'
+import { PERM } from '@/lib/perms'
 
 const { Text, Paragraph } = Typography
 
@@ -31,6 +33,8 @@ function formatFileSize(bytes: number): string {
 function DocRow({ doc, onDelete, onReprocess }: { doc: KnowledgeDocument; onDelete: (id: string) => void; onReprocess: (id: string) => void }) {
   const [expanded, setExpanded] = useState(false)
   const { data: chunks, isLoading: chunksLoading } = useKnowledgeChunks(expanded ? doc.id : undefined)
+  // 重建/删除文档 = POST|DELETE /knowledge/documents/**（knowledge.manage）
+  const canManageKnowledge = usePermStore((s) => s.hasPerm(PERM.KNOWLEDGE_MANAGE))
 
   return (
     <div style={{ borderBottom: '1px solid var(--line)' }}>
@@ -54,9 +58,9 @@ function DocRow({ doc, onDelete, onReprocess }: { doc: KnowledgeDocument; onDele
           <span>{dayjs(doc.created_at).fromNow()}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
-          {doc.status === 'failed' && <Button type="text" size="small" icon={<ReloadOutlined />} onClick={() => onReprocess(doc.id)} />}
+          {canManageKnowledge && doc.status === 'failed' && <Button type="text" size="small" icon={<ReloadOutlined />} onClick={() => onReprocess(doc.id)} />}
           <Button type="text" size="small" icon={expanded ? <UpOutlined /> : <DownOutlined />} />
-          <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={() => onDelete(doc.id)} />
+          {canManageKnowledge && <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={() => onDelete(doc.id)} />}
         </div>
       </div>
       {expanded && (
@@ -125,6 +129,9 @@ export function KnowledgePage() {
   const [uploadForm] = Form.useForm()
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const { message } = App.useApp()
+  // 上传文档 = POST /knowledge/documents（knowledge.manage），无权限时隐藏入口
+  // （权限视图未就绪时 fail-open，由后端 403 兜底）；语义搜索是查询，不加门禁。
+  const canManageKnowledge = usePermStore((s) => s.hasPerm(PERM.KNOWLEDGE_MANAGE))
 
   const queryParams = statusFilter === 'all' ? undefined : { status: statusFilter }
   const { data: docs, isLoading } = useKnowledgeDocs(queryParams)
@@ -171,7 +178,10 @@ export function KnowledgePage() {
               onChange={(k) => setActiveTab(k as 'documents' | 'search')}
               items={[{ key: 'documents', label: '文档管理' }, { key: 'search', label: '语义搜索' }]}
             />
-            <Button type="primary" icon={<UploadOutlined />} onClick={() => setShowUpload(true)}>上传文档</Button>
+            {/* 上传文档 = knowledge.manage */}
+            {canManageKnowledge && (
+              <Button type="primary" icon={<UploadOutlined />} onClick={() => setShowUpload(true)}>上传文档</Button>
+            )}
           </>
         }
       />
@@ -224,7 +234,10 @@ export function KnowledgePage() {
             </div>
           ) : !docs || docs.length === 0 ? (
             <Empty description="暂无知识文档">
-              <Button type="primary" icon={<UploadOutlined />} onClick={() => setShowUpload(true)}>上传文档</Button>
+              {/* 上传文档 = knowledge.manage（无权限时仅保留 Empty 文案兜底） */}
+              {canManageKnowledge && (
+                <Button type="primary" icon={<UploadOutlined />} onClick={() => setShowUpload(true)}>上传文档</Button>
+              )}
             </Empty>
           ) : (
             <Card bordered={false} style={{ padding: 0, overflow: 'hidden', background: 'var(--surface)' }}>

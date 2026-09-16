@@ -1148,15 +1148,25 @@ export interface OrgView {
   slug: string
   kind: OrgKind
   owner_id: string
-  my_role: OrgRole
+  /** 内置角色为语义键（owner/admin/member）；自定义角色场景下为 role_id */
+  my_role: OrgRole | string
+  /** 调用者在 org_roles 里的角色引用（权威）；展示角色名请优先用本字段查角色表 */
+  my_role_id?: string
   quota: OrgQuota
+  /** 企业级菜单隐藏项（owner 在设置页勾选，只能缩小；只能影响菜单可见性） */
+  menu_overrides?: string[]
   created_at: string
 }
 
 export interface OrgMemberView {
   id: string
   user_id: string
-  role: OrgRole
+  /** 兼容字段：内置角色为语义键，自定义角色为 role_id（优先用 role_id/role_name） */
+  role: string
+  /** org_roles 角色引用（权威） */
+  role_id?: string
+  /** role_id 对应的展示名（后端解析；找不到时为空，前端回落 role） */
+  role_name?: string
   joined_at: string
   email?: string
   name?: string
@@ -1169,7 +1179,119 @@ export interface CreateOrgRequest {
 
 export interface AddOrgMemberRequest {
   email: string
-  role?: 'admin' | 'member'
+  /** 内置角色串（admin/member）；与 role_id 同传时以 role_id 为准 */
+  role?: string
+  /** 自定义角色 id（优先） */
+  role_id?: string
+}
+
+// ─── 企业角色（设计文档 §5，org_roles 集合） ──
+
+export interface OrgRoleView {
+  id: string
+  org_id: string
+  name: string
+  permissions: string[]
+  /** 内置三角色（owner/admin/member）：权限集锁定不可改、不可删 */
+  builtin: boolean
+  member_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateOrgRoleRequest {
+  name: string
+  permissions: string[]
+}
+
+/** PATCH 语义：省略 name = 不改名；省略 permissions = 不改权限集 */
+export interface UpdateOrgRoleRequest {
+  name?: string
+  permissions?: string[]
+}
+
+// ─── 权限视图（设计文档 §7，/users/me） ───
+
+/**
+ * /users/me 的权限视图：`permissions` 按 `X-Org-Id` **每请求实时解析**（多实例即时生效），
+ * `menu_overrides` 为当前企业租户的菜单隐藏项，`is_platform_admin` 决定菜单组切换。
+ */
+export interface MeResponse {
+  user: User
+  permissions: string[]
+  menu_overrides: string[]
+  is_platform_admin: boolean
+}
+
+// ─── 平台管理（设计文档 §3.2 / §6.4，/api/v1/platform/*） ───
+
+export type PlatformOrgStatus = 'active' | 'disabled'
+
+/** 平台侧企业视图：元数据 + count 级用量（读不到企业业务内容） */
+export interface PlatformOrgView {
+  id: string
+  name: string
+  slug: string
+  status: PlatformOrgStatus
+  owner_id: string
+  owner_email?: string
+  owner_name?: string
+  quota: OrgQuota
+  menu_overrides?: string[]
+  created_at: string
+  updated_at: string
+  member_count: number
+  project_count: number
+  task_count: number
+}
+
+export interface CreatePlatformOrgRequest {
+  name: string
+  slug?: string
+  /** 必须指定现有账号为 Owner（企业租户恒有唯一 Owner） */
+  owner_email: string
+}
+
+/** 平台全局配置：默认模型 + 新建企业默认配额 + 节点参数 */
+export interface PlatformGlobalConfig {
+  default_model: string
+  quota: OrgQuota
+  node_parameters?: Record<string, string>
+  updated_at?: string
+  updated_by?: string
+}
+
+/** 平台用量总览（count 级聚合，不含业务内容） */
+export interface PlatformUsage {
+  orgs_total: number
+  orgs_enterprise: number
+  orgs_disabled: number
+  users: number
+  agents: number
+  projects: number
+  tasks: number
+  storage_bytes: number
+}
+
+export interface AuditLogView {
+  id: string
+  actor_user_id: string
+  actor_email: string
+  /** platform 或企业 org_id */
+  scope: string
+  action: string
+  target_type: string
+  target_id: string
+  detail?: Record<string, unknown>
+  ip: string
+  created_at: string
+}
+
+export interface AuditLogQuery {
+  scope?: string
+  action?: string
+  actor_user_id?: string
+  limit?: number
 }
 
 // ─── 工作区记忆（"记住上次选中的空间"）───

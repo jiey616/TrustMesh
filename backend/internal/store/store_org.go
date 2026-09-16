@@ -39,12 +39,15 @@ func (s *Store) CreateOrganization(userID, name, slug, kind string) (*model.Orga
 
 	now := time.Now().UTC()
 	org := &model.Organization{
-		ID:        "org_" + newID(),
-		Name:      name,
-		Slug:      slug,
-		Kind:      kind,
-		OwnerID:   userID,
-		Quota:     model.DefaultOrgQuota(),
+		ID:      "org_" + newID(),
+		Name:    name,
+		Slug:    slug,
+		Kind:    kind,
+		OwnerID: userID,
+		// 配额取平台全局配置的新建企业默认（未配置全局配置时 = 全部不限，与历史一致）；
+		// 个人租户不受全局配置影响，仍为不限。
+		Quota:     s.quotaForNewOrgUnsafe(kind),
+		Status:    model.OrgStatusActive,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -53,11 +56,18 @@ func (s *Store) CreateOrganization(userID, name, slug, kind string) (*model.Orga
 	}
 	s.organizations[org.ID] = org
 
+	// 角色种子（设计文档 §5）：新租户创建即补齐三个内置角色，
+	// 使「建成员 → 写 role_id」不会引用到不存在的角色。
+	if _, err := s.seedBuiltinRolesUnsafe(org.ID); err != nil {
+		return nil, mongoWriteError(err)
+	}
+
 	member := &model.OrgMembership{
 		ID:       "om_" + newID(),
 		OrgID:    org.ID,
 		UserID:   userID,
 		Role:     model.OrgRoleOwner,
+		RoleID:   model.BuiltinOrgRoleID(org.ID, model.OrgRoleOwner),
 		JoinedAt: now,
 	}
 	if err := s.persistMembershipUnsafe(member); err != nil {
@@ -134,7 +144,10 @@ func (s *Store) ListOrgMembers(orgID string) []*model.OrgMembership {
 }
 
 // AddOrgMember 向租户添加成员。存在则返回既有关系，不重复创建。
-func (s *Store) AddOrgMember(orgID, userID, role string) (*model.OrgMembership, *transport.AppError) {
+//
+// roleRef 既接受内置角色语义键（owner/admin/member），也接受本企业某角色的
+// role_id（自定义角色，设计文档 §5）；owner 不可通过本接口授予。
+func (s *Store) AddOrgMember(orgID, userID, roleRef string) (*model.OrgMembership, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -144,11 +157,9 @@ func (s *Store) AddOrgMember(orgID, userID, role string) (*model.OrgMembership, 
 	if userID == "" {
 		return nil, transport.BadRequest("VALIDATION_ERROR", "user_id: required")
 	}
-	if role == "" {
-		role = model.OrgRoleMember
-	}
-	if role != model.OrgRoleOwner && role != model.OrgRoleAdmin && role != model.OrgRoleMember {
-		return nil, transport.BadRequest("VALIDATION_ERROR", "role: must be owner, admin or member")
+	role, appErr := s.resolveRoleRefUnsafe(orgID, roleRef)
+	if appErr != nil {
+		return nil, appErr
 	}
 	if _, exists := s.findMembershipUnsafe(orgID, userID); exists {
 		return nil, transport.Conflict("ALREADY_MEMBER", "user is already a member of this organization")
@@ -158,7 +169,8 @@ func (s *Store) AddOrgMember(orgID, userID, role string) (*model.OrgMembership, 
 		ID:       "om_" + newID(),
 		OrgID:    orgID,
 		UserID:   userID,
-		Role:     role,
+		Role:     legacyRoleString(role),
+		RoleID:   role.ID,
 		JoinedAt: time.Now().UTC(),
 	}
 	if err := s.persistMembershipUnsafe(m); err != nil {
@@ -171,19 +183,23 @@ func (s *Store) AddOrgMember(orgID, userID, role string) (*model.OrgMembership, 
 }
 
 // UpdateOrgMemberRole 改成员角色；Owner 不允许降级（转让需走专用流程，二期）。
-func (s *Store) UpdateOrgMemberRole(orgID, userID, role string) (*model.OrgMembership, *transport.AppError) {
+// roleRef 语义同 AddOrgMember。
+func (s *Store) UpdateOrgMemberRole(orgID, userID, roleRef string) (*model.OrgMembership, *transport.AppError) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if role != model.OrgRoleOwner && role != model.OrgRoleAdmin && role != model.OrgRoleMember {
-		return nil, transport.BadRequest("VALIDATION_ERROR", "role: must be owner, admin or member")
-	}
 	m, exists := s.findMembershipUnsafe(orgID, userID)
 	if !exists {
 		return nil, transport.NotFound("membership not found")
 	}
-	m.Role = role
+	role, appErr := s.resolveRoleRefUnsafe(orgID, roleRef)
+	if appErr != nil {
+		return nil, appErr
+	}
+	prevRole, prevRoleID := m.Role, m.RoleID
+	m.Role, m.RoleID = legacyRoleString(role), role.ID
 	if err := s.persistMembershipUnsafe(m); err != nil {
+		m.Role, m.RoleID = prevRole, prevRoleID // 持久化失败零副作用
 		return nil, mongoWriteError(err)
 	}
 	return m, nil
@@ -311,12 +327,16 @@ func (s *Store) ensurePersonalOrgUnsafe(userID, displayName string) (*model.Orga
 		return nil, mongoWriteError(err)
 	}
 	s.organizations[org.ID] = org
+	if _, err := s.seedBuiltinRolesUnsafe(org.ID); err != nil {
+		return nil, mongoWriteError(err)
+	}
 
 	m := &model.OrgMembership{
 		ID:       "om_" + newID(),
 		OrgID:    org.ID,
 		UserID:   userID,
 		Role:     model.OrgRoleOwner,
+		RoleID:   model.BuiltinOrgRoleID(org.ID, model.OrgRoleOwner),
 		JoinedAt: now,
 	}
 	if err := s.persistMembershipUnsafe(m); err != nil {

@@ -104,6 +104,13 @@ type Store struct {
 	llmEnvURL         string                               // env 兜底（bootstrap 注入）
 	llmEnvKey         string
 	llmEnvModel       string
+	platformGlobalCfg *model.PlatformGlobalConfig // 平台全局配置（单文档 _id=global），nil = 用默认值
+	// platformAdminEmails 非空 = PLATFORM_ADMIN_EMAILS 种子模式（账号集合以 env 为准）。
+	// 空 = 历史行为（首个注册用户自动提升），见 SeedPlatformAdmins。
+	platformAdminEmails map[string]bool
+	// auditMu 独立于 s.mu：审计是追加写旁路，不参与状态机，不该挤占全局锁。
+	auditMu           sync.Mutex
+	auditMem          []model.AuditLog              // Mongo 不可用时的降级查询源（有界环形，见 store_audit.go）
 	opsIncidents      map[string]*model.OpsIncident // 工单 ID → 工单
 	opsByDedupeKey    map[string]string             // dedupeKey → 工单 ID（活跃工单去重）
 	opsByTask         map[string][]string           // taskID → 工单 ID 列表
@@ -148,6 +155,15 @@ type Store struct {
 	userOrgIndex   map[string][]string // userID → []membershipID
 	projectMembers map[string][]model.ProjectMember
 
+	// 企业角色（设计文档 §5）：org_roles 全内存状态机 + Mongo 镜像，
+	// 与其余 map 一致统一由 s.mu 保护。
+	orgRoles map[string]*model.OrgRole
+	// orgRoleIndex orgID → []roleID。
+	orgRoleIndex map[string][]string
+	// roleTemplates 内置角色权限模板（语义键 → 权限集），由 app 层从 authz 矩阵注入
+	// （store 不依赖 authz），见 SetBuiltinRoleTemplates。
+	roleTemplates map[string][]string
+
 	meetings            map[string]*model.Meeting // meetingID → Meeting
 	projectMeetings     map[string][]string       // projectID → []meetingID
 	meetingMessages     map[string]*model.MeetingMessage
@@ -178,10 +194,12 @@ type Store struct {
 	mongoMeetingMessages   *mongo.Collection
 	mongoOrganizations     *mongo.Collection
 	mongoOrgMemberships    *mongo.Collection
+	mongoOrgRoles          *mongo.Collection // 企业角色（设计文档 §5，含内置角色种子）
 	mongoProjectMembers    *mongo.Collection
 	mongoWorkflowTemplates *mongo.Collection
 	mongoOpsIncidents      *mongo.Collection
 	mongoLLMSettings       *mongo.Collection
+	mongoAuditLogs         *mongo.Collection // 审计日志（TTL 180 天，追加写只读展示）
 	mongoIdempotencyKeys   *mongo.Collection // T2.6 通用幂等键集合（唯一键 _id + TTL 索引 expire_at）
 	mongoLeaderLeases      *mongo.Collection // T3.1 后台循环 leader 租约集合（单文档 CAS）
 	mongoTimeout           time.Duration
@@ -281,6 +299,7 @@ func New() *Store {
 		agentEvents:             make(map[string][]*model.Event),
 		orgEvents:               make(map[string][]*model.Event),
 		llmConfigs:              make(map[string]*model.PlatformLLMSetting),
+		platformAdminEmails:     make(map[string]bool),
 		opsIncidents:            make(map[string]*model.OpsIncident),
 		opsByDedupeKey:          make(map[string]string),
 		opsByTask:               make(map[string][]string),
@@ -309,6 +328,9 @@ func New() *Store {
 		orgMemberIndex:      make(map[string][]string),
 		userOrgIndex:        make(map[string][]string),
 		projectMembers:      make(map[string][]model.ProjectMember),
+		orgRoles:            make(map[string]*model.OrgRole),
+		orgRoleIndex:        make(map[string][]string),
+		roleTemplates:       make(map[string][]string),
 		meetings:            make(map[string]*model.Meeting),
 		projectMeetings:     make(map[string][]string),
 		meetingMessages:     make(map[string]*model.MeetingMessage),

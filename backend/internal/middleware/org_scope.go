@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -32,8 +33,21 @@ func OrgScope(st *store.Store) gin.HandlerFunc {
 				c.Abort()
 				return
 			}
+			// 企业生命周期（权限体系 §6.3）：被平台侧禁用的企业，其成员带该企业
+			// 租户头的请求一律 403。个人空间（不带该头）不受影响，数据仍可见。
+			if org, appErr := st.GetOrganization(orgID); appErr == nil && org.IsDisabled() {
+				transport.WriteError(c, &transport.AppError{
+					Status:  http.StatusForbidden,
+					Code:    "ORG_DISABLED",
+					Message: "organization is disabled by platform admin",
+					Details: map[string]any{"org_id": orgID},
+				})
+				c.Abort()
+				return
+			}
 			sc.OrgID = orgID
 			sc.Role = m.Role
+			sc.RoleID = m.RoleID
 		}
 
 		c.Set(scopeKey, sc)

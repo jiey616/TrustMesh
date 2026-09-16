@@ -8,6 +8,8 @@ import dayjs from 'dayjs'
 import { useNavigate } from 'react-router-dom'
 import { CreateMeetingModal } from '@/components/meeting/CreateMeetingModal'
 import { PageHeader } from '@/components/shared/PageHeader'
+import { usePermStore } from '@/stores/permStore'
+import { PERM } from '@/lib/perms'
 
 const { Text } = Typography
 
@@ -40,6 +42,9 @@ export function MeetingListPage({ projectId }: Props) {
   const [selectedProject, setSelectedProject] = useState<string | undefined>(projectId)
   const [createOpen, setCreateOpen] = useState(false)
   const activeProjectId = projectId ?? selectedProject
+  // 会议生命周期（创建/开始/结束）统一走 meeting.manage：无权限时隐藏「新建会议」入口，
+  // 避免建出自己开不了的僵尸会议（权限视图未就绪时 fail-open，由后端 403 兜底）。
+  const canManageMeeting = usePermStore((s) => s.hasPerm(PERM.MEETING_MANAGE))
 
   const { data: projects } = useQuery({
     queryKey: ['projects'],
@@ -76,9 +81,12 @@ export function MeetingListPage({ projectId }: Props) {
         icon={<TeamOutlined />}
         subtitle={totalCount > 0 ? `共 ${totalCount} 场会议` : undefined}
         actions={
-          <Button type="primary" icon={<PlusOutlined />} disabled={!activeProjectId} onClick={() => setCreateOpen(true)}>
-            新建会议
-          </Button>
+          // 新建会议 = POST /projects/:pid/meetings（meeting.manage）
+          canManageMeeting ? (
+            <Button type="primary" icon={<PlusOutlined />} disabled={!activeProjectId} onClick={() => setCreateOpen(true)}>
+              新建会议
+            </Button>
+          ) : undefined
         }
       />
 
@@ -103,7 +111,10 @@ export function MeetingListPage({ projectId }: Props) {
           <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}><Spin /></div>
         ) : totalCount === 0 ? (
           <Empty description="暂无会议">
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>创建第一个会议</Button>
+            {/* 创建会议 = meeting.manage（无权限时仅保留 Empty 文案兜底） */}
+            {canManageMeeting && (
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>创建第一个会议</Button>
+            )}
           </Empty>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.uber.org/zap"
 	"trustmesh/backend/internal/model"
@@ -30,14 +31,6 @@ func (s *Store) SetLLMEnvDefaults(apiURL, apiKey, model string) {
 	s.llmEnvModel = model
 }
 
-// UserIsPlatformAdmin 判断用户是否平台管理员。
-func (s *Store) UserIsPlatformAdmin(userID string) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	u, ok := s.users[userID]
-	return ok && u.IsAdmin
-}
-
 // PersonalOrgIDOf 返回用户的个人租户 ID（无则空串）。
 func (s *Store) PersonalOrgIDOf(userID string) string {
 	s.mu.RLock()
@@ -60,35 +53,6 @@ func (s *Store) userIsOrgAdminLocked(userID, orgID string) bool {
 		}
 	}
 	return false
-}
-
-// EnsurePlatformAdminExists 兜底：存量部署没有任何 admin 时，
-// 把最早注册的用户提升为平台管理员（幂等，启动时调用一次）。
-func (s *Store) EnsurePlatformAdminExists() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, u := range s.users {
-		if u.IsAdmin {
-			return
-		}
-	}
-	if len(s.users) == 0 {
-		return
-	}
-	oldest := (*model.User)(nil)
-	for _, u := range s.users {
-		if oldest == nil || u.CreatedAt.Before(oldest.CreatedAt) {
-			oldest = u
-		}
-	}
-	oldest.IsAdmin = true
-	oldest.UpdatedAt = time.Now().UTC()
-	if err := s.persistUserUnsafe(oldest); err != nil && s.log != nil {
-		s.log.Warn("promote first admin failed", zap.Error(err))
-	}
-	if s.log != nil {
-		s.log.Info("promoted first platform admin", zap.String("user_id", oldest.ID), zap.String("email", oldest.Email))
-	}
 }
 
 // resolveLLMLayeredUnsafe 按优先级解析生效配置。orgID 为空 = 个人空间请求，
@@ -357,6 +321,9 @@ func llmLayerSource(orgID string) string {
 }
 
 // loadLLMConfigs 启动时从 Mongo 装载全部 LLM 配置（含平台默认单例）。
+//
+// 过滤器显式要求 org_id 存在：platform_settings 集合里还住着平台全局配置
+// （_id="global"，不写 org_id），若不过滤会被当成「平台默认层」污染回退链。
 func (s *Store) loadLLMConfigs() (map[string]*model.PlatformLLMSetting, error) {
 	out := make(map[string]*model.PlatformLLMSetting)
 	if s.mongoLLMSettings == nil {
@@ -364,7 +331,7 @@ func (s *Store) loadLLMConfigs() (map[string]*model.PlatformLLMSetting, error) {
 	}
 	ctx, cancel := s.mongoContext()
 	defer cancel()
-	cursor, err := s.mongoLLMSettings.Find(ctx, map[string]any{})
+	cursor, err := s.mongoLLMSettings.Find(ctx, bson.M{"org_id": bson.M{"$exists": true}})
 	if err != nil {
 		return nil, err
 	}

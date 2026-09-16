@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 	"trustmesh/backend/internal/auth"
+	"trustmesh/backend/internal/model"
 	"trustmesh/backend/internal/store"
 	"trustmesh/backend/internal/transport"
 )
@@ -88,6 +89,20 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		transport.WriteError(c, &transport.AppError{Status: 401, Code: "INVALID_CREDENTIALS", Message: "invalid email or password", Details: map[string]any{}})
 		return
 	}
+	// 平台管理员登录落审计（设计文档 §6.4）：这条链路上 RequireAuth 还没跑，
+	// 因此直接构造审计记录（不经过 recordAudit 的中间件取 actor 逻辑）。
+	if h.store.UserIsPlatformAdmin(user.ID) {
+		h.store.RecordAudit(model.AuditLog{
+			ActorUserID: user.ID,
+			ActorEmail:  user.Email,
+			Scope:       model.AuditScopePlatform,
+			Action:      model.AuditActionPlatformAdminLogin,
+			TargetType:  model.AuditTargetPlatformLogin,
+			TargetID:    user.ID,
+			IP:          c.ClientIP(),
+		})
+	}
+
 	pair, err := h.jwt.IssueTokenPair(user.ID)
 	if err != nil {
 		transport.WriteError(c, &transport.AppError{Status: 500, Code: "INTERNAL_ERROR", Message: "failed to issue token", Details: map[string]any{}})

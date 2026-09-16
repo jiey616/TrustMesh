@@ -17,6 +17,8 @@ import { MeetingListPage } from '@/pages/MeetingListPage'
 import { useAgents } from '@/hooks/useAgents'
 import { useExternalApps } from '@/hooks/useExternalApps'
 import { hasPlacement, type TaskListItem } from '@/types'
+import { usePermStore } from '@/stores/permStore'
+import { PERM } from '@/lib/perms'
 
 const { Title, Text } = Typography
 
@@ -79,6 +81,10 @@ export function ProjectBoardPage() {
   const [editOpen, setEditOpen] = useState(false)
   const [archiveOpen, setArchiveOpen] = useState(false)
   const { message } = App.useApp()
+  // 写操作入口按权限点显隐（权限视图未就绪时 fail-open，由后端 403 兜底）：
+  // 新任务 = task.create，编辑/归档项目 = project.manage。
+  const canCreateTask = usePermStore((s) => s.hasPerm(PERM.TASK_CREATE))
+  const canManageProject = usePermStore((s) => s.hasPerm(PERM.PROJECT_MANAGE))
 
   // ?task= 深链：首次进入页面、以及页内任何时刻导航到带 ?task= 的地址
   // （工作流节点点击、收件箱通知跳转）都打开对应任务工作台，随后清掉
@@ -291,38 +297,44 @@ export function ProjectBoardPage() {
             </div>
           </div>
           <Space style={{ flexShrink: 0 }}>
-            <Button size="small" icon={<PlusOutlined />} disabled={projectArchived} onClick={openDraftWorkspace}>
-              {projectArchived ? '项目已归档' : '新任务'}
-            </Button>
-            <Dropdown
-              menu={{
-                items: [
-                  { key: 'edit', icon: <EditOutlined />, label: '编辑项目', disabled: !project },
-                  { type: 'divider' },
-                  {
-                    key: 'archive',
-                    icon: <DeleteOutlined />,
-                    label: projectArchived ? '已归档' : '归档项目',
-                    danger: true,
-                    disabled: !project || projectArchived,
+            {/* 新任务 = POST /projects/:pid/tasks（task.create） */}
+            {canCreateTask && (
+              <Button size="small" icon={<PlusOutlined />} disabled={projectArchived} onClick={openDraftWorkspace}>
+                {projectArchived ? '项目已归档' : '新任务'}
+              </Button>
+            )}
+            {/* 编辑/归档项目 = PATCH|DELETE /projects/:id（project.manage） */}
+            {canManageProject && (
+              <Dropdown
+                menu={{
+                  items: [
+                    { key: 'edit', icon: <EditOutlined />, label: '编辑项目', disabled: !project },
+                    { type: 'divider' },
+                    {
+                      key: 'archive',
+                      icon: <DeleteOutlined />,
+                      label: projectArchived ? '已归档' : '归档项目',
+                      danger: true,
+                      disabled: !project || projectArchived,
+                    },
+                  ],
+                  onClick: ({ key }) => {
+                    if (key === 'edit') {
+                      editForm.setFieldsValue({
+                        name: project?.name,
+                        description: project?.description,
+                        pm_agent_id: project?.pm_agent.id,
+                      })
+                      setEditOpen(true)
+                    } else if (key === 'archive') {
+                      setArchiveOpen(true)
+                    }
                   },
-                ],
-                onClick: ({ key }) => {
-                  if (key === 'edit') {
-                    editForm.setFieldsValue({
-                      name: project?.name,
-                      description: project?.description,
-                      pm_agent_id: project?.pm_agent.id,
-                    })
-                    setEditOpen(true)
-                  } else if (key === 'archive') {
-                    setArchiveOpen(true)
-                  }
-                },
-              }}
-            >
-              <Button size="small" icon={<MoreOutlined />} />
-            </Dropdown>
+                }}
+              >
+                <Button size="small" icon={<MoreOutlined />} />
+              </Dropdown>
+            )}
           </Space>
         </div>
 

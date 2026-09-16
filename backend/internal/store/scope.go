@@ -7,7 +7,10 @@ import "trustmesh/backend/internal/model"
 type Scope struct {
 	UserID string
 	OrgID  string
-	Role   string // owner | admin | member
+	Role   string // owner | admin | member（自定义角色为 role_id，见 RoleID）
+	// RoleID 是 org_roles 的角色引用（设计文档 §5 权限解析链的起点）：
+	// 非空时权限集由该角色定义决定；为空（兼容期未迁移）才按 Role 字符串映射内置角色。
+	RoleID string
 	// System 标记内部系统路径（agent webhook / timeout_monitor / 后台定时器等
 	// 没有用户会话的调用）。系统路径不做归属裁决，直接放行。
 	//

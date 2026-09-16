@@ -64,3 +64,47 @@ type LLMConfigTestRequest struct {
 	APIKey string `json:"api_key"`
 	Model  string `json:"model"`
 }
+
+// ---------------------------------------------------------------------------
+// 平台全局配置（设计文档 §6.4，platform_settings 单文档）
+//
+// 与 PlatformLLMSetting 共用一个集合：本配置固定 _id="global" 且**不写 org_id 字段**，
+// 因此不会被 LLM 配置的 {org_id: ...} 过滤/唯一索引命中（LLM 装载过滤器已显式
+// 要求 org_id 存在，见 loadLLMConfigs）。
+// ---------------------------------------------------------------------------
+
+// PlatformGlobalConfigID 平台全局配置的单文档 _id。
+const PlatformGlobalConfigID = "global"
+
+// PlatformGlobalConfig 平台全局配置：默认模型 + 新建企业默认配额 + 节点参数。
+type PlatformGlobalConfig struct {
+	ID string `json:"-" bson:"_id"`
+	// DefaultModel 新建/未覆盖租户的推荐默认模型；空 = 跟随 LLM 平台默认配置。
+	DefaultModel string `json:"default_model" bson:"default_model"`
+	// Quota 新建**企业**租户的默认配额（个人租户恒不限，不受此影响）。
+	Quota OrgQuota `json:"quota" bson:"quota"`
+	// NodeParameters 预留的节点级参数键值对（≤20 项，键值均 ≤64 字符）。
+	NodeParameters map[string]string `json:"node_parameters,omitempty" bson:"node_parameters,omitempty"`
+	UpdatedAt      time.Time         `json:"updated_at" bson:"updated_at"`
+	UpdatedBy      string            `json:"updated_by" bson:"updated_by"`
+}
+
+// DefaultPlatformGlobalConfig 未落库时的默认全局配置（全部不限）。
+func DefaultPlatformGlobalConfig() *PlatformGlobalConfig {
+	return &PlatformGlobalConfig{
+		ID:    PlatformGlobalConfigID,
+		Quota: OrgQuota{MaxMembers: -1, MaxNodes: -1, MaxProjects: -1, MaxStorageBytes: -1},
+	}
+}
+
+// PlatformUsage 全平台用量总览（count 级聚合，不含业务内容）。
+type PlatformUsage struct {
+	OrgsTotal      int   `json:"orgs_total"`
+	OrgsEnterprise int   `json:"orgs_enterprise"`
+	OrgsDisabled   int   `json:"orgs_disabled"`
+	Users          int   `json:"users"`
+	Agents         int   `json:"agents"`
+	Projects       int   `json:"projects"`
+	Tasks          int   `json:"tasks"`
+	StorageBytes   int64 `json:"storage_bytes"` // 项目文件累计字节数
+}

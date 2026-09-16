@@ -24,6 +24,8 @@ import { WorkflowCanvasEditor } from '@/components/project/WorkflowCanvasEditor'
 import { AgentAvatar } from '@/components/shared/AgentAvatar'
 import { PageHeader } from '@/components/shared/PageHeader'
 import type { WorkflowTemplate } from '@/types'
+import { usePermStore } from '@/stores/permStore'
+import { PERM } from '@/lib/perms'
 
 const { Text, Paragraph } = Typography
 
@@ -47,6 +49,9 @@ export function WorkflowTemplatesPage() {
   const deleteMutation = useDeleteWorkflowTemplate()
   const curateMutation = useCurateWorkflowTemplate()
   const [onlyCurated, setOnlyCurated] = useState(false)
+  // 模板写操作入口（新建/编辑/复制/删除/精选）= workflow.template.mgr，
+  // member 无此权限则隐藏（权限视图未就绪时 fail-open，由后端 403 兜底）。
+  const canManageWorkflow = usePermStore((s) => s.hasPerm(PERM.WORKFLOW_TEMPLATE_MGR))
 
   const sortedTemplates = [...templates].sort((a, b) => {
     const ac = a.curated ? 1 : 0
@@ -142,9 +147,12 @@ export function WorkflowTemplatesPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>只看精选</span>
             <Switch size="small" checked={onlyCurated} onChange={setOnlyCurated} />
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({ isNew: true, tpl: emptyTemplate() })}>
-              新建模板
-            </Button>
+            {/* 新建模板 = POST /workflow-templates（workflow.template.mgr） */}
+            {canManageWorkflow && (
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({ isNew: true, tpl: emptyTemplate() })}>
+                新建模板
+              </Button>
+            )}
           </div>
         }
       />
@@ -155,9 +163,12 @@ export function WorkflowTemplatesPage() {
             description={<span style={{ color: 'var(--text-tertiary)' }}>还没有全局工作流模板</span>}
             style={{ padding: '48px 0' }}
           >
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({ isNew: true, tpl: emptyTemplate() })}>
-              新建模板
-            </Button>
+            {/* 新建模板 = workflow.template.mgr（无权限时仅保留 Empty 文案兜底） */}
+            {canManageWorkflow && (
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({ isNew: true, tpl: emptyTemplate() })}>
+                新建模板
+              </Button>
+            )}
           </Empty>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: 12 }}>
@@ -182,29 +193,34 @@ export function WorkflowTemplatesPage() {
                   <span style={{ fontSize: 11, color: 'var(--text-tertiary)', background: 'var(--surface-raised)', borderRadius: 'var(--radius-pill)', padding: '1px 8px', flexShrink: 0 }}>
                     {tpl.steps.length} 步
                   </span>
-                  <Tooltip title={tpl.curated ? '取消精选' : '标为精选'}>
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={tpl.curated ? <StarFilled /> : <StarOutlined />}
-                      style={{ color: tpl.curated ? 'var(--warning)' : 'var(--text-tertiary)' }}
-                      loading={curateMutation.isPending && curateMutation.variables?.id === tpl.id}
-                      onClick={() => {
-                        curateMutation
-                          .mutateAsync({ id: tpl.id, curated: !tpl.curated })
-                          .catch((err: unknown) => message.error(err instanceof Error ? err.message : '操作失败'))
-                      }}
-                    />
-                  </Tooltip>
-                  <Tooltip title="复制为新模板">
-                    <Button type="text" size="small" icon={<CopyOutlined />} style={{ color: 'var(--text-tertiary)' }} onClick={() => handleCopy(tpl.id)} />
-                  </Tooltip>
-                  <Tooltip title="编辑">
-                    <Button type="text" size="small" icon={<EditOutlined />} style={{ color: 'var(--text-tertiary)' }} onClick={() => setEditing({ isNew: false, tpl: { ...tpl, steps: tpl.steps.map((s) => ({ ...s })) } })} />
-                  </Tooltip>
-                  <Tooltip title="删除">
-                    <Button type="text" size="small" icon={<DeleteOutlined />} style={{ color: 'var(--text-quaternary)' }} onClick={() => setDeleting(tpl.id)} />
-                  </Tooltip>
+                  {/* 精选/复制/编辑/删除均为 workflow.template.mgr 保护的写操作，无权限时整体隐藏 */}
+                  {canManageWorkflow && (
+                    <>
+                      <Tooltip title={tpl.curated ? '取消精选' : '标为精选'}>
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={tpl.curated ? <StarFilled /> : <StarOutlined />}
+                          style={{ color: tpl.curated ? 'var(--warning)' : 'var(--text-tertiary)' }}
+                          loading={curateMutation.isPending && curateMutation.variables?.id === tpl.id}
+                          onClick={() => {
+                            curateMutation
+                              .mutateAsync({ id: tpl.id, curated: !tpl.curated })
+                              .catch((err: unknown) => message.error(err instanceof Error ? err.message : '操作失败'))
+                          }}
+                        />
+                      </Tooltip>
+                      <Tooltip title="复制为新模板">
+                        <Button type="text" size="small" icon={<CopyOutlined />} style={{ color: 'var(--text-tertiary)' }} onClick={() => handleCopy(tpl.id)} />
+                      </Tooltip>
+                      <Tooltip title="编辑">
+                        <Button type="text" size="small" icon={<EditOutlined />} style={{ color: 'var(--text-tertiary)' }} onClick={() => setEditing({ isNew: false, tpl: { ...tpl, steps: tpl.steps.map((s) => ({ ...s })) } })} />
+                      </Tooltip>
+                      <Tooltip title="删除">
+                        <Button type="text" size="small" icon={<DeleteOutlined />} style={{ color: 'var(--text-quaternary)' }} onClick={() => setDeleting(tpl.id)} />
+                      </Tooltip>
+                    </>
+                  )}
                 </div>
 
                 {tpl.description ? (

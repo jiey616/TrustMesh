@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -67,6 +68,19 @@ type Config struct {
 	// 订阅者，行为与改造前逐字节一致。多实例部署时置 true，否则连在实例 A 的用户
 	// 收不到实例 B 处理出的事件。
 	SSEBroadcastEnabled bool
+
+	// 权限体系（docs/permission-system-design-2026-09-16.md）：
+	// PermLegacyMember 为 true（PERM_LEGACY_MEMBER=1）时 member 角色回退到
+	// 收紧前的旧权限语义（≈ admin 减去成员管理），仅作临时回滚开关。
+	PermLegacyMember bool
+
+	// PlatformAdminEmails 是平台管理员的种子账号（PLATFORM_ADMIN_EMAILS，逗号分隔）。
+	//
+	// 非空 = 种子模式：账号集合以 env 为准（启动时同步，界面不可授予/撤销），
+	// 且业务 API 对平台管理员硬拒绝（只放行 /api/v1/platform/* 与账号类白名单）。
+	// 为空 = 保持历史行为（首个注册用户自动提升为平台管理员，业务 API 不做反向拒绝），
+	// 避免存量部署在未配置 env 时被锁在业务之外。
+	PlatformAdminEmails []string
 
 	// Project files
 	FilesStoragePath string
@@ -152,6 +166,10 @@ func Load() Config {
 
 		SSEBroadcastEnabled: getEnvBool("SSE_BROADCAST_ENABLED", false),
 
+		PermLegacyMember: getEnvBool("PERM_LEGACY_MEMBER", false),
+
+		PlatformAdminEmails: getEnvEmailList("PLATFORM_ADMIN_EMAILS"),
+
 		MarketDataPath: getEnv("MARKET_DATA_PATH", "data/roles_index.json"),
 
 		PlatformName: getEnv("PLATFORM_NAME", "画宗AIGC无人工厂"),
@@ -183,6 +201,26 @@ func getEnvInt(key string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+// getEnvEmailList 解析逗号分隔的邮箱列表：去空白、转小写、去重、丢弃空项。
+// 返回 nil 表示该 env 未配置（调用方据此区分「未配置」与「配置为空」）。
+func getEnvEmailList(key string) []string {
+	raw, ok := os.LookupEnv(key)
+	if !ok {
+		return nil
+	}
+	seen := make(map[string]bool)
+	out := make([]string, 0, 4)
+	for _, part := range strings.Split(raw, ",") {
+		email := strings.ToLower(strings.TrimSpace(part))
+		if email == "" || seen[email] {
+			continue
+		}
+		seen[email] = true
+		out = append(out, email)
+	}
+	return out
 }
 
 func getEnvBool(key string, fallback bool) bool {

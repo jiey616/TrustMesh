@@ -24,22 +24,34 @@ func NewOrgHandler(s *store.Store) *OrgHandler {
 
 var orgSlugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$`)
 
+// slugSanitizeRe 把任意字符串压成 slug 允许的字符集（非 [a-z0-9] 折叠为 '-'）。
+var slugSanitizeRe = regexp.MustCompile(`[^a-z0-9]+`)
+
 type orgView struct {
-	ID        string         `json:"id"`
-	Name      string         `json:"name"`
-	Slug      string         `json:"slug"`
-	Kind      string         `json:"kind"`
-	OwnerID   string         `json:"owner_id"`
-	MyRole    string         `json:"my_role"`
-	Quota     model.OrgQuota `json:"quota"`
-	CreatedAt string         `json:"created_at"`
-	Members   []memberView   `json:"members,omitempty"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Slug    string `json:"slug"`
+	Kind    string `json:"kind"`
+	OwnerID string `json:"owner_id"`
+	MyRole  string `json:"my_role"`
+	// MyRoleID 是调用者在 org_roles 里的角色引用（自定义角色场景下 my_role 会是
+	// 该 role_id 本身，前端展示角色名请优先用本字段查角色表）。
+	MyRoleID string         `json:"my_role_id,omitempty"`
+	Quota    model.OrgQuota `json:"quota"`
+	// MenuOverrides 企业级菜单隐藏项（owner 在设置页勾选，只能缩小；设计文档 §4）。
+	MenuOverrides []string     `json:"menu_overrides,omitempty"`
+	CreatedAt     string       `json:"created_at"`
+	Members       []memberView `json:"members,omitempty"`
 }
 
 type memberView struct {
-	ID       string `json:"id"`
-	UserID   string `json:"user_id"`
-	Role     string `json:"role"`
+	ID     string `json:"id"`
+	UserID string `json:"user_id"`
+	// Role 兼容字段：内置角色为语义键，自定义角色为 role_id（见 model.OrgMembership）。
+	Role string `json:"role"`
+	// RoleID 是 org_roles 的角色引用（权威），RoleName 是其展示名，便于前端直接渲染。
+	RoleID   string `json:"role_id,omitempty"`
+	RoleName string `json:"role_name,omitempty"`
 	JoinedAt string `json:"joined_at"`
 	Email    string `json:"email,omitempty"`
 	Name     string `json:"name,omitempty"`
@@ -51,6 +63,45 @@ func (h *OrgHandler) roleOf(orgID, userID string) string {
 		return m.Role
 	}
 	return ""
+}
+
+// roleIDOf 取调用者在租户内的角色引用（无成员关系返回空）。
+func (h *OrgHandler) roleIDOf(orgID, userID string) string {
+	if m, ok := h.store.GetMembership(orgID, userID); ok {
+		return m.RoleID
+	}
+	return ""
+}
+
+// toMemberView 组装成员视图，并把 role_id 解析成展示名（找不到角色时留空，
+// 前端回落显示 role 字段）。
+func (h *OrgHandler) toMemberView(m *model.OrgMembership) memberView {
+	v := memberView{
+		ID: m.ID, UserID: m.UserID, Role: m.Role, RoleID: m.RoleID,
+		JoinedAt: m.JoinedAt.Format("2006-01-02T15:04:05Z07:00"),
+	}
+	if role, ok := h.store.RoleByID(m.RoleID); ok {
+		v.RoleName = role.Name
+	}
+	return v
+}
+
+// isOwnerMembership 报告成员是否为租户所有者（role_id 与兼容字段任一命中即可）。
+func isOwnerMembership(orgID string, m *model.OrgMembership) bool {
+	if m == nil {
+		return false
+	}
+	return m.Role == model.OrgRoleOwner ||
+		m.RoleID == model.BuiltinOrgRoleID(orgID, model.OrgRoleOwner)
+}
+
+// isAdminMembership 报告成员是否为内置 admin 角色（自定义角色不算）。
+func isAdminMembership(orgID string, m *model.OrgMembership) bool {
+	if m == nil {
+		return false
+	}
+	return m.Role == model.OrgRoleAdmin ||
+		m.RoleID == model.BuiltinOrgRoleID(orgID, model.OrgRoleAdmin)
 }
 
 // memberGuard checks the caller is a member; returns the org and role.
@@ -69,9 +120,13 @@ func (h *OrgHandler) memberGuard(c *gin.Context, orgID string) (*model.Organizat
 	return org, role, true
 }
 
-// adminGuard additionally requires owner|admin and an enterprise org.
+// adminGuard 在 memberGuard 之上附加「仅企业租户」约束。
+//
+// 历史：这里曾兼任角色门禁（owner/admin 才放行）。权限体系落地后，调用方角色
+// 由路由层 authz.RequirePerm(org.member.mgr) 统一裁决（设计文档 §6.2），
+// 本函数只保留「个人租户不支持成员管理」的业务约束。
 func (h *OrgHandler) adminGuard(c *gin.Context, orgID string) (*model.Organization, bool) {
-	org, role, ok := h.memberGuard(c, orgID)
+	org, _, ok := h.memberGuard(c, orgID)
 	if !ok {
 		return nil, false
 	}
@@ -79,18 +134,15 @@ func (h *OrgHandler) adminGuard(c *gin.Context, orgID string) (*model.Organizati
 		transport.WriteError(c, transport.BadRequest("PERSONAL_ORG", "personal organization does not support member management"))
 		return nil, false
 	}
-	if role != model.OrgRoleOwner && role != model.OrgRoleAdmin {
-		transport.WriteError(c, transport.Forbidden("owner or admin role required"))
-		return nil, false
-	}
 	return org, true
 }
 
-func toOrgView(org *model.Organization, role string) orgView {
+func toOrgView(org *model.Organization, role, roleID string) orgView {
 	return orgView{
 		ID: org.ID, Name: org.Name, Slug: org.Slug, Kind: org.Kind,
-		OwnerID: org.OwnerID, MyRole: role, Quota: org.Quota,
-		CreatedAt: org.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		OwnerID: org.OwnerID, MyRole: role, MyRoleID: roleID, Quota: org.Quota,
+		MenuOverrides: org.MenuOverrides,
+		CreatedAt:     org.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
 
@@ -100,7 +152,7 @@ func (h *OrgHandler) List(c *gin.Context) {
 	orgs := h.store.ListUserOrganizations(userID)
 	items := make([]orgView, 0, len(orgs))
 	for _, org := range orgs {
-		items = append(items, toOrgView(org, h.roleOf(org.ID, userID)))
+		items = append(items, toOrgView(org, h.roleOf(org.ID, userID), h.roleIDOf(org.ID, userID)))
 	}
 	transport.WriteList(c, items, len(items))
 }
@@ -122,8 +174,7 @@ func (h *OrgHandler) Create(c *gin.Context) {
 	slug := strings.ToLower(strings.TrimSpace(req.Slug))
 	if slug == "" {
 		// derive from name if omitted: keep [a-z0-9], collapse runs to '-'
-		slug = regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(strings.ToLower(name), "-")
-		slug = strings.Trim(slug, "-")
+		slug = orgSlugFrom(name)
 	}
 	if !orgSlugRe.MatchString(slug) {
 		transport.WriteError(c, transport.BadRequest("VALIDATION_ERROR", "slug: 3-64 chars, lowercase letters/digits/hyphens"))
@@ -134,7 +185,10 @@ func (h *OrgHandler) Create(c *gin.Context) {
 		transport.WriteError(c, appErr)
 		return
 	}
-	transport.WriteData(c, 201, toOrgView(org, model.OrgRoleOwner))
+	recordAudit(c, h.store, org.ID, model.AuditActionOrgCreate, model.AuditTargetOrg, org.ID,
+		map[string]any{"name": org.Name, "slug": org.Slug})
+	transport.WriteData(c, 201, toOrgView(org, model.OrgRoleOwner,
+		model.BuiltinOrgRoleID(org.ID, model.OrgRoleOwner)))
 }
 
 // Get returns one org (members only; others get 404).
@@ -143,7 +197,7 @@ func (h *OrgHandler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	transport.WriteData(c, 200, toOrgView(org, role))
+	transport.WriteData(c, 200, toOrgView(org, role, h.roleIDOf(org.ID, middleware.Scope(c).UserID)))
 }
 
 // ListMembers returns the org roster with user email/name attached.
@@ -155,7 +209,7 @@ func (h *OrgHandler) ListMembers(c *gin.Context) {
 	members := h.store.ListOrgMembers(orgID)
 	items := make([]memberView, 0, len(members))
 	for _, m := range members {
-		v := memberView{ID: m.ID, UserID: m.UserID, Role: m.Role, JoinedAt: m.JoinedAt.Format("2006-01-02T15:04:05Z07:00")}
+		v := h.toMemberView(m)
 		if u, ok := h.store.FindUserByID(m.UserID); ok {
 			v.Email = u.Email
 			v.Name = u.Name
@@ -168,10 +222,12 @@ func (h *OrgHandler) ListMembers(c *gin.Context) {
 type addMemberRequest struct {
 	Email string `json:"email"`
 	Role  string `json:"role"`
+	// RoleID 指定自定义角色（设计文档 §5）；与 Role 同传时以 RoleID 为准。
+	RoleID string `json:"role_id"`
 }
 
 // AddMember adds an existing user (looked up by email) to the org.
-// Owner/admin only. Allowed roles: admin, member.
+// Owner/admin only. Allowed roles: admin, member 或本企业任一自定义角色。
 func (h *OrgHandler) AddMember(c *gin.Context) {
 	orgID := c.Param("id")
 	if _, ok := h.adminGuard(c, orgID); !ok {
@@ -182,29 +238,39 @@ func (h *OrgHandler) AddMember(c *gin.Context) {
 		transport.WriteError(c, transport.BadRequest("BAD_REQUEST", "invalid json body"))
 		return
 	}
-	role := strings.TrimSpace(req.Role)
-	if role == "" {
-		role = model.OrgRoleMember
-	}
-	if role != model.OrgRoleAdmin && role != model.OrgRoleMember {
-		transport.WriteError(c, transport.BadRequest("VALIDATION_ERROR", "role: must be admin or member"))
-		return
-	}
+	roleRef := memberRoleRef(req.RoleID, req.Role)
 	u, ok := h.store.FindUserByEmail(strings.TrimSpace(req.Email))
 	if !ok {
 		transport.WriteError(c, transport.NotFound("user not found"))
 		return
 	}
-	m, appErr := h.store.AddOrgMember(orgID, u.ID, role)
+	m, appErr := h.store.AddOrgMember(orgID, u.ID, roleRef)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}
-	transport.WriteData(c, 201, memberView{ID: m.ID, UserID: m.UserID, Role: m.Role, JoinedAt: m.JoinedAt.Format("2006-01-02T15:04:05Z07:00"), Email: u.Email, Name: u.Name})
+	recordAudit(c, h.store, orgID, model.AuditActionOrgMemberAdd, model.AuditTargetMembership, m.ID,
+		map[string]any{"user_id": u.ID, "email": u.Email, "role": m.Role, "role_id": m.RoleID})
+	v := h.toMemberView(m)
+	v.Email, v.Name = u.Email, u.Name
+	transport.WriteData(c, 201, v)
+}
+
+// memberRoleRef 归一「成员角色引用」：role_id 优先，缺省回落内置角色串
+// （最终校验与 owner 保护都在 store 层，handler 不做角色白名单）。
+func memberRoleRef(roleID, role string) string {
+	if ref := strings.TrimSpace(roleID); ref != "" {
+		return ref
+	}
+	if ref := strings.TrimSpace(role); ref != "" {
+		return ref
+	}
+	return model.OrgRoleMember
 }
 
 type updateMemberRoleRequest struct {
-	Role string `json:"role"`
+	Role   string `json:"role"`
+	RoleID string `json:"role_id"`
 }
 
 // UpdateMemberRole changes a member's role. Admins cannot touch the owner;
@@ -220,31 +286,36 @@ func (h *OrgHandler) UpdateMemberRole(c *gin.Context) {
 		transport.WriteError(c, transport.BadRequest("BAD_REQUEST", "invalid json body"))
 		return
 	}
-	role := strings.TrimSpace(req.Role)
-	if role != model.OrgRoleAdmin && role != model.OrgRoleMember {
-		transport.WriteError(c, transport.BadRequest("VALIDATION_ERROR", "role: must be admin or member"))
-		return
-	}
+	roleRef := memberRoleRef(req.RoleID, req.Role)
 	target, ok := h.store.GetMembership(orgID, targetID)
 	if !ok {
 		transport.WriteError(c, transport.NotFound("member not found"))
 		return
 	}
-	if target.Role == model.OrgRoleOwner {
+	if isOwnerMembership(orgID, target) {
 		transport.WriteError(c, transport.Forbidden("owner role can only be changed via ownership transfer"))
 		return
 	}
-	m, appErr := h.store.UpdateOrgMemberRole(orgID, targetID, role)
+	m, appErr := h.store.UpdateOrgMemberRole(orgID, targetID, roleRef)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}
-	transport.WriteData(c, 200, memberView{ID: m.ID, UserID: m.UserID, Role: m.Role, JoinedAt: m.JoinedAt.Format("2006-01-02T15:04:05Z07:00")})
+	recordAudit(c, h.store, orgID, model.AuditActionOrgMemberRoleChange, model.AuditTargetMembership, m.ID,
+		map[string]any{
+			"user_id": targetID,
+			"from":    map[string]any{"role": target.Role, "role_id": target.RoleID},
+			"to":      map[string]any{"role": m.Role, "role_id": m.RoleID},
+		})
+	transport.WriteData(c, 200, h.toMemberView(m))
 }
 
 // RemoveMember removes a non-owner member. Admins cannot remove the owner
 // (or other admins? no — admins may remove members only; owner may remove
 // admins and members).
+//
+// 调用方是否具备成员管理权限由路由层 RequirePerm(org.member.mgr) 裁决；
+// 这里只保留「目标侧」层级规则：admin 只能移除 member，owner 不可被移除。
 func (h *OrgHandler) RemoveMember(c *gin.Context) {
 	orgID := c.Param("id")
 	targetID := c.Param("userId")
@@ -261,23 +332,52 @@ func (h *OrgHandler) RemoveMember(c *gin.Context) {
 		transport.WriteError(c, transport.NotFound("member not found"))
 		return
 	}
-	// permission matrix: owner removes anyone but owner(s); admin removes members only
-	if role == model.OrgRoleAdmin {
-		if target.Role != model.OrgRoleMember {
-			transport.WriteError(c, transport.Forbidden("admin can only remove members"))
-			return
-		}
-	} else if role != model.OrgRoleOwner {
-		transport.WriteError(c, transport.Forbidden("owner or admin role required"))
+	// 层级规则：owner 不可被移除；非 owner 的调用者不得移除 admin 及以上
+	// （保持收紧前「admin 只能移除 member」的语义，同时让自定义角色也不会
+	// 因为 Role 串不匹配而绕过该限制）。
+	if isOwnerMembership(orgID, target) {
+		transport.WriteError(c, transport.Forbidden("owner cannot be removed"))
 		return
 	}
-	if target.Role == model.OrgRoleOwner {
-		transport.WriteError(c, transport.Forbidden("owner cannot be removed"))
+	if role != model.OrgRoleOwner && isAdminMembership(orgID, target) {
+		transport.WriteError(c, transport.Forbidden("only the owner can remove an admin"))
 		return
 	}
 	if appErr := h.store.RemoveOrgMember(orgID, targetID); appErr != nil {
 		transport.WriteError(c, appErr)
 		return
 	}
+	recordAudit(c, h.store, orgID, model.AuditActionOrgMemberRemove, model.AuditTargetMembership, target.ID,
+		map[string]any{"user_id": targetID, "role": target.Role, "role_id": target.RoleID})
 	transport.WriteData(c, 200, gin.H{"removed": targetID})
+}
+
+type menuOverridesRequest struct {
+	MenuOverrides []string `json:"menu_overrides"`
+}
+
+// SetMenuOverrides PATCH /organizations/:id/menu-overrides —— 企业级菜单覆盖（只能缩小）。
+//
+// 需要 org.settings（owner）：这是企业设置项，不是成员管理。覆盖只影响前端菜单可见性，
+// 不改变任何 API 鉴权结果（设计文档 §4：API 鉴权以权限点为唯一准绳）。
+func (h *OrgHandler) SetMenuOverrides(c *gin.Context) {
+	orgID := c.Param("id")
+	org, ok := h.adminGuard(c, orgID)
+	if !ok {
+		return
+	}
+	var req menuOverridesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		transport.WriteError(c, transport.BadRequest("BAD_REQUEST", "invalid json body"))
+		return
+	}
+	updated, appErr := h.store.SetOrgMenuOverrides(orgID, req.MenuOverrides)
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
+	recordAudit(c, h.store, orgID, model.AuditActionOrgMenuOverrideUpdate, model.AuditTargetOrg, orgID,
+		map[string]any{"from": org.MenuOverrides, "to": updated.MenuOverrides})
+	transport.WriteData(c, 200, toOrgView(updated, h.roleOf(orgID, middleware.Scope(c).UserID),
+		h.roleIDOf(orgID, middleware.Scope(c).UserID)))
 }

@@ -47,6 +47,8 @@ import { UIBlockRenderer } from '@/components/task/UIBlockRenderer'
 import { PendingApprovalsDrawer } from '@/components/task/PendingApprovalsDrawer'
 import { collectPendingItems, findPendingUIBlocks } from '@/lib/pendingItems'
 import { usePendingStore } from '@/stores/pendingStore'
+import { usePermStore } from '@/stores/permStore'
+import { PERM } from '@/lib/perms'
 import { ThinkingIndicator } from '@/components/task/ThinkingIndicator'
 import { TaskCommentComposer, type TaskMentionCandidate, type TaskCommentSubmitInput } from '@/components/task/TaskCommentComposer'
 import { FileViewer } from '@/components/task/FileViewer'
@@ -1096,6 +1098,8 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
   const appendMessage = useAppendTaskMessage()
   const addComment = useAddTaskComment()
   const distill = useDistillTaskWorkflowTemplate()
+  // 「沉淀为模板」= POST /tasks/:id/distill-template（workflow.template.mgr），无权限隐藏入口。
+  const canManageWorkflow = usePermStore((s) => s.hasPerm(PERM.WORKFLOW_TEMPLATE_MGR))
   const [showCancel, setShowCancel] = useState(false)
   const [resultOpen, setResultOpen] = useState(false)
   const [todoOpen, setTodoOpen] = useState(false)
@@ -1265,7 +1269,7 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
             </Badge>
           )}
           <Button size="small" icon={<FileDoneOutlined />} title="查看交付成果" onClick={() => setResultOpen(true)} />
-          {task.status === 'done' && (
+          {task.status === 'done' && canManageWorkflow && (
             <Button
               size="small"
               icon={<SaveOutlined />}

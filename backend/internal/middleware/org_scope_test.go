@@ -215,3 +215,48 @@ func TestOrgScopeNeverGrantsSystemFromHTTP(t *testing.T) {
 		}
 	}
 }
+
+// TestOrgScopeDisabledOrgBlocked 锁定「禁用企业 = 禁用即拦截」（设计文档 §6.3 决策 2）：
+// 被平台管理员禁用的企业，其成员带该企业租户头一律 403 ORG_DISABLED；恢复后即时放行。
+// 同时守住两条边界：个人空间（无租户头）不受影响。
+func TestOrgScopeDisabledOrgBlocked(t *testing.T) {
+	s, orgA := newOrgScopeFixture(t)
+
+	// 禁用前：成员正常放行。
+	if p := runOrgScopeProbe(t, s, "u2", orgA); p.status != http.StatusOK {
+		t.Fatalf("禁用前成员应放行, status=%d body=%s", p.status, p.body)
+	}
+
+	if _, appErr := s.SetOrganizationStatus(orgA, model.OrgStatusDisabled); appErr != nil {
+		t.Fatalf("disable org: %v", appErr)
+	}
+
+	// 禁用中：成员带该企业租户头被 403，且不得落到业务 handler。
+	p := runOrgScopeProbe(t, s, "u2", orgA)
+	if p.status != http.StatusForbidden {
+		t.Fatalf("禁用后成员请求应 403, status=%d body=%s", p.status, p.body)
+	}
+	if !p.aborted || p.reached {
+		t.Fatal("被禁用企业的请求必须被拦截，不得落到下游 handler")
+	}
+	if !strings.Contains(p.body, "ORG_DISABLED") {
+		t.Fatalf("body %q must expose code ORG_DISABLED", p.body)
+	}
+	// 关键：不得复用 NOT_A_MEMBER / UNAUTHORIZED —— 语义不同，前端排障与重试策略都不同。
+	if strings.Contains(p.body, "NOT_A_MEMBER") || strings.Contains(p.body, `"code":"UNAUTHORIZED"`) {
+		t.Fatalf("禁用企业必须用独立错误码 ORG_DISABLED, body=%s", p.body)
+	}
+
+	// 个人空间不受影响（无租户头的存量客户端/个人工作区）。
+	if p := runOrgScopeProbe(t, s, "u2", ""); p.status != http.StatusOK {
+		t.Fatalf("禁用企业不影响个人空间, status=%d body=%s", p.status, p.body)
+	}
+
+	// 恢复后即时生效。
+	if _, appErr := s.SetOrganizationStatus(orgA, model.OrgStatusActive); appErr != nil {
+		t.Fatalf("restore org: %v", appErr)
+	}
+	if p := runOrgScopeProbe(t, s, "u2", orgA); p.status != http.StatusOK {
+		t.Fatalf("恢复后成员应即时放行, status=%d body=%s", p.status, p.body)
+	}
+}

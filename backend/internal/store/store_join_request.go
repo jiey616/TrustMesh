@@ -274,8 +274,9 @@ func (s *Store) ApproveJoinRequest(sc Scope, requestID string, overrides JoinReq
 	}
 
 	// 发起时锁定语义：
-	//   - 企业锁定申请（发起招聘时 reason 带 org_id）：仅该企业 owner/admin 可审；
-	//     agent 归属继承申请归属（该企业 + 邀请人）。
+	//   - 企业锁定申请（发起招聘时 reason 带 org_id）：仅该企业成员上下文中可审
+	//     （审批能力本身由路由层 RequirePerm(join_request.approve) 裁决，
+	//     这里只保留租户匹配这一数据级约束）；agent 归属继承申请归属。
 	//   - 个人申请：可见即可审（joinRequestVisible 已裁决），归属继承申请（邀请人个人租户）。
 	//   - 无主申请（UserID 空的广播 fallback）：保持审批者归属兜底。
 	inviterID := jr.UserID
@@ -286,8 +287,8 @@ func (s *Store) ApproveJoinRequest(sc Scope, requestID string, overrides JoinReq
 		agentUserID = sc.UserID
 		agentOrgID = s.resolveOwnerOrgUnsafe(sc)
 	case enterpriseLocked:
-		if !sc.HasOrg() || sc.OrgID != jr.OrgID || (sc.Role != model.OrgRoleOwner && sc.Role != model.OrgRoleAdmin) {
-			return nil, transport.Forbidden("only organization owner/admin can approve this join request")
+		if !sc.HasOrg() || sc.OrgID != jr.OrgID {
+			return nil, transport.Forbidden("join request is locked to another organization")
 		}
 		agentUserID = inviterID
 		agentOrgID = jr.OrgID

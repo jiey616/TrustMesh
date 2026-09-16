@@ -41,6 +41,8 @@ import { HermesSkillsTab, HermesModelsTab, HermesJobsTab } from '@/components/ag
 import { CreateTaskModal } from '@/components/task/CreateTaskModal'
 import { stripReplyPrefix } from '@/lib/text'
 import type { Event, EventType, TaskStatus } from '@/types'
+import { usePermStore } from '@/stores/permStore'
+import { PERM } from '@/lib/perms'
 
 const { Title, Text } = Typography
 
@@ -137,6 +139,11 @@ export function AgentDetailPage() {
   const [createTaskOpen, setCreateTaskOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [archiveOpen, setArchiveOpen] = useState(false)
+
+  // 写操作入口按权限点显隐（权限视图未就绪时 fail-open，由后端 403 兜底）：
+  // 编辑/删除数字员工 = agent.manage，创建任务 = task.create。
+  const canManageAgent = usePermStore((s) => s.hasPerm(PERM.AGENT_MANAGE))
+  const canCreateTask = usePermStore((s) => s.hasPerm(PERM.TASK_CREATE))
 
   const { data: agent, isLoading: agentLoading } = useAgent(id)
   const { data: stats } = useAgentStats(id)
@@ -404,10 +411,12 @@ export function AgentDetailPage() {
                 )}
               </Space>
               <Space style={{ flexShrink: 0 }}>
-                {agent.role !== 'pm' && !agent.archived && (
+                {/* 创建任务 = POST /projects/:pid/tasks（task.create），member 无此权限则隐藏 */}
+                {canCreateTask && agent.role !== 'pm' && !agent.archived && (
                   <Button size="small" icon={<PlusOutlined />} onClick={() => setCreateTaskOpen(true)}>创建任务</Button>
                 )}
-                {!agent.archived && (
+                {/* 编辑/离职/删除 = PATCH|DELETE /agents/**（agent.manage） */}
+                {canManageAgent && !agent.archived && (
                   <Dropdown
                     menu={{
                       items: [

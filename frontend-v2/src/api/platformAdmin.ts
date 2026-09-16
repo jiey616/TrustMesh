@@ -1,0 +1,68 @@
+import { apiClient } from './client'
+import type {
+  ApiListResponse,
+  ApiResponse,
+  AuditLogQuery,
+  AuditLogView,
+  CreatePlatformOrgRequest,
+  PlatformGlobalConfig,
+  PlatformOrgView,
+  PlatformUsage,
+} from '@/types'
+
+// ─── 平台管理 API（设计文档 §3.2 / §6.4，/api/v1/platform/*） ───
+//
+// 独立命名空间：只认平台管理员标记（env 种子账号），**不看企业角色** ——
+// 企业用户（含 owner）调此处一律 403。
+
+export async function listPlatformOrgs(params?: { keyword?: string; status?: string }) {
+  const searchParams: Record<string, string> = {}
+  if (params?.keyword) searchParams.keyword = params.keyword
+  if (params?.status) searchParams.status = params.status
+  return apiClient.get('platform/orgs', { searchParams }).json<ApiListResponse<PlatformOrgView>>()
+}
+
+export async function getPlatformOrg(id: string) {
+  return apiClient.get(`platform/orgs/${id}`).json<ApiResponse<PlatformOrgView>>()
+}
+
+export async function createPlatformOrg(input: CreatePlatformOrgRequest) {
+  return apiClient.post('platform/orgs', { json: input }).json<ApiResponse<PlatformOrgView>>()
+}
+
+export async function disablePlatformOrg(id: string) {
+  return apiClient
+    .post(`platform/orgs/${id}/disable`)
+    .json<ApiResponse<PlatformOrgView>>()
+}
+
+export async function restorePlatformOrg(id: string) {
+  return apiClient
+    .post(`platform/orgs/${id}/restore`)
+    .json<ApiResponse<PlatformOrgView>>()
+}
+
+export async function getPlatformConfig() {
+  return apiClient.get('platform/config').json<ApiResponse<{ config: PlatformGlobalConfig }>>()
+}
+
+export async function updatePlatformConfig(input: PlatformGlobalConfig) {
+  return apiClient
+    .put('platform/config', { json: input })
+    .json<ApiResponse<{ config: PlatformGlobalConfig }>>()
+}
+
+export async function listAuditLogs(query?: AuditLogQuery) {
+  const searchParams: Record<string, string> = {}
+  if (query?.scope) searchParams.scope = query.scope
+  if (query?.action) searchParams.action = query.action
+  if (query?.actor_user_id) searchParams.actor_user_id = query.actor_user_id
+  if (query?.limit) searchParams.limit = String(query.limit)
+  return apiClient
+    .get('platform/audit-logs', { searchParams })
+    .json<ApiListResponse<AuditLogView>>()
+}
+
+export async function getPlatformUsage() {
+  return apiClient.get('platform/usage').json<ApiResponse<{ usage: PlatformUsage }>>()
+}

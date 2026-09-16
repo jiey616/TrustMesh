@@ -69,9 +69,13 @@ func (s *Store) enableMongo(cfg config.Config, log *zap.Logger) error {
 	s.mongoWorkflowTemplates = db.Collection("workflow_templates")
 	s.mongoOrganizations = db.Collection("organizations")
 	s.mongoOrgMemberships = db.Collection("org_memberships")
+	// 企业角色（设计文档 §5）：内置角色种子 + 自定义角色，启动跑批补齐与迁移。
+	s.mongoOrgRoles = db.Collection("org_roles")
 	s.mongoProjectMembers = db.Collection("project_members")
 	s.mongoOpsIncidents = db.Collection("ops_incidents")
 	s.mongoLLMSettings = db.Collection("platform_settings")
+	// 审计日志（设计文档 §6.4）：追加写 + 平台侧只读查询，TTL 180 天由索引回收。
+	s.mongoAuditLogs = db.Collection("audit_logs")
 	// T2.6 通用幂等键集合：_id 唯一由 Mongo 隐式保证（E11000 = 命中），
 	// expire_at 上的 TTL 索引（expireAfterSeconds=0）由 ensureMongoIndexes 创建。
 	s.mongoIdempotencyKeys = db.Collection("idempotency_keys")
@@ -180,9 +184,11 @@ func (s *Store) clearMongoCollections() {
 	s.mongoWorkflowTemplates = nil
 	s.mongoOrganizations = nil
 	s.mongoOrgMemberships = nil
+	s.mongoOrgRoles = nil
 	s.mongoProjectMembers = nil
 	s.mongoOpsIncidents = nil
 	s.mongoLLMSettings = nil
+	s.mongoAuditLogs = nil
 	s.mongoIdempotencyKeys = nil
 	// T3.1：Mongo 不可用时门禁必须自动降级为「恒 leader」，否则 CAS 会对着已断开的
 	// client 一直报错 → isLeader 恒 false → 三个安全网 ticker 永久停摆。
@@ -282,11 +288,24 @@ func (s *Store) ensureMongoIndexes() error {
 		s.mongoProjectMembers: {
 			{Keys: bson.D{{Key: "project_id", Value: 1}, {Key: "user_id", Value: 1}}, Options: options.Index().SetUnique(true)},
 		},
+		s.mongoOrgRoles: {
+			// 同租户内角色同名唯一（应用层先给出可读 409，唯一索引兜住并发漏判）。
+			{Keys: bson.D{{Key: "org_id", Value: 1}, {Key: "name", Value: 1}}, Options: options.Index().SetUnique(true)},
+		},
 		s.mongoWorkflowTemplates: {
 			{Keys: bson.D{{Key: "user_id", Value: 1}}},
 		},
 		s.mongoLLMSettings: {
 			{Keys: bson.D{{Key: "org_id", Value: 1}}, Options: options.Index().SetUnique(true)},
+		},
+		s.mongoAuditLogs: {
+			// 审计日志 TTL：保留 180 天（设计文档 §6.4），超期由 Mongo 自动清理。
+			// 查询形态固定为「按时间倒序 + 可选 scope/action/actor 过滤」，配复合索引。
+			{Keys: bson.D{{Key: "created_at", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(15552000)},
+			{Keys: bson.D{{Key: "created_at", Value: -1}}},
+			{Keys: bson.D{{Key: "scope", Value: 1}, {Key: "created_at", Value: -1}}},
+			{Keys: bson.D{{Key: "action", Value: 1}, {Key: "created_at", Value: -1}}},
+			{Keys: bson.D{{Key: "actor_user_id", Value: 1}, {Key: "created_at", Value: -1}}},
 		},
 		s.mongoOpsIncidents: {
 			// 去重硬保证：同一主体+规则在活跃期只允许一个工单。
@@ -421,6 +440,10 @@ func (s *Store) loadMongoState() error {
 	if err != nil {
 		return err
 	}
+	orgRoles, orgRoleIndex, err := s.loadOrgRoles()
+	if err != nil {
+		return err
+	}
 	projectMembers, err := s.loadProjectMembers()
 	if err != nil {
 		return err
@@ -432,6 +455,14 @@ func (s *Store) loadMongoState() error {
 	llmConfigs, err := s.loadLLMConfigs()
 	if err != nil {
 		return err
+	}
+	// 平台全局配置（单文档）：装载失败不阻断启动，回落默认值（全部不限）。
+	if cfgDoc, cfgErr := s.loadPlatformGlobalConfig(); cfgErr != nil {
+		if s.log != nil {
+			s.log.Warn("load platform global config failed", zap.Error(cfgErr))
+		}
+	} else {
+		s.platformGlobalCfg = cfgDoc
 	}
 	usersByMail := make(map[string]string, len(users))
 	for id, user := range users {
@@ -483,6 +514,8 @@ func (s *Store) loadMongoState() error {
 	s.orgMemberships = orgMemberships
 	s.orgMemberIndex = orgMemberIndex
 	s.userOrgIndex = userOrgIndex
+	s.orgRoles = orgRoles
+	s.orgRoleIndex = orgRoleIndex
 	s.projectMembers = projectMembers
 	s.llmConfigs = llmConfigs
 	s.opsIncidents = opsIncidents

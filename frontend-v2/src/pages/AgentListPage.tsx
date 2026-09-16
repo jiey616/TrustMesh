@@ -8,6 +8,8 @@ import type { ApiListResponse, Agent, AgentStatus, AgentRole } from '@/types'
 import dayjs from 'dayjs'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { usePermStore } from '@/stores/permStore'
+import { PERM } from '@/lib/perms'
 
 const { Text, Paragraph } = Typography
 
@@ -28,6 +30,8 @@ export function AgentListPage() {
   const [search, setSearch] = useState('')
   const [roleFilter, setRoleFilter] = useState<string>('all')
   const navigate = useNavigate()
+  // 写操作入口按 agent.manage 显隐（权限视图未就绪时 fail-open，由后端 403 兜底）。
+  const canManageAgent = usePermStore((s) => s.hasPerm(PERM.AGENT_MANAGE))
 
   const { data: agents, isLoading } = useQuery({
     queryKey: ['agents'],
@@ -49,9 +53,12 @@ export function AgentListPage() {
         title="数字员工列表"
         icon={<RobotOutlined />}
         actions={
-          <Button type="primary" icon={<UserAddOutlined />} onClick={() => navigate('/agent-invite')}>
-            招聘数字员工
-          </Button>
+          // 招聘 = 写操作（后端 POST /agents 走 agent.manage）：member 有 agent.view 但无 manage，隐藏入口。
+          canManageAgent ? (
+            <Button type="primary" icon={<UserAddOutlined />} onClick={() => navigate('/agent-invite')}>
+              招聘数字员工
+            </Button>
+          ) : undefined
         }
       />
       <Space style={{ marginBottom: 16 }}>

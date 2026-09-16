@@ -20,6 +20,8 @@ const API_BASE = getApiBase()
 import { MeetingMessageList } from '@/components/meeting/MeetingMessageList'
 import { MeetingParticipantPanel } from '@/components/meeting/MeetingParticipantPanel'
 import { NeonBadge } from '@/components/NeonBadge'
+import { usePermStore } from '@/stores/permStore'
+import { PERM } from '@/lib/perms'
 
 const { Text } = Typography
 
@@ -38,6 +40,14 @@ export function MeetingRoomPage() {
   const [showAgenda, setShowAgenda] = useState(true)
   const [input, setInput] = useState('')
   const [autoStarted, setAutoStarted] = useState(false)
+  // 开始/结束会议 = POST /meetings/:id/start|end（meeting.manage），
+  // 无权限时隐藏入口（权限视图未就绪时 fail-open，由后端 403 兜底）。
+  const canManageMeeting = usePermStore((s) => s.hasPerm(PERM.MEETING_MANAGE))
+  const permReady = usePermStore((s) => s.ready)
+  // 自动开始也是一次 start 写请求，必须等权限视图就绪再判断：
+  // hasPerm 未就绪时 fail-open 为 true，若直接用它，无权限者一进会议室就会打一次
+  // 必然 403 的 start 请求并弹出误导性的「自动开始失败」。
+  const canAutoStartMeeting = permReady && canManageMeeting
 
   const agentNameMap = useMemo(() => {
     const m: Record<string, string> = {}
@@ -52,7 +62,7 @@ export function MeetingRoomPage() {
   // 避免 react-hooks/set-state-in-effect（同步在 effect 体内 setState）。
   const startedRef = useRef(false)
   useEffect(() => {
-    if (meeting && meeting.status === 'waiting' && !autoStarted && !startedRef.current && meetingId) {
+    if (canAutoStartMeeting && meeting && meeting.status === 'waiting' && !autoStarted && !startedRef.current && meetingId) {
       startedRef.current = true
       startMeeting(meetingId)
         .then(() => {
@@ -66,7 +76,7 @@ export function MeetingRoomPage() {
           setAutoStarted(false)
         })
     }
-  }, [meeting, meetingId, autoStarted])
+  }, [meeting, meetingId, autoStarted, canAutoStartMeeting])
 
   const handleSend = async (text: string) => {
     if (!text.trim() || !meetingId) return
@@ -144,8 +154,9 @@ export function MeetingRoomPage() {
           {meeting.agenda && <Text type="secondary" style={{ fontSize: 12 }} ellipsis>{meeting.agenda}</Text>}
         </div>
         <Space>
-          {meeting.status === 'waiting' && <Button type="primary" ghost size="small" icon={<PlayCircleOutlined />} onClick={handleStart}>开始</Button>}
-          {meeting.status === 'in_progress' && <Button danger size="small" icon={<StopOutlined />} onClick={handleEnd}>结束</Button>}
+          {/* 开始/结束会议按 meeting.manage 隐藏（member 已收紧，点了也是 403） */}
+          {canManageMeeting && meeting.status === 'waiting' && <Button type="primary" ghost size="small" icon={<PlayCircleOutlined />} onClick={handleStart}>开始</Button>}
+          {canManageMeeting && meeting.status === 'in_progress' && <Button danger size="small" icon={<StopOutlined />} onClick={handleEnd}>结束</Button>}
         </Space>
       </div>
 
@@ -292,7 +303,7 @@ export function MeetingRoomPage() {
               meetingStatus={meeting.status}
               hostNodeId={meeting?.participants.find((p) => p.agent_id === meeting.host_agent_id)?.node_id}
               agentNameMap={agentNameMap}
-              onEndMeeting={handleEnd}
+              onEndMeeting={canManageMeeting ? handleEnd : undefined}
               onContinueDiscussion={handleContinue}
             />
           </div>
