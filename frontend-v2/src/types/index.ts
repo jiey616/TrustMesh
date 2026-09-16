@@ -1171,3 +1171,22 @@ export interface AddOrgMemberRequest {
   email: string
   role?: 'admin' | 'member'
 }
+
+// ─── 工作区记忆（"记住上次选中的空间"）───
+
+/** 工作区种类：个人空间 / 企业空间。 */
+export type WorkspaceKind = 'personal' | 'enterprise'
+
+/**
+ * 工作区记忆——**提示数据，非运行时授权**。
+ *
+ * 按 `userId` 维度记录「上次选中的空间」，仅在通过 `userId` 守门 + 本账号 `orgs` 校验
+ * 之后才会被采用（见 `lib/workspaceMemory.ts#resolveWorkspaceTarget`）。运行时权威态
+ * （`activeOrgId` / `personalOrgId`）**绝不**从记忆恢复。
+ */
+export interface WorkspaceMemory {
+  userId: string
+  kind: WorkspaceKind
+  /** 仅 kind === 'enterprise' 时存在；kind === 'personal' 时 undefined */
+  orgId?: string
+}
