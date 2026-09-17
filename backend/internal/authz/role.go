@@ -10,7 +10,7 @@ import "trustmesh/backend/internal/model"
 // 矩阵的正确性由 authz_test.go 的 TestBuiltinRoleMatrix 全量钉死 ——
 // 改动这里的任何一行都必须同步改设计文档，否则测试立刻变红。
 var (
-	// owner：企业层全部权限点（17 个）。
+	// owner：企业层全部权限点（18 个）。
 	ownerPerms = []string{
 		PermOrgSettings,
 		PermOrgMemberMgr,
@@ -27,11 +27,12 @@ var (
 		PermMeetingManage,
 		PermKnowledgeManage,
 		PermJoinRequestApprove,
+		PermOrgAppMgr,
 		PermOpsView,
 		PermOpsManage,
 	}
 
-	// admin：owner 全集减去 org.settings / org.role.mgr（15 个）。
+	// admin：owner 全集减去 org.settings / org.role.mgr（16 个）。
 	adminPerms = []string{
 		PermOrgMemberMgr,
 		PermProjectCreate,
@@ -46,6 +47,7 @@ var (
 		PermMeetingManage,
 		PermKnowledgeManage,
 		PermJoinRequestApprove,
+		PermOrgAppMgr,
 		PermOpsView,
 		PermOpsManage,
 	}

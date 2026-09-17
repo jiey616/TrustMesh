@@ -30,6 +30,7 @@ import { PlatformOrgsPage } from '@/pages/platform/PlatformOrgsPage'
 import { PlatformOrgDetailPage } from '@/pages/platform/PlatformOrgDetailPage'
 import { PlatformUsersPage } from '@/pages/platform/PlatformUsersPage'
 import { PlatformConfigPage } from '@/pages/platform/PlatformConfigPage'
+import { PlatformExternalAppsPage } from '@/pages/platform/PlatformExternalAppsPage'
 import { PlatformAuditPage } from '@/pages/platform/PlatformAuditPage'
 import { PlatformUsagePage } from '@/pages/platform/PlatformUsagePage'
 import { ORG_DOMAIN_PERMS, PERM } from '@/lib/perms'
@@ -74,6 +75,7 @@ export function AppRouter() {
           <Route path="orgs/:id" element={<PlatformOrgDetailPage />} />
           <Route path="users" element={<PlatformUsersPage />} />
           <Route path="config" element={<PlatformConfigPage />} />
+          <Route path="external-apps" element={<PlatformExternalAppsPage />} />
           <Route path="audit" element={<PlatformAuditPage />} />
           <Route path="usage" element={<PlatformUsagePage />} />
         </Route>

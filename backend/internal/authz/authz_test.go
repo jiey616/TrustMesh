@@ -13,7 +13,7 @@ import (
 )
 
 // TestBuiltinRoleMatrix 把设计文档 §3.1 的权限矩阵**逐格钉死**：
-// 17 个企业层权限点 × 3 个内置角色，每格的允许/拒绝都与设计表一致。
+// 18 个企业层权限点 × 3 个内置角色，每格的允许/拒绝都与设计表一致。
 // 任何对 role.go 矩阵的改动若不同步设计文档，这里立刻变红。
 func TestBuiltinRoleMatrix(t *testing.T) {
 	// want[role][perm] = 设计文档 §3.1 表格逐格转录。
@@ -27,6 +27,7 @@ func TestBuiltinRoleMatrix(t *testing.T) {
 			PermMarketBrowse: true, PermMarketInstall: true,
 			PermMeetingManage: true, PermKnowledgeManage: true,
 			PermJoinRequestApprove: true,
+			PermOrgAppMgr:          true,
 			PermOpsView:            true, PermOpsManage: true,
 		},
 		model.OrgRoleAdmin: {
@@ -38,6 +39,7 @@ func TestBuiltinRoleMatrix(t *testing.T) {
 			PermMarketBrowse: true, PermMarketInstall: true,
 			PermMeetingManage: true, PermKnowledgeManage: true,
 			PermJoinRequestApprove: true,
+			PermOrgAppMgr:          true,
 			PermOpsView:            true, PermOpsManage: true,
 		},
 		model.OrgRoleMember: {
@@ -49,13 +51,14 @@ func TestBuiltinRoleMatrix(t *testing.T) {
 			PermMarketBrowse: true, PermMarketInstall: false,
 			PermMeetingManage: false, PermKnowledgeManage: false,
 			PermJoinRequestApprove: false,
+			PermOrgAppMgr:          false,
 			PermOpsView:            false, PermOpsManage: false,
 		},
 	}
 
 	allPerms := AllOrgPermissions()
-	if len(allPerms) != 17 {
-		t.Fatalf("企业层权限点数量 = %d, want 17（设计文档 §3.1）", len(allPerms))
+	if len(allPerms) != 18 {
+		t.Fatalf("企业层权限点数量 = %d, want 18（设计文档 §3.1 + 2026-09-17 org.app.mgr）", len(allPerms))
 	}
 
 	for role, permWant := range want {

@@ -28,7 +28,7 @@ export function ExternalAppFramePage() {
       <Result
         status="404"
         title="找不到该外部平台"
-        subTitle="它可能已被断开，或设置为私有且不属于你。"
+        subTitle="它可能已被断开，或不在你可见的层级（本组织 / 本人 / 全局）内。"
         extra={
           <Button type="primary" onClick={() => navigate('/external-apps')}>
             前往外部应用管理
@@ -43,7 +43,9 @@ export function ExternalAppFramePage() {
       <PageHeader
         title={app.name}
         icon={<ApiOutlined />}
-        subtitle={app.visibility === 'public' ? '公共外部平台' : '我的外部平台'}
+        subtitle={
+          app.scope === 'global' ? '全局外部平台' : app.scope === 'org' ? '组织外部平台' : '我的外部平台'
+        }
       />
       <div style={{ flex: 1, minHeight: 0 }}>
         {app.frame_mode === 'iframe' ? (

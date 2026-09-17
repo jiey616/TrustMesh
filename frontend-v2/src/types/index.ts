@@ -39,11 +39,15 @@ export type ExternalAppStatus = 'enabled' | 'disabled'
 export type ExternalAppSSOType = 'trustmesh_jwt'
 export type ExternalAppFrameMode = 'newtab' | 'iframe'
 export type ExternalAppPlacement = 'sidebar' | 'project_tab'
-export type ExternalAppVisibility = 'private' | 'public'
+// 三级作用域（2026-09-17）：全局=平台管理员配置、全员可见；组织=本组织成员可见；
+// 个人=仅创建者本人可见。作用域创建后不可变更（改层级只能重建）。
+export type ExternalAppScope = 'global' | 'org' | 'personal'
 
 // 安全视图：不含 client_secret
 export interface ExternalAppView {
   id: string
+  /** 归属租户：全局级为空串，组织级为企业租户，个人级为创建者个人租户 */
+  org_id?: string
   name: string
   base_url: string
   client_id: string
@@ -54,7 +58,7 @@ export interface ExternalAppView {
   placement: string
   icon_url: string
   sort_order: number
-  visibility: ExternalAppVisibility
+  scope: ExternalAppScope
   status: ExternalAppStatus
   created_by: string
   created_at: string
@@ -71,7 +75,8 @@ export interface CreateExternalAppRequest {
   placement?: string
   icon_url?: string
   sort_order?: number
-  visibility?: ExternalAppVisibility
+  /** 业务侧只接受 org|personal；global 仅平台侧接口可创建 */
+  scope?: ExternalAppScope
 }
 
 export interface UpdateExternalAppRequest {
@@ -84,7 +89,6 @@ export interface UpdateExternalAppRequest {
   placement?: string
   icon_url?: string
   sort_order?: number
-  visibility?: ExternalAppVisibility
 }
 
 /** placement 字符串是否包含某个挂载点 */

@@ -30,11 +30,25 @@ const (
 	ExternalPlacementSidebar    = "sidebar"
 	ExternalPlacementProjectTab = "project_tab"
 
-	// Visibility. "private" apps are only visible to (and launchable by)
-	// their creator; "public" apps are visible to every signed-in user.
-	ExternalVisibilityPrivate = "private"
-	ExternalVisibilityPublic  = "public"
+	// Scope：外部应用的三级作用域（2026-09-17 三级改造）。
+	//   - global   全局级：平台管理员在 /platform/external-apps 配置，全员可见可打开；
+	//   - org      组织级：组织 owner/admin 配置，仅该组织成员可见可打开；
+	//   - personal 个人级：任意用户配置，仅创建者本人可见可打开。
+	// 历史文档（写于本次改造前）没有 scope 字段，由 store 层按归属租户读取时派生
+	// （见 store.externalAppScopeUnsafe），不改库。
+	ExternalAppScopeGlobal   = "global"
+	ExternalAppScopeOrg      = "org"
+	ExternalAppScopePersonal = "personal"
 )
+
+// IsExternalAppScope 判断作用域取值是否合法。
+func IsExternalAppScope(v string) bool {
+	switch v {
+	case ExternalAppScopeGlobal, ExternalAppScopeOrg, ExternalAppScopePersonal:
+		return true
+	}
+	return false
+}
 
 // HasPlacement reports whether the app declares the given mount point.
 // Placement is stored as a comma-separated set (e.g. "sidebar,project_tab")
@@ -69,8 +83,9 @@ type ExternalApp struct {
 	IconURL string `json:"icon_url,omitempty" bson:"icon_url,omitempty"`
 	// SortOrder controls position among mounted apps (ascending).
 	SortOrder int `json:"sort_order" bson:"sort_order"`
-	// Visibility: private (creator only) or public (everyone).
-	Visibility string `json:"visibility" bson:"visibility"`
+	// Scope: global (everyone) / org (owning org members) / personal (creator only).
+	// 历史文档为空，读取时按归属租户派生（见 store.externalAppScopeUnsafe）。
+	Scope string `json:"scope,omitempty" bson:"scope,omitempty"`
 
 	Status    string    `json:"status" bson:"status"`
 	CreatedBy string    `json:"created_by" bson:"created_by"`
@@ -80,21 +95,24 @@ type ExternalApp struct {
 
 // ExternalAppView is the safe projection returned to API clients (no secret).
 type ExternalAppView struct {
-	ID         string    `json:"id" bson:"_id"`
-	Name       string    `json:"name" bson:"name"`
-	BaseURL    string    `json:"base_url" bson:"base_url"`
-	ClientID   string    `json:"client_id" bson:"client_id"`
-	SSOType    string    `json:"sso_type" bson:"sso_type"`
-	FrameMode  string    `json:"frame_mode" bson:"frame_mode"`
-	Scopes     string    `json:"scopes,omitempty" bson:"scopes,omitempty"`
-	Placement  string    `json:"placement,omitempty" bson:"placement,omitempty"`
-	IconURL    string    `json:"icon_url,omitempty" bson:"icon_url,omitempty"`
-	SortOrder  int       `json:"sort_order" bson:"sort_order"`
-	Visibility string    `json:"visibility" bson:"visibility"`
-	Status     string    `json:"status" bson:"status"`
-	CreatedBy  string    `json:"created_by" bson:"created_by"`
-	CreatedAt  time.Time `json:"created_at" bson:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at" bson:"updated_at"`
+	ID string `json:"id" bson:"_id"`
+	// OrgID 是归属租户：全局级为空串，组织级为企业租户，个人级为创建者个人租户。
+	// 前端用它判定「本组织 owner/admin 可管理该组织级应用」。
+	OrgID     string    `json:"org_id,omitempty" bson:"org_id,omitempty"`
+	Name      string    `json:"name" bson:"name"`
+	BaseURL   string    `json:"base_url" bson:"base_url"`
+	ClientID  string    `json:"client_id" bson:"client_id"`
+	SSOType   string    `json:"sso_type" bson:"sso_type"`
+	FrameMode string    `json:"frame_mode" bson:"frame_mode"`
+	Scopes    string    `json:"scopes,omitempty" bson:"scopes,omitempty"`
+	Placement string    `json:"placement,omitempty" bson:"placement,omitempty"`
+	IconURL   string    `json:"icon_url,omitempty" bson:"icon_url,omitempty"`
+	SortOrder int       `json:"sort_order" bson:"sort_order"`
+	Scope     string    `json:"scope" bson:"scope"`
+	Status    string    `json:"status" bson:"status"`
+	CreatedBy string    `json:"created_by" bson:"created_by"`
+	CreatedAt time.Time `json:"created_at" bson:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" bson:"updated_at"`
 }
 
 // ToView returns the safe projection (omits client_secret).
@@ -103,20 +121,21 @@ func (a *ExternalApp) ToView() *ExternalAppView {
 		return nil
 	}
 	return &ExternalAppView{
-		ID:         a.ID,
-		Name:       a.Name,
-		BaseURL:    a.BaseURL,
-		ClientID:   a.ClientID,
-		SSOType:    a.SSOType,
-		FrameMode:  a.FrameMode,
-		Scopes:     a.Scopes,
-		Placement:  a.Placement,
-		IconURL:    a.IconURL,
-		SortOrder:  a.SortOrder,
-		Visibility: a.Visibility,
-		Status:     a.Status,
-		CreatedBy:  a.CreatedBy,
-		CreatedAt:  a.CreatedAt,
-		UpdatedAt:  a.UpdatedAt,
+		ID:        a.ID,
+		OrgID:     a.OrgID,
+		Name:      a.Name,
+		BaseURL:   a.BaseURL,
+		ClientID:  a.ClientID,
+		SSOType:   a.SSOType,
+		FrameMode: a.FrameMode,
+		Scopes:    a.Scopes,
+		Placement: a.Placement,
+		IconURL:   a.IconURL,
+		SortOrder: a.SortOrder,
+		Scope:     a.Scope,
+		Status:    a.Status,
+		CreatedBy: a.CreatedBy,
+		CreatedAt: a.CreatedAt,
+		UpdatedAt: a.UpdatedAt,
 	}
 }

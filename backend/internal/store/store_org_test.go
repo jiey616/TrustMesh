@@ -1542,7 +1542,7 @@ func TestExternalAppScopedVisibility(t *testing.T) {
 	if _, err := s.GetExternalAppForLaunch(Scope{UserID: "u9", OrgID: orgB.ID}, view.ID); err == nil {
 		t.Fatal("appA must not be launchable under orgB")
 	}
-	if err := s.DeleteExternalApp(Scope{UserID: "u9", OrgID: orgB.ID}, view.ID); err == nil {
+	if err := s.DeleteExternalApp(Scope{UserID: "u9", OrgID: orgB.ID}, view.ID, ExternalAppManager{}); err == nil {
 		t.Fatal("cross-org delete must fail")
 	}
 

@@ -76,6 +76,7 @@ const menuIcons: Record<string, React.ReactNode> = {
   '/platform/orgs': <BankOutlined />,
   '/platform/users': <TeamOutlined />,
   '/platform/config': <SettingOutlined />,
+  '/platform/external-apps': <ApiOutlined />,
   '/platform/audit': <AuditOutlined />,
   '/platform/usage': <BarChartOutlined />,
 }

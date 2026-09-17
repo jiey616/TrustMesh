@@ -30,6 +30,9 @@ export const PERM = {
 
   JOIN_REQUEST_APPROVE: 'join_request.approve',
 
+  /** 组织级外部应用管理（2026-09-17 三级作用域）：仅 owner/admin，个人级不受约束 */
+  ORG_APP_MGR: 'org.app.mgr',
+
   OPS_VIEW: 'ops.view',
   OPS_MANAGE: 'ops.manage',
 } as const
@@ -41,6 +44,8 @@ export const PLATFORM_PERM = {
   CONFIG_WRITE: 'platform.config.write',
   AUDIT_VIEW: 'platform.audit.view',
   USAGE_VIEW: 'platform.usage.view',
+  /** 全局级外部应用管理（/api/v1/platform/external-apps） */
+  EXTAPP_MGR: 'platform.extapp.mgr',
 } as const
 
 /** 权限点集合是否包含指定权限点（集合规模 ≤ 20，线性扫描足够）。 */
@@ -100,6 +105,12 @@ export const PERM_GROUPS: { group: string; items: { perm: string; label: string 
     items: [
       { perm: PERM.MEETING_MANAGE, label: '会议管理（开始/结束/删除）' },
       { perm: PERM.KNOWLEDGE_MANAGE, label: '知识条目管理' },
+    ],
+  },
+  {
+    group: '外部应用',
+    items: [
+      { perm: PERM.ORG_APP_MGR, label: '组织级外部应用管理（新建/编辑/删除）' },
     ],
   },
   {

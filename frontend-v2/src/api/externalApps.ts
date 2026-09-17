@@ -42,3 +42,29 @@ export async function launchExternalApp(
     .post(`external-apps/${id}/launch`, { json: input ?? {} })
     .json<ApiResponse<LaunchExternalAppResponse>>()
 }
+
+// ========== 全局级（平台命名空间，仅平台管理员；企业角色一律 403）==========
+
+export async function listGlobalExternalApps() {
+  return apiClient
+    .get('platform/external-apps')
+    .json<ApiResponse<{ external_apps: ExternalAppView[] }>>()
+}
+
+export async function createGlobalExternalApp(input: CreateExternalAppRequest) {
+  return apiClient
+    .post('platform/external-apps', { json: input })
+    .json<ApiResponse<{ external_app: ExternalAppView; client_secret: string }>>()
+}
+
+export async function updateGlobalExternalApp(id: string, input: UpdateExternalAppRequest) {
+  return apiClient
+    .patch(`platform/external-apps/${id}`, { json: input })
+    .json<ApiResponse<{ external_app: ExternalAppView }>>()
+}
+
+export async function deleteGlobalExternalApp(id: string) {
+  return apiClient
+    .delete(`platform/external-apps/${id}`)
+    .json<ApiResponse<{ deleted: boolean }>>()
+}

@@ -136,6 +136,8 @@ var routePermManifest = map[string]string{
 	"POST /api/v1/chats/attachments":           permBase,
 
 	// ── 外部应用（浏览与日常使用属基础权限） ──
+	// 三级作用域后「能否管理」取决于应用层级（数据相关），仍由 handler + store 裁决，
+	// 路由层刻意保持 permBase（全局级走上面的平台命名空间）。
 	"POST /api/v1/external-apps":            permBase,
 	"GET /api/v1/external-apps":             permBase,
 	"GET /api/v1/external-apps/:id":         permBase,
@@ -199,6 +201,11 @@ var routePermManifest = map[string]string{
 	"GET /api/v1/platform/llm-config":        authz.PermPlatformConfigRead,
 	"PUT /api/v1/platform/llm-config":        authz.PermPlatformConfigWrite,
 	"DELETE /api/v1/platform/llm-config":     authz.PermPlatformConfigWrite,
+	// 全局级外部应用：平台管理员独有的产品挂载配置（三级作用域 2026-09-17）。
+	"GET /api/v1/platform/external-apps":        authz.PermPlatformExtAppMgr,
+	"POST /api/v1/platform/external-apps":       authz.PermPlatformExtAppMgr,
+	"PATCH /api/v1/platform/external-apps/:id":  authz.PermPlatformExtAppMgr,
+	"DELETE /api/v1/platform/external-apps/:id": authz.PermPlatformExtAppMgr,
 	// 平台用户管理：查看（列表/详情/企业成员）与账号运维动作分两个权限点。
 	"GET /api/v1/platform/orgs/:id/members":          authz.PermPlatformOrgLifecycle,
 	"GET /api/v1/platform/users":                     authz.PermPlatformUserRead,

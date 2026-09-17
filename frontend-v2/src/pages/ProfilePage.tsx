@@ -268,7 +268,7 @@ export function ProfilePage() {
           }
         >
           <Text type="secondary" style={{ fontSize: 13 }}>
-            查看可用的外部应用与 SSO 连接状态，管理打开方式（内嵌 / 新窗口）。
+            查看并管理外部应用（全局 / 组织 / 个人三级）：SSO 连接状态、打开方式（内嵌 / 新窗口）与挂载位置。
           </Text>
         </Card>
       )}

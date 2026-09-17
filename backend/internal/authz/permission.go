@@ -38,6 +38,11 @@ const (
 
 	PermJoinRequestApprove = "join_request.approve" // 数字员工加入审批
 
+	// PermOrgAppMgr 组织级外部应用管理（2026-09-17 三级作用域）：
+	// 组织级应用的创建/改/删仅 owner/admin（自定义角色可勾选）。
+	// 个人级外部应用不受此点约束（个人空间即本人所有）。
+	PermOrgAppMgr = "org.app.mgr"
+
 	PermOpsView   = "ops.view"   // 运维工单查看
 	PermOpsManage = "ops.manage" // 运维工单处理
 )
@@ -57,6 +62,9 @@ const (
 	PermPlatformUsageView    = "platform.usage.view"    // 全平台用量总览
 	PermPlatformUserRead     = "platform.user.read"     // 用户列表/详情、企业成员查看
 	PermPlatformUserManage   = "platform.user.manage"   // 用户重置密码/禁用/启用
+	// PermPlatformExtAppMgr 全局级外部应用管理（2026-09-17 三级作用域）：
+	// /api/v1/platform/external-apps 的增删改查。
+	PermPlatformExtAppMgr = "platform.extapp.mgr"
 )
 
 // AllOrgPermissions 返回企业层全部权限点（= owner 权限集）。
@@ -75,5 +83,6 @@ func PlatformPermissions() []string {
 		PermPlatformUsageView,
 		PermPlatformUserRead,
 		PermPlatformUserManage,
+		PermPlatformExtAppMgr,
 	}
 }

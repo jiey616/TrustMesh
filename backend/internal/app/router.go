@@ -106,7 +106,7 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	joinRequestHandler := handler.NewJoinRequestHandler(s, clawClient, cfg)
 	realtimeHandler := handler.NewRealtimeHandler(s)
 	platformHandler := handler.NewPlatformHandler(cfg.PlatformName)
-	externalAppHandler := handler.NewExternalAppHandler(s, auth.ExternalTokenIssuer, cfg.ExternalAppTokenTTL)
+	externalAppHandler := handler.NewExternalAppHandler(s, az, auth.ExternalTokenIssuer, cfg.ExternalAppTokenTTL)
 	workflowTemplateHandler := handler.NewWorkflowTemplateHandler(s)
 	orgHandler := handler.NewOrgHandler(s)
 	orgRoleHandler := handler.NewOrgRoleHandler(s, cfg.PermLegacyMember)
@@ -395,6 +395,9 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	authed.GET("/events/stream", realtimeHandler.Stream)
 
 	// External platform SSO "connect" registry + launch.
+	// 六个路由的权限点保持基础权限：能否**管理**取决于应用的作用域（数据相关），
+	// 路由级权限点表达不了 —— 由 handler（org.app.mgr 前置校验）+ store
+	// （canManageExternalAppUnsafe）裁决；可见性由 store 按 global/org/personal 三级过滤。
 	ext := authed.Group("/external-apps")
 	ext.POST("", externalAppHandler.Create)
 	ext.GET("", externalAppHandler.List)
@@ -490,6 +493,7 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	// 与公开的 GET /api/v1/platform/info 共存：同一静态前缀下的兄弟静态段，
 	// 无通配冲突（plat 组只新增 orgs/config/audit-logs/usage/llm-config/users 静态段）。
 	platformAdminHandler := handler.NewPlatformAdminHandler(s)
+	platformExternalAppHandler := handler.NewPlatformExternalAppHandler(s)
 	plat := v1.Group("/platform")
 	plat.Use(middleware.RequireAuth(jwtManager))
 	plat.GET("/orgs", authz.RequirePlatformPerm(authz.PermPlatformOrgLifecycle, platformAdminChecker), platformAdminHandler.ListOrgs)
@@ -514,6 +518,12 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	plat.GET("/llm-config", authz.RequirePlatformPerm(authz.PermPlatformConfigRead, platformAdminChecker), llmConfigHandler.GetPlatform)
 	plat.PUT("/llm-config", authz.RequirePlatformPerm(authz.PermPlatformConfigWrite, platformAdminChecker), llmConfigHandler.PutPlatform)
 	plat.DELETE("/llm-config", authz.RequirePlatformPerm(authz.PermPlatformConfigWrite, platformAdminChecker), llmConfigHandler.DeletePlatform)
+	// 全局级外部应用（2026-09-17 三级作用域）：平台管理员独有的产品挂载配置，
+	// 与企业角色正交 —— 企业 owner 调此处一律 403（平台命名空间门禁）。
+	plat.GET("/external-apps", authz.RequirePlatformPerm(authz.PermPlatformExtAppMgr, platformAdminChecker), platformExternalAppHandler.List)
+	plat.POST("/external-apps", authz.RequirePlatformPerm(authz.PermPlatformExtAppMgr, platformAdminChecker), platformExternalAppHandler.Create)
+	plat.PATCH("/external-apps/:id", authz.RequirePlatformPerm(authz.PermPlatformExtAppMgr, platformAdminChecker), platformExternalAppHandler.Update)
+	plat.DELETE("/external-apps/:id", authz.RequirePlatformPerm(authz.PermPlatformExtAppMgr, platformAdminChecker), platformExternalAppHandler.Delete)
 
 	// 企业层 LLM 配置：handler 层已有 owner/admin 守卫，路由层维持基础权限。
 	orgLLM := authed.Group("/organizations/:id/llm-config")
