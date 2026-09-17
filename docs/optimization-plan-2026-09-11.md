@@ -1,9 +1,26 @@
-# TrustMesh 完整分阶段优化方案（实施蓝图）· v2
+# TrustMesh 完整分阶段优化方案（实施蓝图）· v3
 
-> 日期：2026-09-12（v2）
+> 日期：2026-09-16（v3 最新状态同步版）
 > 视角：架构 + 产品 + 工程 + QA 四视角收敛
-> 输入：架构调研（`docs/architecture-review-2026-09-11.md`）+ 三方交叉评审（`docs/optimization-plan-review-2026-09-11.md`）+ 用户 3 项拍板决策
+> 输入：架构调研（`docs/architecture-review-2026-09-11.md`）+ 生产验收（T0.x/T1.x/T2.x）+ T2.5 回退决议（`docs/t2.5-rollback-decision-2026-09-16.md`）+ 智能体交接指南（`docs/dev-handoff-and-deployment-guide-2026-09-16.md`）
 > 铁律：所有改动沿用 `build → stop → poll exited → rm -f → up -d --no-deps`；改 Mongo 前先停 backend；`git add` 按路径精确 add。
+
+---
+
+## 最新实施状态快照（2026-09-16）
+
+| 阶段 | 规划阶段 | 当前交付状态 | 对应生产版本 / 关键结论 |
+|---|---|---|---|
+| **阶段 0** | **紧急止血 (T0.0–T0.12)** | ✅ **100% 全部交付上生产** | 测试先行、7处绑定吞错修复、自愈对账拉起 pending、有界优雅停机全部生效。 |
+| **阶段 1** | **隔离加固与单轨收敛 (T1.0–T1.10)** | ✅ **已交付上生产**（除 T1.10 暂缓） | 旧前端彻底归档；前端单轨化（React19+antd v5）；第二租户全流程冷启动打通；工作流模板沉淀完成。T1.10 媒体规格待产品确认。 |
+| **阶段 2** | **Mongo 权威与状态外置 (T2.1–T2.6)** | ✅ **四域权威全部上线** | **T2.1 会议 / T2.2 Task / T2.3 Project / T2.3b ProjectFile** 权威全部上线生产；**T2.6 幂等键**接入会议消息。**T2.5 细粒度锁调用点已安全回退**（保留底层基础设施与防竞争永久护栏）。 |
+| **阶段 3** | **弹性与水平扩展 (T3.1)** | ✅ **100% 全部交付上生产 (双实例)** | **T3.1 无状态 Backend + 双实例水平扩展已全量上线**：Mongo 分布式 Leader 选举租约（`leader_leases`）、跨实例 SSE 广播 Outbox（`user_events`，延迟 0.286s）、容器 DNS 别名轮询分发、故障 30s 自动接管已灰度通过。 |
+| **阶段 4** | **商业化收口** | ⏳ **规划中** | 配额强制已建已知缺口（G4）；质量看板卡 T1.10。 |
+
+- **当前生产运行镜像**：Backend `20260916-151434`（双实例 `trustmesh-backend` + `trustmesh-backend-2`） / Frontend-v2 `20260915-140340`
+- **详细交接与部署 SOP**：请参阅 `docs/dev-handoff-and-deployment-guide-2026-09-16.md`。
+
+---
 
 ---
 
@@ -486,10 +503,12 @@ backend 无状态可水平扩展（单前端已在阶段1 完成）；评估 CQR
 
 ### 3.4 任务列表
 
-**T3.1 无状态 backend + 水平扩展** — **依赖 T0.9（NATS 不隔离则多实例双派发）**
-- 怎么改：backend 不持权威状态（阶段2 完成），多实例 + Mongo 共享权威 + 可选 Redis 热缓存；NATS 按环境隔离已完成。
-- 预期收益：弹性扩容、故障转移。
-- 风险：中（需验证派发幂等/对账器多实例安全）。
+**T3.1 无状态 backend + 水平扩展** — ✅ **已完成并交付生产（双实例运行中）**
+- 实现情况：
+  1. **Leader 选举**：基于 Mongo TTL 租约实现分布式单 Leader（`leader_leases`），保证 background-tickers / timeout 催办 / reconciler 仅由单一主实例执行，杜绝重复派发与并发催办。
+  2. **跨实例 SSE 广播**：基于 Mongo Outbox（`user_events`）实现跨实例实时事件广播（实测投递延迟 0.286s，TTL 60s 保证有界清理）。
+  3. **双实例部署**：生产运行 `trustmesh-backend` + `trustmesh-backend-2`，通过 Nginx 内置 DNS 别名自动轮询，故障接管 30s 自动完成。
+  4. **灰度记录**：完整记录见 `docs/t3.1-production-canary-checklist-2026-09-16.md`。
 
 **T3.3 评估事件溯源/CQRS** — 依赖 T2.x
 - 怎么改：仅当阶段1/2 暴露审计/回放需求才实施（命令日志 + 投影）。
