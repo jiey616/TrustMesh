@@ -317,8 +317,8 @@ function EditProfileModal({
     const values = await form.validateFields()
     setSubmitting(true)
     try {
-      const res = await updateProfile({ name: values.name.trim() })
-      onSuccess(res.data)
+      const updated = await updateProfile({ name: values.name.trim() })
+      onSuccess(updated)
       form.resetFields()
     } catch (e) {
       message.error(errMessage(e))
