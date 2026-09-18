@@ -59,6 +59,28 @@ const STATUS_META: Record<DesktopReleaseStatus, { color: string; label: string }
   archived: { color: 'default', label: '历史版本' },
 }
 
+/**
+ * 列宽必须逐列显式给数值。不给的话 antd 走 `table-layout: auto`，宽度由内容决定，
+ * 「操作」列里那排按钮会把该列撑得很宽，整表宽度超出容器 —— 100% 缩放下操作列
+ * 直接被挤出可视区（表现为「不显示操作列」）。
+ *
+ * `scroll.x` 取各列之和：容器更窄时改为表内横向滚动 + 操作列固定在右侧（永远可见），
+ * 而不是压缩列或让页面整体横向溢出。
+ * 数值按内容实测留量：sha512 是 12 位截断的等宽字；上传时间是 zh-CN 本地化串
+ * （`2026/9/18 16:22:08`）；操作列 = 3 个 link 按钮（图标 14 + 2 汉字 28 + 内边距 14）≈ 3×64。
+ */
+const COL_WIDTH = {
+  version: 120,
+  status: 96,
+  file: 280,
+  sha512: 130,
+  notes: 200,
+  createdAt: 160,
+  actions: 240,
+} as const
+
+const TABLE_SCROLL_X = Object.values(COL_WIDTH).reduce((sum, w) => sum + w, 0)
+
 function formatBytes(n: number): string {
   if (!n) return '-'
   const units = ['B', 'KB', 'MB', 'GB']
@@ -243,6 +265,7 @@ export function DesktopReleasesPage() {
       title: '版本',
       dataIndex: 'version',
       key: 'version',
+      width: COL_WIDTH.version,
       render: (version: string, rel: PlatformDesktopReleaseView) => (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
           <b>{version}</b>
@@ -254,6 +277,7 @@ export function DesktopReleasesPage() {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
+      width: COL_WIDTH.status,
       render: (status: DesktopReleaseStatus) => {
         const meta = STATUS_META[status] ?? { color: 'default', label: status }
         return <Tag color={meta.color}>{meta.label}</Tag>
@@ -263,9 +287,10 @@ export function DesktopReleasesPage() {
       title: '安装包',
       dataIndex: 'file_name',
       key: 'file_name',
+      width: COL_WIDTH.file,
       render: (name: string, rel: PlatformDesktopReleaseView) => (
         <span>
-          <Text ellipsis style={{ fontSize: 12 }}>
+          <Text ellipsis={{ tooltip: name }} style={{ fontSize: 12 }}>
             {name}
           </Text>
           <div>
@@ -281,6 +306,7 @@ export function DesktopReleasesPage() {
       title: 'sha512',
       dataIndex: 'sha512',
       key: 'sha512',
+      width: COL_WIDTH.sha512,
       render: (v: string) => (
         <Text code style={{ fontSize: 11 }}>
           {v ? `${v.slice(0, 12)}…` : '-'}
@@ -291,6 +317,7 @@ export function DesktopReleasesPage() {
       title: '说明',
       dataIndex: 'notes',
       key: 'notes',
+      width: COL_WIDTH.notes,
       render: (v?: string) =>
         v ? (
           <Text style={{ fontSize: 12 }} ellipsis={{ tooltip: v }}>
@@ -306,11 +333,15 @@ export function DesktopReleasesPage() {
       title: '上传时间',
       dataIndex: 'created_at',
       key: 'created_at',
+      width: COL_WIDTH.createdAt,
       render: (v: string) => <Text style={{ fontSize: 12 }}>{formatTime(v)}</Text>,
     },
     {
       title: '操作',
       key: 'actions',
+      width: COL_WIDTH.actions,
+      // 固定在右侧：容器比表窄而出现横向滚动时，操作列始终可见。
+      fixed: 'right' as const,
       render: (_: unknown, rel: PlatformDesktopReleaseView) => (
         <Space size={0}>
           <Popconfirm
@@ -344,7 +375,7 @@ export function DesktopReleasesPage() {
               icon={<RollbackOutlined />}
               disabled={rel.status !== 'archived'}
             >
-              回滚到此版本
+              回滚
             </Button>
           </Popconfirm>
           <Popconfirm
@@ -417,6 +448,7 @@ export function DesktopReleasesPage() {
           dataSource={releases ?? []}
           loading={isLoading}
           pagination={false}
+          scroll={{ x: TABLE_SCROLL_X }}
           locale={{ emptyText: <Empty description="还没有上传过桌面端安装包" /> }}
         />
       </Card>

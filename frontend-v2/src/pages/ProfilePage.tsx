@@ -21,6 +21,7 @@ import {
   EditOutlined,
   LockOutlined,
   LogoutOutlined,
+  SettingOutlined,
   UserOutlined,
 } from '@ant-design/icons'
 import { PageHeader } from '@/components/shared/PageHeader'
@@ -54,6 +55,14 @@ function errMessage(e: unknown) {
   return e instanceof ApiRequestError ? e.message : '操作失败'
 }
 
+/**
+ * 设置页（路由仍是 `/profile`，深链 / 旧书签不受影响）。
+ *
+ * 命名约定：**全站只有一个「设置」入口**（MainLayout 用户下拉菜单里的那一项）。
+ * 账号资料与服务器连接同属本页，此前「个人信息」「服务器设置」两个并列菜单项已合并 ——
+ * 它们本就指向同一路由（后者只是 `#server` 锚点），并列反而让人以为有两个页面。
+ * 登录前无法进入本页，故 AuthLayout 侧仍保留一个独立的服务端地址入口（同名「设置」）。
+ */
 export function ProfilePage() {
   const navigate = useNavigate()
   const { message, modal } = App.useApp()
@@ -109,9 +118,9 @@ export function ProfilePage() {
   return (
     <div>
       <PageHeader
-        title="个人信息"
-        icon={<UserOutlined />}
-        subtitle="账号资料与所属工作区"
+        title="设置"
+        icon={<SettingOutlined />}
+        subtitle="账号资料、服务器连接与所属工作区"
         actions={
           <Button danger icon={<LogoutOutlined />} onClick={handleLogout}>
             退出登录

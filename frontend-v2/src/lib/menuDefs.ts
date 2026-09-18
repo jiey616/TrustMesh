@@ -17,7 +17,7 @@ export interface MenuDef {
  * 业务菜单（平台管理员一律不可见）。
  *
  * 注意：`/organizations`（组织管理）与 `/external-apps`（外部应用）**不在**侧边栏，
- * 它们的入口统一收在「个人信息」页（ProfilePage），路由本身保持不变（深链仍可用）。
+ * 它们的入口统一收在「设置」页（ProfilePage），路由本身保持不变（深链仍可用）。
  */
 export const BUSINESS_MENUS: MenuDef[] = [
   { key: '/dashboard', label: '仪表盘' },

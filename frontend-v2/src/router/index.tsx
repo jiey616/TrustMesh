@@ -151,7 +151,7 @@ export function AppRouter() {
             }
           />
           <Route path="/external-apps" element={<ExternalAppsPage />} />
-          {/* 组织管理：入口在「个人信息」页；组织域任一权限点即可见，页内再按权限点分标签页 */}
+          {/* 组织管理：入口在「设置」页；组织域任一权限点即可见，页内再按权限点分标签页 */}
           <Route
             path="/organizations"
             element={

@@ -20,6 +20,9 @@ interface ServerConfigModalProps {
 /**
  * 登录前可用的服务端地址配置弹窗。
  * 保存后整页刷新，所有 API/SSE 客户端按新地址重建。
+ *
+ * 标题与站内统一为「设置」（登录后同名入口在用户菜单里，落在 /profile 的设置页）。
+ * 登录前拿不到账号，这是唯一能改地址的通道，故保留此入口。
  */
 export function ServerConfigModal({ open, onClose }: ServerConfigModalProps) {
   const { message } = App.useApp()
@@ -77,7 +80,7 @@ export function ServerConfigModal({ open, onClose }: ServerConfigModalProps) {
       title={
         <Space size={8}>
           <ApiOutlined />
-          <span>服务器设置</span>
+          <span>设置</span>
         </Space>
       }
       open={open}

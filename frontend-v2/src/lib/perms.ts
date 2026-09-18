@@ -68,7 +68,7 @@ export function hasAnyPerm(perms: readonly string[], candidates: readonly string
  * 「组织管理」入口/路由的可见条件：组织域任一权限点（设计文档 §4）。
  * admin 有 org.member.mgr 所以能进，页内「组织设置」标签再按 org.settings 单独隐藏。
  *
- * 入口位置：不在左侧主菜单，收在「个人信息」页（ProfilePage）与用户下拉菜单。
+ * 入口位置：不在左侧主菜单，收在「设置」页（ProfilePage）与用户下拉菜单。
  */
 export const ORG_DOMAIN_PERMS = [
   PERM.ORG_SETTINGS,

@@ -30,14 +30,14 @@ export function AuthLayout() {
         <Outlet />
       </Content>
 
-      {/* 登录前可配置服务端地址（仅桌面端） */}
+      {/* 登录前可配置服务端地址（仅桌面端）。名字与站内统一为「设置」：登录后同名入口在用户菜单里。 */}
       {DESKTOP && (
         <>
           <Tooltip title={`服务器：${getEffectiveServerUrl()}`} placement="left">
             <div
               role="button"
               tabIndex={0}
-              aria-label="服务器设置"
+              aria-label="设置"
               onClick={() => setServerModalOpen(true)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {

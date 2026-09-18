@@ -36,7 +36,6 @@ import { ORG_DOMAIN_PERMS } from '@/lib/perms'
 import { BUSINESS_MENUS, PLATFORM_MENUS, visibleMenus } from '@/lib/menuDefs'
 import { usePermView } from '@/hooks/usePermView'
 import { resolveWorkspaceTarget } from '@/lib/workspaceMemory'
-import { isElectronRuntime } from '@/stores/serverConfigStore'
 import { useUnreadCount } from '@/hooks/useNotifications'
 import { useRealtimeEvents } from '@/hooks/useRealtimeEvents'
 import { useProjects } from '@/hooks/useProjects'
@@ -297,16 +296,14 @@ export function MainLayout() {
 
   const userMenuItems = [
     { key: 'orgs', icon: <SwapOutlined />, label: '切换工作区', children: orgMenuItems },
-    // 组织管理入口与「个人信息」页同规则（组织域任一权限点）；平台管理员不显示（他碰不到业务）
+    // 组织管理入口与「设置」页同规则（组织域任一权限点）；平台管理员不显示（他碰不到业务）
     ...(!isPlatformAdmin && (!permReady || ORG_DOMAIN_PERMS.some((p) => permissions.includes(p)))
       ? ([{ key: 'org-manage', icon: <CrownOutlined />, label: '组织管理' }] as const)
       : []),
     { type: 'divider' as const },
-    { key: 'profile', icon: <UserOutlined />, label: '个人信息' },
-    // 服务器地址配置仅桌面端可用（Web/容器部署固定走同源 /api/v1/）
-    ...(isElectronRuntime()
-      ? ([{ key: 'server', icon: <ApiOutlined />, label: '服务器设置' }] as const)
-      : []),
+    // 账号资料与服务器地址属同一页（/profile），故只保留一个入口，统一叫「设置」。
+    // 服务器配置在页内（且仅桌面端渲染），不再单列菜单项 —— Web 端固定同源 /api/v1/，本就无此项。
+    { key: 'settings', icon: <SettingOutlined />, label: '设置' },
     { type: 'divider' as const },
     { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', danger: true },
   ]
@@ -482,7 +479,7 @@ export function MainLayout() {
             )}
           </div>
 
-          {/* 底部固定区：消息通知 / 个人信息 / 收起+主题（图标并排） */}
+          {/* 底部固定区：消息通知 / 工作区+用户菜单（含「设置」）/ 收起+主题（图标并排） */}
           <div
             style={{
               flexShrink: 0,
@@ -509,8 +506,7 @@ export function MainLayout() {
                 onClick: ({ key }) => {
                   if (key === 'logout') handleLogout()
                   else if (key === 'org-manage') navigate('/organizations')
-                  else if (key === 'profile') navigate('/profile')
-                  else if (key === 'server') navigate('/profile#server')
+                  else if (key === 'settings') navigate('/profile')
                   // 其余 key 为工作区 id（含 __personal__）
                   else handleOrgSwitch(key)
                 },

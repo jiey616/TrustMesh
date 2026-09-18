@@ -24,7 +24,7 @@ export function LoginPage() {
     mutationFn: (data: AuthLoginRequest) => login(data),
     onSuccess: (data: AuthSuccessData) => {
       // 换账号登录防御：清掉上一个账号残留在模块级 QueryClient 里的缓存
-      //（orgs/项目/通知等），避免个人信息页展示旧账号数据。
+      //（orgs/项目/通知等），避免设置页展示旧账号数据。
       queryClient.clear()
       setAuth(data.access_token, data.refresh_token, data.user)
       message.success(`欢迎回来，${data.user.name}`)
