@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Alert, Button, Card, Space, Spin, Typography } from 'antd'
-import { ExportOutlined, ReloadOutlined } from '@ant-design/icons'
+import { Alert, App, Button, Card, Space, Spin, Typography } from 'antd'
+import {
+  ExportOutlined,
+  FullscreenExitOutlined,
+  FullscreenOutlined,
+  ReloadOutlined,
+} from '@ant-design/icons'
 import { useLaunchExternalApp } from '@/hooks/useExternalApps'
 import { ApiRequestError } from '@/types'
 import type { ExternalAppView } from '@/types'
@@ -10,7 +15,7 @@ const { Text, Paragraph } = Typography
 /**
  * 外部平台内容容器。
  *
- * - frame_mode=iframe：内嵌渲染，右上角常驻「新标签打开 / 重新加载」。
+ * - frame_mode=iframe：内嵌渲染，右上角常驻「全屏 / 重新加载 / 新标签打开」。
  *   注意：外部站点若设置 X-Frame-Options: DENY 或 CSP frame-ancestors，
  *   浏览器会拒绝渲染且前端无法可靠探测（跨域），因此不做自动嗅探，
  *   而是常驻降级入口 + 首次进入的一段说明。
@@ -27,12 +32,23 @@ export function ExternalAppFrame({
   taskId?: string
 }) {
   const launch = useLaunchExternalApp()
+  const { message } = App.useApp()
   const [launchUrl, setLaunchUrl] = useState('')
   const [expiresIn, setExpiresIn] = useState(0)
   const [error, setError] = useState('')
   const [nonce, setNonce] = useState(0)
   const [hintVisible, setHintVisible] = useState(true)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const launchedKey = useRef('')
+  const stageRef = useRef<HTMLDivElement>(null)
+
+  // 以 document.fullscreenElement 为准：用户按 Esc、或外部应用自身退出全屏时也能同步回按钮状态。
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(document.fullscreenElement === stageRef.current)
+    document.addEventListener('fullscreenchange', onChange)
+    onChange()
+    return () => document.removeEventListener('fullscreenchange', onChange)
+  }, [])
 
   const requestLaunch = useCallback(async () => {
     try {
@@ -56,6 +72,30 @@ export function ExternalAppFrame({
   const openInNewTab = () => {
     if (!launchUrl) return
     window.open(launchUrl, '_blank', 'noopener,noreferrer')
+  }
+
+  /**
+   * 全屏切换。
+   *
+   * 对「容器」调用 requestFullscreen，而不是对 iframe 元素：
+   * 容器是本页自己的节点，不经过任何跨域权限校验，工具栏得以保留在顶部，
+   * 用户始终有一个可见的「退出全屏」入口（否则只能靠 Esc）。
+   * 副作用是外部应用的全屏按钮（若它自己实现了）走的是另一套权限路径，
+   * 由 iframe 的 allow="fullscreen" 决定，二者互不影响。
+   *
+   * ⚠️ 必须由点击同步触发：requestFullscreen 依赖用户激活，放到
+   * await / setTimeout / Promise.then 之后调用会被拒（NotAllowedError）。
+   */
+  const toggleFullscreen = () => {
+    const el = stageRef.current
+    if (!el) return
+    if (document.fullscreenElement === el) {
+      void document.exitFullscreen()
+      return
+    }
+    void el.requestFullscreen().catch(() => {
+      message.error('无法进入全屏，请直接点击本按钮后重试')
+    })
   }
 
   // 凭证是短时 JWT，过期后内嵌页面里的请求会失败，提示用户重新加载。
@@ -107,12 +147,30 @@ export function ExternalAppFrame({
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, gap: 8 }}>
+    <div
+      ref={stageRef}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        minHeight: 0,
+        gap: 8,
+        padding: isFullscreen ? 10 : 0,
+        background: 'var(--surface)',
+      }}
+    >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
         <Text type="secondary" style={{ fontSize: 12, flex: 1 }}>
           内嵌打开 · 凭证有效期 {ttlLabel}，过期后点「重新加载」
         </Text>
         <Space size={4}>
+          <Button
+            size="small"
+            icon={isFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+            onClick={toggleFullscreen}
+          >
+            {isFullscreen ? '退出全屏' : '全屏'}
+          </Button>
           <Button size="small" icon={<ReloadOutlined />} onClick={() => setNonce((n) => n + 1)}>
             重新加载
           </Button>
@@ -122,7 +180,7 @@ export function ExternalAppFrame({
         </Space>
       </div>
 
-      {hintVisible && (
+      {hintVisible && !isFullscreen && (
         <Alert
           type="info"
           showIcon
