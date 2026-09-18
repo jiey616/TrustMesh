@@ -7,6 +7,7 @@ import {
   ReloadOutlined,
 } from '@ant-design/icons'
 import { useLaunchExternalApp } from '@/hooks/useExternalApps'
+import { isElementFullscreen } from '@/lib/fullscreen'
 import { ApiRequestError } from '@/types'
 import type { ExternalAppView } from '@/types'
 
@@ -43,12 +44,30 @@ export function ExternalAppFrame({
   const stageRef = useRef<HTMLDivElement>(null)
 
   // 以 document.fullscreenElement 为准：用户按 Esc、或外部应用自身退出全屏时也能同步回按钮状态。
-  useEffect(() => {
-    const onChange = () => setIsFullscreen(document.fullscreenElement === stageRef.current)
-    document.addEventListener('fullscreenchange', onChange)
-    onChange()
-    return () => document.removeEventListener('fullscreenchange', onChange)
+  const syncFullscreen = useCallback(() => {
+    setIsFullscreen(isElementFullscreen(stageRef.current, document.fullscreenElement))
   }, [])
+
+  useEffect(() => {
+    document.addEventListener('fullscreenchange', syncFullscreen)
+    syncFullscreen()
+    return () => document.removeEventListener('fullscreenchange', syncFullscreen)
+  }, [syncFullscreen])
+
+  /**
+   * 容器挂载/卸载时再同步一次。
+   *
+   * 首次渲染时凭证尚未就绪，组件走的是 `<Spin>` 分支，容器根本没挂上去；若只靠上面的
+   * effect（只在挂载时跑一次，且那一刻容器为 null），就永远拿不到「容器是 null」以外的
+   * 结论。用回调 ref 在节点真正 attach 时再判定，状态才与 DOM 一致。
+   */
+  const attachStage = useCallback(
+    (node: HTMLDivElement | null) => {
+      stageRef.current = node
+      syncFullscreen()
+    },
+    [syncFullscreen],
+  )
 
   const requestLaunch = useCallback(async () => {
     try {
@@ -89,7 +108,7 @@ export function ExternalAppFrame({
   const toggleFullscreen = () => {
     const el = stageRef.current
     if (!el) return
-    if (document.fullscreenElement === el) {
+    if (isElementFullscreen(el, document.fullscreenElement)) {
       void document.exitFullscreen()
       return
     }
@@ -148,7 +167,7 @@ export function ExternalAppFrame({
 
   return (
     <div
-      ref={stageRef}
+      ref={attachStage}
       style={{
         display: 'flex',
         flexDirection: 'column',
