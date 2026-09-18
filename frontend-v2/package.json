@@ -1,7 +1,7 @@
 {
   "name": "trustmesh-desktop",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "TrustMesh — AI Agent 任务编排与项目管理平台（桌面版）",
   "author": "TrustMesh",
   "type": "module",
