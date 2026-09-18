@@ -1,7 +1,7 @@
 {
   "name": "trustmesh-desktop",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "TrustMesh — AI Agent 任务编排与项目管理平台（桌面版）",
   "author": "TrustMesh",
   "type": "module",
@@ -87,6 +87,7 @@
       "node_modules/lazy-val/**/*",
       "node_modules/js-yaml/**/*",
       "node_modules/argparse/**/*",
+      "node_modules/sax/**/*",
       "node_modules/semver/**/*",
       "node_modules/fs-extra/**/*",
       "node_modules/jsonfile/**/*",
