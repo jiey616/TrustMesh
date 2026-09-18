@@ -207,3 +207,22 @@ export const apiClient = ky.create({
     ],
   },
 })
+
+// ============================================================================
+// 供「非 ky」上传通道复用的鉴权原语
+// ============================================================================
+//
+// 桌面端安装包单文件 87MB，**fetch 没有上传进度事件**，必须用 XMLHttpRequest 才能
+// 画出进度条（见 api/desktopReleases.ts）。但 XHR 绕过了 apiClient 的 hooks，
+// 也就绕过了「冷启动门闩」与「401 单飞刷新」——直接复制一份实现必然与主线漂移。
+// 因此这里把两个原语显式导出，让 XHR 通道复用同一份逻辑。
+
+/** 等到「本次会话的 access token 可用」为止（复用冷启动门闩；无 refreshToken 时立即放行）。 */
+export function ensureAccessTokenReady(): Promise<void> {
+  return ensureAccessToken()
+}
+
+/** 单飞刷新一次 access token（并发调用共享同一次 refresh）。失败时抛错。 */
+export function refreshAccessTokenOnce(): Promise<void> {
+  return refreshOnce()
+}

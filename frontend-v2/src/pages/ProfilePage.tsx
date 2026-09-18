@@ -25,6 +25,7 @@ import {
 } from '@ant-design/icons'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { ServerConfigCard } from '@/components/settings/ServerConfigCard'
+import { DesktopUpdateCard } from '@/components/settings/DesktopUpdateCard'
 import { ORG_DOMAIN_PERMS } from '@/lib/perms'
 import { useAuthStore } from '@/stores/authStore'
 import { usePermStore } from '@/stores/permStore'
@@ -159,6 +160,9 @@ export function ProfilePage() {
           <ServerConfigCard />
         </div>
       )}
+
+      {/* 桌面端更新（兜底入口；主提示走 MainLayout 的非模态通知，见 DesktopUpdateNotifier） */}
+      {isElectronRuntime() && <DesktopUpdateCard />}
 
       <Card
         title="安全"

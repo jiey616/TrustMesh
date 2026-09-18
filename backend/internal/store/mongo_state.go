@@ -76,6 +76,9 @@ func (s *Store) enableMongo(cfg config.Config, log *zap.Logger) error {
 	s.mongoLLMSettings = db.Collection("platform_settings")
 	// 审计日志（设计文档 §6.4）：追加写 + 平台侧只读查询，TTL 180 天由索引回收。
 	s.mongoAuditLogs = db.Collection("audit_logs")
+	// 桌面端发行版（docs/desktop-app-update-plan-2026-09-18.md）：Mongo 即权威，
+	// 不进内存状态机（同 audit_logs），故 loadMongoState 不加载它。
+	s.mongoDesktopReleases = db.Collection("desktop_releases")
 	// T2.6 通用幂等键集合：_id 唯一由 Mongo 隐式保证（E11000 = 命中），
 	// expire_at 上的 TTL 索引（expireAfterSeconds=0）由 ensureMongoIndexes 创建。
 	s.mongoIdempotencyKeys = db.Collection("idempotency_keys")
@@ -189,6 +192,7 @@ func (s *Store) clearMongoCollections() {
 	s.mongoOpsIncidents = nil
 	s.mongoLLMSettings = nil
 	s.mongoAuditLogs = nil
+	s.mongoDesktopReleases = nil
 	s.mongoIdempotencyKeys = nil
 	// T3.1：Mongo 不可用时门禁必须自动降级为「恒 leader」，否则 CAS 会对着已断开的
 	// client 一直报错 → isLeader 恒 false → 三个安全网 ticker 永久停摆。
@@ -306,6 +310,22 @@ func (s *Store) ensureMongoIndexes() error {
 			{Keys: bson.D{{Key: "scope", Value: 1}, {Key: "created_at", Value: -1}}},
 			{Keys: bson.D{{Key: "action", Value: 1}, {Key: "created_at", Value: -1}}},
 			{Keys: bson.D{{Key: "actor_user_id", Value: 1}, {Key: "created_at", Value: -1}}},
+		},
+		s.mongoDesktopReleases: {
+			// 版本号唯一：同一版本不允许两条（否则 latest.yml 该指向谁没有确定答案）。
+			{Keys: bson.D{{Key: "version", Value: 1}}, Options: options.Index().SetUnique(true)},
+			// 🔴「全局至多一条 published」的**权威约束**（同 ops_incidents 的部分唯一索引套路）。
+			// 应用层「先归档其它、再发布目标」只是为了让并发撞车时给出可读 409，
+			// 真正的不变量由这里兜底 —— 少了它，双写/重试就能造出两条 published，
+			// 公开 feed 便会随机指向不同版本。
+			{Keys: bson.D{{Key: "status", Value: 1}},
+				Options: options.Index().SetUnique(true).
+					SetPartialFilterExpression(bson.M{"status": model.DesktopReleaseStatusPublished})},
+			// 公开 feed 的按文件名查找（安装包与 .blockmap 两条路径都要走索引）。
+			{Keys: bson.D{{Key: "file_name", Value: 1}}},
+			{Keys: bson.D{{Key: "block_map_file_name", Value: 1}}},
+			// 列表与清理都按创建时间排序（最新在前 / 最旧先删）。
+			{Keys: bson.D{{Key: "created_at", Value: -1}}},
 		},
 		s.mongoOpsIncidents: {
 			// 去重硬保证：同一主体+规则在活跃期只允许一个工单。

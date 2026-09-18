@@ -51,6 +51,11 @@ func TestRequirePlatformPerm(t *testing.T) {
 	}{
 		{"平台管理员+平台权限点放行", PermPlatformOrgLifecycle, "u-platform", platformAdminStub, http.StatusOK, true},
 		{"平台管理员+审计权限点放行", PermPlatformAuditView, "u-platform", platformAdminStub, http.StatusOK, true},
+		// 桌面端发行版权限点（docs/desktop-app-update-plan-2026-09-18.md）。
+		// 「平台管理员放行」这条同时守住一个易漏点：权限点必须真的登记进
+		// PlatformPermissions()，否则第 49 行的兜底校验会把平台管理员自己也 403 掉。
+		{"平台管理员+桌面发行版权限点放行", PermPlatformDesktopRelease, "u-platform", platformAdminStub, http.StatusOK, true},
+		{"企业 owner 调桌面发行版拒绝", PermPlatformDesktopRelease, "u-owner", platformAdminStub, http.StatusForbidden, false},
 		{"企业 owner 拒绝（平台命名空间不认企业角色）", PermPlatformOrgLifecycle, "u-owner", platformAdminStub, http.StatusForbidden, false},
 		{"未登录用户拒绝", PermPlatformOrgLifecycle, "", platformAdminStub, http.StatusForbidden, false},
 		{"checker 为 nil 时默认拒绝", PermPlatformOrgLifecycle, "u-platform", nil, http.StatusForbidden, false},

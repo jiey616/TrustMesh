@@ -65,6 +65,10 @@ const (
 	// PermPlatformExtAppMgr 全局级外部应用管理（2026-09-17 三级作用域）：
 	// /api/v1/platform/external-apps 的增删改查。
 	PermPlatformExtAppMgr = "platform.extapp.mgr"
+	// PermPlatformDesktopRelease 桌面端发行版管理（上传/发布/回滚/删除安装包）：
+	// /api/v1/platform/desktop-releases 的增删改查。
+	// 方案：docs/desktop-app-update-plan-2026-09-18.md。
+	PermPlatformDesktopRelease = "platform.desktop.release"
 )
 
 // AllOrgPermissions 返回企业层全部权限点（= owner 权限集）。
@@ -84,5 +88,6 @@ func PlatformPermissions() []string {
 		PermPlatformUserRead,
 		PermPlatformUserManage,
 		PermPlatformExtAppMgr,
+		PermPlatformDesktopRelease,
 	}
 }

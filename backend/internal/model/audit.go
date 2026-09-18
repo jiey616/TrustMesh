@@ -37,6 +37,14 @@ const (
 	AuditActionUserPasswordReset = "user.password.reset"
 	AuditActionUserDisable       = "user.disable"
 	AuditActionUserEnable        = "user.enable"
+
+	// 桌面端发行版管理（docs/desktop-app-update-plan-2026-09-18.md）：
+	// 上传 / 发布（指针前移）/ 回滚（指针后移）/ 删除。
+	// 发布与回滚都要留证 —— 「为什么某台机器拿到了旧版本」的答案只在这条审计里。
+	AuditActionDesktopReleaseUpload   = "desktop_release.upload"
+	AuditActionDesktopReleasePublish  = "desktop_release.publish"
+	AuditActionDesktopReleaseRollback = "desktop_release.rollback"
+	AuditActionDesktopReleaseDelete   = "desktop_release.delete"
 )
 
 // 审计目标类型（target_type 枚举）。
@@ -49,6 +57,9 @@ const (
 	AuditTargetAgent         = "agent"
 	AuditTargetPlatformConf  = "platform_config"
 	AuditTargetPlatformLogin = "platform_login"
+	// AuditTargetDesktopRelease 的 target_id 用**版本号**而不是文档 ID：
+	// 排查时的检索键是「用户在界面上看到的 0.3.0」，不是内部 24 位随机串。
+	AuditTargetDesktopRelease = "desktop_release"
 )
 
 // AuditLog 一条审计记录。

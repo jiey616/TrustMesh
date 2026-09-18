@@ -156,6 +156,17 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 
 	v1.GET("/platform/info", platformHandler.Info)
 
+	// 桌面端更新 feed：**公开只读，不走鉴权**（方案 §1 决策 6）。
+	// electron-updater 跑在独立 session 分区 `electron-updater`，不共享登录 cookie；
+	// 一旦要求登录，「登出已久 / 从未登录」的机器就永远升不了级，而且这是静默的
+	// （用户只会看到「没有更新」）。latest.yml 由当前 published 记录**动态生成**，
+	// 不接受上传者提供的版本，保证「发布指针」是唯一真相来源。
+	// handler 与下面平台命名空间的 /platform/desktop-releases 共用同一个实例。
+	platformDesktopReleaseHandler := handler.NewPlatformDesktopReleaseHandler(s)
+	desktopFeed := v1.Group("/desktop/releases/feed")
+	desktopFeed.GET("/latest.yml", platformDesktopReleaseHandler.LatestYML)
+	desktopFeed.GET("/:filename", platformDesktopReleaseHandler.DownloadReleaseFile)
+
 	authed := v1.Group("")
 	authed.Use(middleware.RequireAuth(jwtManager))
 	// 多租户阶段 0：解析 X-Org-Id 并注入 Scope。存量客户端不带该头，
@@ -524,6 +535,15 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	plat.POST("/external-apps", authz.RequirePlatformPerm(authz.PermPlatformExtAppMgr, platformAdminChecker), platformExternalAppHandler.Create)
 	plat.PATCH("/external-apps/:id", authz.RequirePlatformPerm(authz.PermPlatformExtAppMgr, platformAdminChecker), platformExternalAppHandler.Update)
 	plat.DELETE("/external-apps/:id", authz.RequirePlatformPerm(authz.PermPlatformExtAppMgr, platformAdminChecker), platformExternalAppHandler.Delete)
+	// 桌面端发行版（自建更新源，docs/desktop-app-update-plan-2026-09-18.md）：
+	// 上传 / 发布 / 回滚 / 删除安装包。四个动作共用一个平台权限点
+	// platform.desktop.release —— 它们的破坏力同档（都能改变「全员拿到哪个版本」），
+	// 再拆权限点只会增加配置负担而无实质隔离。
+	plat.GET("/desktop-releases", authz.RequirePlatformPerm(authz.PermPlatformDesktopRelease, platformAdminChecker), platformDesktopReleaseHandler.List)
+	plat.POST("/desktop-releases", authz.RequirePlatformPerm(authz.PermPlatformDesktopRelease, platformAdminChecker), platformDesktopReleaseHandler.Upload)
+	plat.POST("/desktop-releases/:id/publish", authz.RequirePlatformPerm(authz.PermPlatformDesktopRelease, platformAdminChecker), platformDesktopReleaseHandler.Publish)
+	plat.POST("/desktop-releases/:id/rollback", authz.RequirePlatformPerm(authz.PermPlatformDesktopRelease, platformAdminChecker), platformDesktopReleaseHandler.Rollback)
+	plat.DELETE("/desktop-releases/:id", authz.RequirePlatformPerm(authz.PermPlatformDesktopRelease, platformAdminChecker), platformDesktopReleaseHandler.Delete)
 
 	// 企业层 LLM 配置：handler 层已有 owner/admin 守卫，路由层维持基础权限。
 	orgLLM := authed.Group("/organizations/:id/llm-config")

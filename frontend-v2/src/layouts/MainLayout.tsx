@@ -27,6 +27,7 @@ import {
   SettingOutlined,
   AuditOutlined,
   BarChartOutlined,
+  WindowsOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
 import { useAuthStore } from '@/stores/authStore'
@@ -44,6 +45,7 @@ import { useOrganizations } from '@/hooks/useOrgs'
 import { useQueryClient } from '@tanstack/react-query'
 import { FloatingOrbs } from '@/components/FloatingOrbs'
 import { AssistantFab } from '@/components/assistant/AssistantFab'
+import { DesktopUpdateNotifier } from '@/components/desktop/DesktopUpdateNotifier'
 import { WorkspaceCalibratingSkeleton } from '@/components/workspace/WorkspaceCalibratingSkeleton'
 import { GradientText } from '@/components/GradientText'
 import { ThemeSwitch } from '@/components/ThemeSwitch'
@@ -77,6 +79,7 @@ const menuIcons: Record<string, React.ReactNode> = {
   '/platform/users': <TeamOutlined />,
   '/platform/config': <SettingOutlined />,
   '/platform/external-apps': <ApiOutlined />,
+  '/platform/desktop-releases': <WindowsOutlined />,
   '/platform/audit': <AuditOutlined />,
   '/platform/usage': <BarChartOutlined />,
 }
@@ -609,6 +612,14 @@ export function MainLayout() {
         {/* AI 助手悬浮入口（Ctrl+K）——F2 门控：校准前不挂载，封死窗口内助手发起的无头写 */}
         {workspaceCalibrated && <AssistantFab />}
       </Layout>
+
+      {/*
+        桌面端更新提示（渲染 null，只弹非模态通知）。
+        🔴 刻意**不**跟 workspaceCalibrated 门控：更新是纯本地（electron-updater）事件，
+           与租户上下文无关，也不发任何业务请求。挂上门控会让「恰好卡在校准期」的用户
+           永远收不到更新提示。桥不存在时组件自己早退，Web 端零开销。
+      */}
+      <DesktopUpdateNotifier />
     </Layout>
   )
 }

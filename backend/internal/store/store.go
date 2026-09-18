@@ -200,6 +200,7 @@ type Store struct {
 	mongoOpsIncidents      *mongo.Collection
 	mongoLLMSettings       *mongo.Collection
 	mongoAuditLogs         *mongo.Collection // 审计日志（TTL 180 天，追加写只读展示）
+	mongoDesktopReleases   *mongo.Collection // 桌面端发行版（Mongo 权威，不进内存状态机）
 	mongoIdempotencyKeys   *mongo.Collection // T2.6 通用幂等键集合（唯一键 _id + TTL 索引 expire_at）
 	mongoLeaderLeases      *mongo.Collection // T3.1 后台循环 leader 租约集合（单文档 CAS）
 	mongoTimeout           time.Duration

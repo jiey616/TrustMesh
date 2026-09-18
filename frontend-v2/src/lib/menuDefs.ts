@@ -37,6 +37,7 @@ export const PLATFORM_MENUS: MenuDef[] = [
   { key: '/platform/users', label: '用户管理' },
   { key: '/platform/config', label: '全局配置' },
   { key: '/platform/external-apps', label: '外部应用' },
+  { key: '/platform/desktop-releases', label: '桌面端安装包' },
   { key: '/platform/audit', label: '审计日志' },
   { key: '/platform/usage', label: '用量总览' },
 ]

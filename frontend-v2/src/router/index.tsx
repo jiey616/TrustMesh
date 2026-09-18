@@ -31,6 +31,7 @@ import { PlatformOrgDetailPage } from '@/pages/platform/PlatformOrgDetailPage'
 import { PlatformUsersPage } from '@/pages/platform/PlatformUsersPage'
 import { PlatformConfigPage } from '@/pages/platform/PlatformConfigPage'
 import { PlatformExternalAppsPage } from '@/pages/platform/PlatformExternalAppsPage'
+import { DesktopReleasesPage } from '@/pages/platform/DesktopReleasesPage'
 import { PlatformAuditPage } from '@/pages/platform/PlatformAuditPage'
 import { PlatformUsagePage } from '@/pages/platform/PlatformUsagePage'
 import { ORG_DOMAIN_PERMS, PERM } from '@/lib/perms'
@@ -76,6 +77,7 @@ export function AppRouter() {
           <Route path="users" element={<PlatformUsersPage />} />
           <Route path="config" element={<PlatformConfigPage />} />
           <Route path="external-apps" element={<PlatformExternalAppsPage />} />
+          <Route path="desktop-releases" element={<DesktopReleasesPage />} />
           <Route path="audit" element={<PlatformAuditPage />} />
           <Route path="usage" element={<PlatformUsagePage />} />
         </Route>

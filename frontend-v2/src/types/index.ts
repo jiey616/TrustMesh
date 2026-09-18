@@ -1344,6 +1344,46 @@ export interface AuditLogQuery {
   limit?: number
 }
 
+// ─── 桌面端发行版（自建更新源，docs/desktop-app-update-plan-2026-09-18.md）───
+
+/** draft = 已上传未发布；published = 当前分发版本（全局至多一个）；archived = 历史版本 */
+export type DesktopReleaseStatus = 'draft' | 'published' | 'archived'
+
+export interface PlatformDesktopReleaseView {
+  id: string
+  /** semver；必须与打包时 package.json 的 version 逐字相同，否则客户端**静默**「无更新」 */
+  version: string
+  /** 预留通道字段，当前恒 stable */
+  channel: string
+  file_name: string
+  size: number
+  /** base64 编码的 sha512（electron-builder latest.yml 的 files[].sha512 即此格式） */
+  sha512: string
+  block_map_file_name?: string
+  block_map_size?: number
+  notes?: string
+  status: DesktopReleaseStatus
+  published_at?: string
+  uploaded_by?: string
+  created_at: string
+}
+
+/** release.json 的结构：由 _deploy_desktop.py 产出，**不在界面上手填版本号** */
+export interface DesktopReleaseMetadata {
+  version: string
+  file: string
+  size: number
+  sha512: string
+  notes?: string
+}
+
+/** 一次发行版上传的 multipart 组成（安装包必填，blockmap 可选） */
+export interface DesktopReleaseUploadInput {
+  installer: File
+  metadata: File
+  blockmap?: File
+}
+
 // ─── 工作区记忆（"记住上次选中的空间"）───
 
 /** 工作区种类：个人空间 / 企业空间。 */

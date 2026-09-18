@@ -213,6 +213,13 @@ var routePermManifest = map[string]string{
 	"POST /api/v1/platform/users/:id/reset-password": authz.PermPlatformUserManage,
 	"POST /api/v1/platform/users/:id/disable":        authz.PermPlatformUserManage,
 	"POST /api/v1/platform/users/:id/enable":         authz.PermPlatformUserManage,
+	// 桌面端发行版（自建更新源，docs/desktop-app-update-plan-2026-09-18.md）。
+	// 四个动作共用一个权限点：它们都能改变「全员拿到哪个版本」，同档破坏力。
+	"GET /api/v1/platform/desktop-releases":               authz.PermPlatformDesktopRelease,
+	"POST /api/v1/platform/desktop-releases":              authz.PermPlatformDesktopRelease,
+	"POST /api/v1/platform/desktop-releases/:id/publish":  authz.PermPlatformDesktopRelease,
+	"POST /api/v1/platform/desktop-releases/:id/rollback": authz.PermPlatformDesktopRelease,
+	"DELETE /api/v1/platform/desktop-releases/:id":        authz.PermPlatformDesktopRelease,
 
 	// ── LLM 助手与配置 ──
 	// 租户层 LLM 配置在 handler 层已有细粒度守卫（租户层 owner-admin / 个人层本人），
@@ -244,6 +251,11 @@ var publicRoutes = map[string]bool{
 	"GET /api/v1/chats/attachments/:fileId/token/:token": true,
 	// 条件注册（market）。
 	"GET /api/v1/market/roles/:id/download": true,
+	// 桌面端更新 feed（docs/desktop-app-update-plan-2026-09-18.md §4）：
+	// **刻意公开**。electron-updater 跑在独立 session 分区，不携带登录 cookie，
+	// 要求鉴权会让「登出已久」的机器静默地永远升不了级（方案 §1 决策 6）。
+	"GET /api/v1/desktop/releases/feed/latest.yml": true,
+	"GET /api/v1/desktop/releases/feed/:filename":  true,
 }
 
 // conditionalRoutes 按需注册（当前仅 market 系列依赖 roles_index.json 存在），

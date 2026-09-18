@@ -44,8 +44,14 @@ export const PLATFORM_PERM = {
   CONFIG_WRITE: 'platform.config.write',
   AUDIT_VIEW: 'platform.audit.view',
   USAGE_VIEW: 'platform.usage.view',
+  /** 平台用户列表/详情（/api/v1/platform/users） */
+  USER_READ: 'platform.user.read',
+  /** 平台用户重置密码/禁用/启用 */
+  USER_MANAGE: 'platform.user.manage',
   /** 全局级外部应用管理（/api/v1/platform/external-apps） */
   EXTAPP_MGR: 'platform.extapp.mgr',
+  /** 桌面端发行版管理（/api/v1/platform/desktop-releases） */
+  DESKTOP_RELEASE: 'platform.desktop.release',
 } as const
 
 /** 权限点集合是否包含指定权限点（集合规模 ≤ 20，线性扫描足够）。 */
