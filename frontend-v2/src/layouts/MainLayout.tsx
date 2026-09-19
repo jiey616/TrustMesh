@@ -41,9 +41,9 @@ import { useRealtimeEvents } from '@/hooks/useRealtimeEvents'
 import { useProjects } from '@/hooks/useProjects'
 import { useExternalApps } from '@/hooks/useExternalApps'
 import { useOrganizations } from '@/hooks/useOrgs'
-import { useOrgLogoObjectUrl } from '@/hooks/useOrgLogo'
 import { useQueryClient } from '@tanstack/react-query'
 import { FloatingOrbs } from '@/components/FloatingOrbs'
+import { OrgLogo } from '@/components/shared/OrgLogo'
 import { AssistantFab } from '@/components/assistant/AssistantFab'
 import { DesktopUpdateNotifier } from '@/components/desktop/DesktopUpdateNotifier'
 import { WorkspaceCalibratingSkeleton } from '@/components/workspace/WorkspaceCalibratingSkeleton'
@@ -249,9 +249,6 @@ export function MainLayout() {
     () => (orgs ?? []).find((o) => o.id === activeOrgId),
     [orgs, activeOrgId],
   )
-  // 企业 logo 必须先经鉴权取回 blob 再显示：logo_url 属鉴权接口，<Avatar src> 不带请求头
-  // （直接塞 logo_url 恒 401 ⇒「上传成功但图标不显示」）。详见 hooks/useOrgLogo.ts。
-  const activeOrgLogo = useOrgLogoObjectUrl(activeOrg?.id, activeOrg?.logo_url)
   // orgs 未就绪时显示中性占位，避免校准期短暂显示错误工作区名。
   // 注意绑 `orgs` 而非 `workspaceCalibrated`：校准后的 removeQueries 会让 orgs 再短暂
   // 变 undefined，此时用占位比用「个人空间」兜底更诚实。
@@ -411,22 +408,20 @@ export function MainLayout() {
           >
             {activeOrgId && activeOrg?.kind === 'enterprise' ? (
               collapsed ? (
-                <Avatar
+                <OrgLogo
+                  orgId={activeOrg.id}
+                  logoUrl={activeOrg.logo_url}
+                  fallbackText={displayOrgName(activeOrg)}
                   size={30}
-                  src={activeOrgLogo}
-                  style={{ background: 'linear-gradient(135deg, var(--signal), var(--signal))', flexShrink: 0 }}
-                >
-                  {displayOrgName(activeOrg).slice(0, 1)}
-                </Avatar>
+                />
               ) : (
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, maxWidth: '100%', minWidth: 0 }}>
-                  <Avatar
+                  <OrgLogo
+                    orgId={activeOrg.id}
+                    logoUrl={activeOrg.logo_url}
+                    fallbackText={displayOrgName(activeOrg)}
                     size={30}
-                    src={activeOrgLogo}
-                    style={{ background: 'linear-gradient(135deg, var(--signal), var(--signal))', flexShrink: 0 }}
-                  >
-                    {displayOrgName(activeOrg).slice(0, 1)}
-                  </Avatar>
+                  />
                   <span
                     style={{
                       fontSize: 15,

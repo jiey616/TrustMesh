@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   App,
-  Avatar,
   Button,
   Card,
   Descriptions,
@@ -39,7 +38,7 @@ import {
 } from '@/hooks/useOrgs'
 import { useOrgRoles } from '@/hooks/useOrgRoles'
 import { updateOrganizationProfile, uploadOrganizationLogo } from '@/api/orgs'
-import { useOrgLogoObjectUrl } from '@/hooks/useOrgLogo'
+import { OrgLogo } from '@/components/shared/OrgLogo'
 import { ApiRequestError } from '@/types'
 import type { OrgMemberView, OrgRoleView, OrgView } from '@/types'
 
@@ -311,8 +310,6 @@ function OrgProfileCard({ org }: { org: OrgView }) {
   // 重传后 logo_url 不变（不含版本号）⇒ 预览必须靠 nonce 重新取图，否则同一会话里
   // 上传成功却仍显示旧图，与「上传了没生效」同源。
   const [logoRefreshKey, setLogoRefreshKey] = useState(0)
-  // logo 是鉴权接口，<Avatar src> 带不上请求头 ⇒ 取 blob 转 object URL（见 hooks/useOrgLogo.ts）。
-  const logoObjectUrl = useOrgLogoObjectUrl(org.id, org.logo_url, logoRefreshKey)
 
   const handleUpload = async (file: File) => {
     setUploading(true)
@@ -350,13 +347,13 @@ function OrgProfileCard({ org }: { org: OrgView }) {
   return (
     <Card title="组织资料" style={{ background: 'var(--surface)', border: '1px solid var(--line)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
-        <Avatar
+        <OrgLogo
+          orgId={org.id}
+          logoUrl={org.logo_url}
+          fallbackText={org.name}
           size={64}
-          src={logoObjectUrl}
-          style={{ background: 'linear-gradient(135deg, var(--signal), var(--signal))', flexShrink: 0 }}
-        >
-          {org.name.slice(0, 1)}
-        </Avatar>
+          refreshKey={logoRefreshKey}
+        />
         <Upload
           accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
           showUploadList={false}

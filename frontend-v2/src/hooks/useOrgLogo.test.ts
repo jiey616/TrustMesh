@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/authStore'
 // 源码级契约（与 lib/fullscreen.test.ts 同法）：tsconfig 的 types 只含 vite/client，
 // 没有 node 类型，故用 Vite 的 `?raw` 取源码文本而不是 node:fs。
 import apiSource from '@/api/orgs.ts?raw'
+import orgLogoSrc from '@/components/shared/OrgLogo.tsx?raw'
 import hookSource from '@/hooks/useOrgLogo.ts?raw'
 import layoutSource from '@/layouts/MainLayout.tsx?raw'
 import orgSettingsSource from '@/pages/OrgSettingsPage.tsx?raw'
@@ -128,23 +129,42 @@ describe('object URL 生命周期：必须释放，避免 blob 常驻内存', ()
   })
 })
 
-describe('源码级契约：组件不得再把 logo_url 直接交给 <img src>', () => {
+describe('源码级契约：logo 只能经 OrgLogo 渲染，且不得裁切 / 不得有背景色', () => {
   it('API 层保留 no-store 的取字节入口', () => {
     expect(apiSource).toContain('export async function fetchOrganizationLogo')
     expect(apiSource).toContain("cache: 'no-store'")
   })
 
-  it('MainLayout 走 hook 拿 object URL（收起 + 展开两处）', () => {
-    expect(layoutSource).toContain("from '@/hooks/useOrgLogo'")
-    expect(layoutSource).toContain('useOrgLogoObjectUrl(activeOrg?.id, activeOrg?.logo_url)')
-    // 一旦有人把 logo_url 塞回 src，本用例立刻变红（= 线上那个 401 白图 bug 复现）
-    expect(layoutSource).not.toMatch(/src=\{activeOrg\.logo_url\}/)
+  it('MainLayout 品牌区（收起 + 展开两处）都走 OrgLogo 组件', () => {
+    expect(layoutSource).toContain("from '@/components/shared/OrgLogo'")
+    expect((layoutSource.match(/<OrgLogo/g) || []).length).toBe(2)
+    // 一旦有人把 logo_url 塞回 src（= 线上 401 白图 bug），或绕过组件直连 hook，本用例立刻变红
+    expect(layoutSource).not.toMatch(/src=\{activeOrg/)
+    expect(layoutSource).not.toContain('useOrgLogoObjectUrl')
   })
 
-  it('OrgSettingsPage 走 hook 拿 object URL，并在重传后触发重取', () => {
-    expect(orgSettingsSource).toContain("from '@/hooks/useOrgLogo'")
-    expect(orgSettingsSource).toMatch(/useOrgLogoObjectUrl\(org\.id, org\.logo_url, logoRefreshKey\)/)
+  it('OrgSettingsPage 走 OrgLogo，并在重传后触发重取', () => {
+    expect(orgSettingsSource).toContain("from '@/components/shared/OrgLogo'")
+    expect(orgSettingsSource).toMatch(/<OrgLogo[\s\S]{0,200}refreshKey=\{logoRefreshKey\}/)
     expect(orgSettingsSource).toContain('setLogoRefreshKey((k) => k + 1)')
     expect(orgSettingsSource).not.toMatch(/src=\{org\.logo_url\}/)
+  })
+
+  it('OrgLogo：有 logo 时渲染原生 <img>，contain 完整显示、无圆角、无背景色', () => {
+    // 方形 logo 被圆形裁掉 = 用户报的「显示不全」；根因是 antd Avatar 的 50% 圆角
+    expect(orgLogoSrc).toContain("objectFit: 'contain'")
+    expect(orgLogoSrc).toContain('borderRadius: 0')
+    expect(orgLogoSrc).toContain("background: 'transparent'")
+    // 🔴 占位 Avatar 绝不能接 src —— 那正是「圆形紫底 + 被裁 logo」的老写法
+    expect(orgLogoSrc).toMatch(/if \(!configured\) \{[\s\S]*?<Avatar/)
+    expect(orgLogoSrc).not.toMatch(/<Avatar[\s\S]{0,200}?src=/)
+    // 有 logo 的分支必须是 <img>（且带 contain 样式）
+    expect(orgLogoSrc).toMatch(/<img[\s\S]*?objectFit: 'contain'/)
+  })
+
+  it('OrgLogo 只在未设置 logo 时才用圆形占位（不再拿它当 logo 容器）', () => {
+    expect(orgLogoSrc).toContain('const configured = !!logoUrl')
+    // 圆形占位（Avatar）出现次数 = 1，且位于 !configured 分支内
+    expect((orgLogoSrc.match(/<Avatar/g) || []).length).toBe(1)
   })
 })
