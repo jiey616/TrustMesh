@@ -50,9 +50,9 @@ type orgView struct {
 	// MenuOverrides 企业级菜单隐藏项（owner 在设置页勾选，只能缩小；设计文档 §4）。
 	MenuOverrides []string `json:"menu_overrides,omitempty"`
 	// LogoURL 组织 logo 的访问地址（成员鉴权直出）；未设置时为空。
-	LogoURL string `json:"logo_url,omitempty"`
-	CreatedAt string `json:"created_at"`
-	Members  []memberView `json:"members,omitempty"`
+	LogoURL   string       `json:"logo_url,omitempty"`
+	CreatedAt string       `json:"created_at"`
+	Members   []memberView `json:"members,omitempty"`
 }
 
 type memberView struct {

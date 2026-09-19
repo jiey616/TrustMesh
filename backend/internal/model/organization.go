@@ -56,10 +56,10 @@ type Organization struct {
 	// LogoFileID/LogoFileName 组织 logo 在文件存储中的标识（bucket org-logos）。
 	// 读取经 GET /organizations/:id/logo 由成员鉴权直出，不落带签名的 URL（避免过期）。
 	// 这两个字段不参与 OrgView 序列化（logo_url 由 handler 在读取时生成）。
-	LogoFileID   string `json:"-" bson:"logo_file_id,omitempty"`
-	LogoFileName string `json:"-" bson:"logo_file_name,omitempty"`
+	LogoFileID   string    `json:"-" bson:"logo_file_id,omitempty"`
+	LogoFileName string    `json:"-" bson:"logo_file_name,omitempty"`
 	CreatedAt    time.Time `json:"created_at" bson:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at" bson:"updated_at"`
+	UpdatedAt    time.Time `json:"updated_at" bson:"updated_at"`
 }
 
 // IsDisabled 报告租户是否被平台侧禁用（空 status 视为启用，兼容存量文档）。
