@@ -39,6 +39,7 @@ import {
 } from '@/hooks/useOrgs'
 import { useOrgRoles } from '@/hooks/useOrgRoles'
 import { updateOrganizationProfile, uploadOrganizationLogo } from '@/api/orgs'
+import { useOrgLogoObjectUrl } from '@/hooks/useOrgLogo'
 import { ApiRequestError } from '@/types'
 import type { OrgMemberView, OrgRoleView, OrgView } from '@/types'
 
@@ -307,12 +308,18 @@ function OrgProfileCard({ org }: { org: OrgView }) {
   const [form] = Form.useForm()
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
+  // 重传后 logo_url 不变（不含版本号）⇒ 预览必须靠 nonce 重新取图，否则同一会话里
+  // 上传成功却仍显示旧图，与「上传了没生效」同源。
+  const [logoRefreshKey, setLogoRefreshKey] = useState(0)
+  // logo 是鉴权接口，<Avatar src> 带不上请求头 ⇒ 取 blob 转 object URL（见 hooks/useOrgLogo.ts）。
+  const logoObjectUrl = useOrgLogoObjectUrl(org.id, org.logo_url, logoRefreshKey)
 
   const handleUpload = async (file: File) => {
     setUploading(true)
     try {
       await uploadOrganizationLogo(org.id, file)
       qc.invalidateQueries({ queryKey: orgKeys.all })
+      setLogoRefreshKey((k) => k + 1)
       message.success('组织 logo 已更新')
     } catch (e) {
       message.error(e instanceof ApiRequestError ? e.message : '上传失败')
@@ -345,7 +352,7 @@ function OrgProfileCard({ org }: { org: OrgView }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
         <Avatar
           size={64}
-          src={org.logo_url}
+          src={logoObjectUrl}
           style={{ background: 'linear-gradient(135deg, var(--signal), var(--signal))', flexShrink: 0 }}
         >
           {org.name.slice(0, 1)}

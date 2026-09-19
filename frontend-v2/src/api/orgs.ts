@@ -71,3 +71,21 @@ export async function uploadOrganizationLogo(id: string, file: File) {
     .post(`organizations/${id}/logo`, { body: form })
     .json<ApiResponse<OrgView>>()
 }
+
+/**
+ * 取组织 logo 字节（带鉴权），供 `<img>` 通过 object URL 显示。
+ *
+ * 🔴 这条路径的存在本身就是必须的：`GET /organizations/:id/logo` 注册在**鉴权路由组**上
+ * （router.go 的 `orgs` 组挂了 middleware.RequireAuth），而 `<img src>` / antd `<Avatar src>`
+ * 走浏览器原生图片加载，**无法附加 Authorization 头** ⇒ 把 `logo_url` 直接交给 `src`
+ * 必然 401，表现为「提示已更新但图标不显示」。所以只能经 apiClient（自动带
+ * Authorization + X-Org-Id，并复用 401 刷新重放）取回 blob，再转 object URL。
+ * 显示侧统一走 `hooks/useOrgLogo.ts` 的 useOrgLogoObjectUrl，不要在组件里自己拼。
+ *
+ * `cache: 'no-store'`：后端该响应带 `Cache-Control: private, max-age=3600`，而 logo 的 URL
+ * 在重复上传后**不变**（不含版本号）⇒ 若走浏览器 HTTP 缓存，重新上传后最长 1 小时仍显示旧图，
+ * 又是一次「上传了却没生效」。故显式禁用缓存（图片很小，代价可忽略）。
+ */
+export async function fetchOrganizationLogo(id: string): Promise<Blob> {
+  return apiClient.get(`organizations/${id}/logo`, { cache: 'no-store' }).blob()
+}
