@@ -166,6 +166,14 @@ var routePermManifest = map[string]string{
 	"PATCH /api/v1/organizations/:id/members/:userId":  authz.PermOrgMemberMgr,
 	"DELETE /api/v1/organizations/:id/members/:userId": authz.PermOrgMemberMgr,
 	"PATCH /api/v1/organizations/:id/menu-overrides":   authz.PermOrgSettings, // 菜单覆盖=企业设置项（owner）
+	// 组织资料（名称/简称）与 logo：**owner 或内置 admin** 可改（handler 内
+	// ownerOrAdminGuard），logo 读取仅成员可见。★ 刻意不标 PermOrgSettings：
+	// 该权限点是 owner 独有（authz/role.go ownerPerms，authz_test.go 断言 admin
+	// 不得拥有），标上去会把 admin 挡在路由层、与 handler 的裁决自相矛盾。
+	// 与 /organizations/:id/llm-config 三条同款：路由层 base，细粒度守卫在 handler。
+	"PATCH /api/v1/organizations/:id":     permBase,
+	"POST /api/v1/organizations/:id/logo": permBase,
+	"GET /api/v1/organizations/:id/logo":  permBase,
 
 	// ── 企业角色（设计文档 §5：列表供改角色下拉使用，增删改仅 owner） ──
 	"GET /api/v1/organizations/:id/roles":            authz.PermOrgMemberMgr,
