@@ -108,7 +108,8 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	platformHandler := handler.NewPlatformHandler(cfg.PlatformName)
 	externalAppHandler := handler.NewExternalAppHandler(s, az, auth.ExternalTokenIssuer, cfg.ExternalAppTokenTTL)
 	workflowTemplateHandler := handler.NewWorkflowTemplateHandler(s)
-	orgHandler := handler.NewOrgHandler(s)
+	// orgHandler 需注入文件存储（组织 logo 上传/直出），在 projectFileStorage 就绪后赋值（见下文）。
+	var orgHandler *handler.OrgHandler
 	orgRoleHandler := handler.NewOrgRoleHandler(s, cfg.PermLegacyMember)
 
 	// Knowledge base components (optional - requires EMBEDDING_API_KEY)
@@ -229,6 +230,8 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 
 	// Project files
 	projectFileStorage := project.NewLocalFileStorage(cfg.FilesStoragePath)
+	// 组织 handler 注入文件存储 / 基础路径 / 外部地址，供 logo 上传与成员鉴权直出使用。
+	orgHandler = handler.NewOrgHandler(s, projectFileStorage, cfg.FilesStoragePath, cfg.ExternalURL)
 	s.SetFileStorage(projectFileStorage) // used by timeout monitor to auto-generate meeting minutes
 	projectFileHandler := handler.NewProjectFileHandler(s, projectFileStorage, log)
 
@@ -449,6 +452,10 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	orgs.DELETE("/:id/members/:userId", az.RequirePerm(authz.PermOrgMemberMgr), orgHandler.RemoveMember)
 	// 企业级菜单覆盖（只能缩小可见菜单）：属企业设置项，走 org.settings（owner）。
 	orgs.PATCH("/:id/menu-overrides", az.RequirePerm(authz.PermOrgSettings), orgHandler.SetMenuOverrides)
+	// 组织资料（名称/简称）与 logo：owner/admin 改动，handler 层裁决；logo 读取仅成员可见。
+	orgs.PATCH("/:id", orgHandler.UpdateProfile)
+	orgs.POST("/:id/logo", orgHandler.UploadLogo)
+	orgs.GET("/:id/logo", orgHandler.GetLogo)
 
 	// 企业角色（设计文档 §5）：列表供成员改角色的下拉使用（org.member.mgr），
 	// 增删改仅 owner（org.role.mgr）。参数名与上面的 orgs 组保持一致（同为 :id）。

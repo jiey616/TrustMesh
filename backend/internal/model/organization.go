@@ -50,8 +50,15 @@ type Organization struct {
 	Status  string   `json:"status,omitempty" bson:"status,omitempty"` // active | disabled（空 = active）
 	// MenuOverrides 企业级菜单覆盖（只能缩小）：被点名的菜单键对全员隐藏。
 	// 只影响前端菜单可见性，不影响 API 鉴权（设计文档 §4）。
-	MenuOverrides []string  `json:"menu_overrides,omitempty" bson:"menu_overrides,omitempty"`
-	CreatedAt     time.Time `json:"created_at" bson:"created_at"`
+	MenuOverrides []string `json:"menu_overrides,omitempty" bson:"menu_overrides,omitempty"`
+	// ShortName 组织简称（≤5 字）。侧边栏品牌区/工作区切换等紧凑处展示；缺省回落 Name。
+	ShortName string `json:"short_name,omitempty" bson:"short_name,omitempty"`
+	// LogoFileID/LogoFileName 组织 logo 在文件存储中的标识（bucket org-logos）。
+	// 读取经 GET /organizations/:id/logo 由成员鉴权直出，不落带签名的 URL（避免过期）。
+	// 这两个字段不参与 OrgView 序列化（logo_url 由 handler 在读取时生成）。
+	LogoFileID   string `json:"-" bson:"logo_file_id,omitempty"`
+	LogoFileName string `json:"-" bson:"logo_file_name,omitempty"`
+	CreatedAt    time.Time `json:"created_at" bson:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at" bson:"updated_at"`
 }
 

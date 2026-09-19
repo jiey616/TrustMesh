@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-export const DEFAULT_SERVER_URL = 'http://localhost:8080'
+export const DEFAULT_SERVER_URL = 'https://175.27.135.91'
 
 /**
  * 规范化用户输入的服务端地址：

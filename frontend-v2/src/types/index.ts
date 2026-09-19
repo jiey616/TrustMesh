@@ -1159,6 +1159,10 @@ export interface OrgView {
   quota: OrgQuota
   /** 企业级菜单隐藏项（owner 在设置页勾选，只能缩小；只能影响菜单可见性） */
   menu_overrides?: string[]
+  /** 组织 logo 访问地址（成员鉴权直出；未设置时为空） */
+  logo_url?: string
+  /** 组织简称（≤5 字）；侧边栏/工作区切换等紧凑处展示，缺省回落 name */
+  short_name?: string
   created_at: string
 }
 
@@ -1242,6 +1246,8 @@ export interface PlatformOrgView {
   owner_name?: string
   quota: OrgQuota
   menu_overrides?: string[]
+  /** 组织简称（≤5 字）；平台侧只读展示 */
+  short_name?: string
   created_at: string
   updated_at: string
   member_count: number

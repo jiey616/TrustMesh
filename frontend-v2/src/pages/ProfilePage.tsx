@@ -25,7 +25,6 @@ import {
   UserOutlined,
 } from '@ant-design/icons'
 import { PageHeader } from '@/components/shared/PageHeader'
-import { ServerConfigCard } from '@/components/settings/ServerConfigCard'
 import { DesktopUpdateCard } from '@/components/settings/DesktopUpdateCard'
 import { ORG_DOMAIN_PERMS } from '@/lib/perms'
 import { useAuthStore } from '@/stores/authStore'
@@ -120,7 +119,7 @@ export function ProfilePage() {
       <PageHeader
         title="设置"
         icon={<SettingOutlined />}
-        subtitle="账号资料、服务器连接与所属工作区"
+        subtitle="账号资料与所属工作区"
         actions={
           <Button danger icon={<LogoutOutlined />} onClick={handleLogout}>
             退出登录
@@ -162,13 +161,6 @@ export function ProfilePage() {
           <Descriptions.Item label="更新时间">{fmtDate(user.updated_at)}</Descriptions.Item>
         </Descriptions>
       </Card>
-
-      {/* 服务器地址配置仅桌面端提供；Web 端固定同源 /api/v1/ */}
-      {isElectronRuntime() && (
-        <div id="server">
-          <ServerConfigCard />
-        </div>
-      )}
 
       {/* 桌面端更新（兜底入口；主提示走 MainLayout 的非模态通知，见 DesktopUpdateNotifier） */}
       {isElectronRuntime() && <DesktopUpdateCard />}

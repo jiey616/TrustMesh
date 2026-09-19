@@ -2,6 +2,7 @@ package store
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -224,6 +225,56 @@ func (s *Store) RemoveOrgMember(orgID, userID string) *transport.AppError {
 	s.orgMemberIndex[orgID] = removeString(s.orgMemberIndex[orgID], m.ID)
 	s.userOrgIndex[userID] = removeString(s.userOrgIndex[userID], m.ID)
 	return nil
+}
+
+// UpdateOrgProfile 更新组织展示资料：名称与简称。
+// 仅企业租户可设置；short_name 上限 5 字（按 rune 计，兼容中文）。
+// 调用方（handler）负责 owner/admin 门禁；此处只做字段校验与持久化。
+func (s *Store) UpdateOrgProfile(orgID, name, shortName string) (*model.Organization, *transport.AppError) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, transport.BadRequest("VALIDATION_ERROR", "name: required")
+	}
+	if runes := []rune(strings.TrimSpace(shortName)); len(runes) > 5 {
+		return nil, transport.BadRequest("VALIDATION_ERROR", "short_name: 最多 5 个字")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	org, ok := s.organizations[orgID]
+	if !ok {
+		return nil, transport.NotFound("organization not found")
+	}
+	if org.Kind != model.OrgKindEnterprise {
+		return nil, transport.BadRequest("PERSONAL_ORG", "personal organization does not support profile")
+	}
+	org.Name = name
+	org.ShortName = strings.TrimSpace(shortName)
+	org.UpdatedAt = time.Now().UTC()
+	if err := s.persistOrganizationUnsafe(org); err != nil {
+		return nil, mongoWriteError(err)
+	}
+	return org, nil
+}
+
+// SetOrgLogo 设置组织 logo 的文件标识（bucket org-logos）。fileID 为空 = 清除 logo。
+// 调用方（handler）负责 owner/admin 门禁。
+func (s *Store) SetOrgLogo(orgID, fileID, fileName string) (*model.Organization, *transport.AppError) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	org, ok := s.organizations[orgID]
+	if !ok {
+		return nil, transport.NotFound("organization not found")
+	}
+	if org.Kind != model.OrgKindEnterprise {
+		return nil, transport.BadRequest("PERSONAL_ORG", "personal organization does not support logo")
+	}
+	org.LogoFileID = fileID
+	org.LogoFileName = fileName
+	org.UpdatedAt = time.Now().UTC()
+	if err := s.persistOrganizationUnsafe(org); err != nil {
+		return nil, mongoWriteError(err)
+	}
+	return org, nil
 }
 
 // SetProjectMembers 覆盖设置项目成员白名单（空列表 = 清除，回到全员可见）。

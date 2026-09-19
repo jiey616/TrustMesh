@@ -1,12 +1,18 @@
 package handler
 
 import (
+	"mime"
+	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"trustmesh/backend/internal/middleware"
 	"trustmesh/backend/internal/model"
+	"trustmesh/backend/internal/project"
 	"trustmesh/backend/internal/store"
 	"trustmesh/backend/internal/transport"
 )
@@ -15,11 +21,14 @@ import (
 // Visibility rule: a caller must be a member of the org (or its owner) to
 // see it; invisible = nonexistent (404) per the existence-leak rule.
 type OrgHandler struct {
-	store *store.Store
+	store       *store.Store
+	storage     project.FileStorage
+	basePath    string
+	externalURL string
 }
 
-func NewOrgHandler(s *store.Store) *OrgHandler {
-	return &OrgHandler{store: s}
+func NewOrgHandler(s *store.Store, storage project.FileStorage, basePath, externalURL string) *OrgHandler {
+	return &OrgHandler{store: s, storage: storage, basePath: basePath, externalURL: externalURL}
 }
 
 var orgSlugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$`)
@@ -39,9 +48,11 @@ type orgView struct {
 	MyRoleID string         `json:"my_role_id,omitempty"`
 	Quota    model.OrgQuota `json:"quota"`
 	// MenuOverrides 企业级菜单隐藏项（owner 在设置页勾选，只能缩小；设计文档 §4）。
-	MenuOverrides []string     `json:"menu_overrides,omitempty"`
-	CreatedAt     string       `json:"created_at"`
-	Members       []memberView `json:"members,omitempty"`
+	MenuOverrides []string `json:"menu_overrides,omitempty"`
+	// LogoURL 组织 logo 的访问地址（成员鉴权直出）；未设置时为空。
+	LogoURL string `json:"logo_url,omitempty"`
+	CreatedAt string `json:"created_at"`
+	Members  []memberView `json:"members,omitempty"`
 }
 
 type memberView struct {
@@ -137,13 +148,149 @@ func (h *OrgHandler) adminGuard(c *gin.Context, orgID string) (*model.Organizati
 	return org, true
 }
 
-func toOrgView(org *model.Organization, role, roleID string) orgView {
+func (h *OrgHandler) toOrgView(org *model.Organization, role, roleID string) orgView {
 	return orgView{
 		ID: org.ID, Name: org.Name, Slug: org.Slug, Kind: org.Kind,
 		OwnerID: org.OwnerID, MyRole: role, MyRoleID: roleID, Quota: org.Quota,
 		MenuOverrides: org.MenuOverrides,
+		LogoURL:       h.orgLogoURL(org),
 		CreatedAt:     org.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
+}
+
+// orgLogoURL 返回组织 logo 的访问地址。未设置 logo 时返回空串。
+// 优先用 externalURL 拼绝对路径（桌面端跨进程直连也能加载）；缺省回落相对 API 路径。
+func (h *OrgHandler) orgLogoURL(org *model.Organization) string {
+	if org.LogoFileID == "" {
+		return ""
+	}
+	base := strings.TrimRight(h.externalURL, "/")
+	if base == "" {
+		return "/api/v1/organizations/" + org.ID + "/logo"
+	}
+	return base + "/api/v1/organizations/" + org.ID + "/logo"
+}
+
+// ownerOrAdminGuard 在 memberGuard 之上要求调用者为 owner 或内置 admin
+// （组织资料 / logo 改动的门禁；设计文档 §6.2 权限体系落地后由本函数兜底裁决）。
+func (h *OrgHandler) ownerOrAdminGuard(c *gin.Context, orgID string) (*model.Organization, bool) {
+	org, _, ok := h.memberGuard(c, orgID)
+	if !ok {
+		return nil, false
+	}
+	if org.Kind != model.OrgKindEnterprise {
+		transport.WriteError(c, transport.BadRequest("PERSONAL_ORG", "personal organization does not support this action"))
+		return nil, false
+	}
+	m, _ := h.store.GetMembership(orgID, middleware.Scope(c).UserID)
+	if !isOwnerMembership(orgID, m) && !isAdminMembership(orgID, m) {
+		transport.WriteError(c, transport.Forbidden("only the owner or an admin can modify the organization profile"))
+		return nil, false
+	}
+	return org, true
+}
+
+// validateImageExtension 校验上传文件名是否为受支持的图片格式。
+func validateImageExtension(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg":
+		return true
+	}
+	return false
+}
+
+// UpdateProfile PATCH /organizations/:id —— 更新组织名称与简称（owner/admin）。
+func (h *OrgHandler) UpdateProfile(c *gin.Context) {
+	orgID := c.Param("id")
+	if _, ok := h.ownerOrAdminGuard(c, orgID); !ok {
+		return
+	}
+	var req struct {
+		Name      string `json:"name"`
+		ShortName string `json:"short_name"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		transport.WriteError(c, transport.BadRequest("BAD_REQUEST", "invalid json body"))
+		return
+	}
+	updated, appErr := h.store.UpdateOrgProfile(orgID, req.Name, req.ShortName)
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
+	recordAudit(c, h.store, orgID, model.AuditActionOrgUpdate, model.AuditTargetOrg, orgID,
+		map[string]any{"name": updated.Name, "short_name": updated.ShortName})
+	transport.WriteData(c, 200, h.toOrgView(updated, h.roleOf(orgID, middleware.Scope(c).UserID),
+		h.roleIDOf(orgID, middleware.Scope(c).UserID)))
+}
+
+// orgLogoBucket 文件存储桶名（与 chat 附件隔离）。
+const orgLogoBucket = "org-logos"
+
+// UploadLogo POST /organizations/:id/logo —— 上传组织 logo（multipart 字段 "file"，owner/admin）。
+// 落盘到 org-logos 桶后把文件标识写入组织；返回含 logo_url 的最新 OrgView。
+func (h *OrgHandler) UploadLogo(c *gin.Context) {
+	orgID := c.Param("id")
+	if _, ok := h.ownerOrAdminGuard(c, orgID); !ok {
+		return
+	}
+	applyUploadLimit(c)
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		transport.WriteError(c, transport.BadRequest("BAD_REQUEST", "file is required"))
+		return
+	}
+	defer file.Close()
+	if !validateImageExtension(header.Filename) {
+		transport.WriteError(c, transport.BadRequest("UNSUPPORTED_FILE_TYPE",
+			"仅支持图片格式：png / jpg / jpeg / webp / gif / svg"))
+		return
+	}
+	safeName := filepath.Base(header.Filename)
+	id := uuid.NewString()
+	// 仅用基础名持久化，避免浏览器/桌面提供的路径逃逸出 bucket。
+	logoPath := filepath.Join(h.basePath, orgLogoBucket, "uploads", id+"_"+safeName)
+	if _, err := h.storage.Save(c.Request.Context(), orgLogoBucket, id, safeName, file); err != nil {
+		transport.WriteError(c, transport.NewError(http.StatusInternalServerError, "UPLOAD_FAILED", "failed to store file"))
+		return
+	}
+	updated, appErr := h.store.SetOrgLogo(orgID, id, safeName)
+	if appErr != nil {
+		// 元数据写入失败：尽力清理已落盘的孤儿文件，避免磁盘泄漏。
+		_ = h.storage.Delete(c.Request.Context(), logoPath)
+		transport.WriteError(c, appErr)
+		return
+	}
+	transport.WriteData(c, 200, h.toOrgView(updated, h.roleOf(orgID, middleware.Scope(c).UserID),
+		h.roleIDOf(orgID, middleware.Scope(c).UserID)))
+}
+
+// GetLogo GET /organizations/:id/logo —— 成员鉴权直出组织 logo 字节。
+func (h *OrgHandler) GetLogo(c *gin.Context) {
+	orgID := c.Param("id")
+	org, _, ok := h.memberGuard(c, orgID)
+	if !ok {
+		return
+	}
+	if org.LogoFileID == "" {
+		transport.WriteError(c, transport.NotFound("logo not found"))
+		return
+	}
+	path := filepath.Join(h.basePath, orgLogoBucket, "uploads", org.LogoFileID+"_"+org.LogoFileName)
+	f, err := os.Open(path)
+	if err != nil {
+		transport.WriteError(c, transport.NotFound("logo not found on disk"))
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		transport.WriteError(c, transport.NotFound("logo not found on disk"))
+		return
+	}
+	c.Header("Cache-Control", "private, max-age=3600")
+	c.Header("Content-Type", mime.TypeByExtension(filepath.Ext(org.LogoFileName)))
+	http.ServeContent(c.Writer, c.Request, org.LogoFileName, info.ModTime(), f)
 }
 
 // List returns every org the caller belongs to (personal + enterprise).
@@ -152,7 +299,7 @@ func (h *OrgHandler) List(c *gin.Context) {
 	orgs := h.store.ListUserOrganizations(userID)
 	items := make([]orgView, 0, len(orgs))
 	for _, org := range orgs {
-		items = append(items, toOrgView(org, h.roleOf(org.ID, userID), h.roleIDOf(org.ID, userID)))
+		items = append(items, h.toOrgView(org, h.roleOf(org.ID, userID), h.roleIDOf(org.ID, userID)))
 	}
 	transport.WriteList(c, items, len(items))
 }
@@ -187,7 +334,7 @@ func (h *OrgHandler) Create(c *gin.Context) {
 	}
 	recordAudit(c, h.store, org.ID, model.AuditActionOrgCreate, model.AuditTargetOrg, org.ID,
 		map[string]any{"name": org.Name, "slug": org.Slug})
-	transport.WriteData(c, 201, toOrgView(org, model.OrgRoleOwner,
+	transport.WriteData(c, 201, h.toOrgView(org, model.OrgRoleOwner,
 		model.BuiltinOrgRoleID(org.ID, model.OrgRoleOwner)))
 }
 
@@ -197,7 +344,7 @@ func (h *OrgHandler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	transport.WriteData(c, 200, toOrgView(org, role, h.roleIDOf(org.ID, middleware.Scope(c).UserID)))
+	transport.WriteData(c, 200, h.toOrgView(org, role, h.roleIDOf(org.ID, middleware.Scope(c).UserID)))
 }
 
 // ListMembers returns the org roster with user email/name attached.
@@ -378,6 +525,6 @@ func (h *OrgHandler) SetMenuOverrides(c *gin.Context) {
 	}
 	recordAudit(c, h.store, orgID, model.AuditActionOrgMenuOverrideUpdate, model.AuditTargetOrg, orgID,
 		map[string]any{"from": org.MenuOverrides, "to": updated.MenuOverrides})
-	transport.WriteData(c, 200, toOrgView(updated, h.roleOf(orgID, middleware.Scope(c).UserID),
+	transport.WriteData(c, 200, h.toOrgView(updated, h.roleOf(orgID, middleware.Scope(c).UserID),
 		h.roleIDOf(orgID, middleware.Scope(c).UserID)))
 }

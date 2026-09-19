@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   App,
+  Avatar,
   Button,
   Card,
   Descriptions,
@@ -15,9 +17,10 @@ import {
   Tabs,
   Tag,
   Typography,
+  Upload,
 } from 'antd'
 import type { TabsProps } from 'antd'
-import { PlusOutlined, TeamOutlined } from '@ant-design/icons'
+import { PlusOutlined, TeamOutlined, UploadOutlined } from '@ant-design/icons'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { useAuthStore } from '@/stores/authStore'
 import { usePermStore } from '@/stores/permStore'
@@ -32,8 +35,10 @@ import {
   useOrgMembers,
   useRemoveOrgMember,
   useUpdateOrgMemberRole,
+  orgKeys,
 } from '@/hooks/useOrgs'
 import { useOrgRoles } from '@/hooks/useOrgRoles'
+import { updateOrganizationProfile, uploadOrganizationLogo } from '@/api/orgs'
 import { ApiRequestError } from '@/types'
 import type { OrgMemberView, OrgRoleView, OrgView } from '@/types'
 
@@ -296,6 +301,94 @@ function MembersCard({ org }: { org: OrgView }) {
   )
 }
 
+function OrgProfileCard({ org }: { org: OrgView }) {
+  const { message } = App.useApp()
+  const qc = useQueryClient()
+  const [form] = Form.useForm()
+  const [uploading, setUploading] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  const handleUpload = async (file: File) => {
+    setUploading(true)
+    try {
+      await uploadOrganizationLogo(org.id, file)
+      qc.invalidateQueries({ queryKey: orgKeys.all })
+      message.success('组织 logo 已更新')
+    } catch (e) {
+      message.error(e instanceof ApiRequestError ? e.message : '上传失败')
+    } finally {
+      setUploading(false)
+    }
+    // 返回 false 阻止 antd 默认上传（已手动调用接口）
+    return false
+  }
+
+  const handleSave = async () => {
+    const values = await form.validateFields()
+    setSaving(true)
+    try {
+      await updateOrganizationProfile(org.id, {
+        name: values.name.trim(),
+        short_name: (values.short_name || '').trim(),
+      })
+      qc.invalidateQueries({ queryKey: orgKeys.all })
+      message.success('组织资料已保存')
+    } catch (e) {
+      message.error(e instanceof ApiRequestError ? e.message : '保存失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card title="组织资料" style={{ background: 'var(--surface)', border: '1px solid var(--line)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
+        <Avatar
+          size={64}
+          src={org.logo_url}
+          style={{ background: 'linear-gradient(135deg, var(--signal), var(--signal))', flexShrink: 0 }}
+        >
+          {org.name.slice(0, 1)}
+        </Avatar>
+        <Upload
+          accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+          showUploadList={false}
+          beforeUpload={handleUpload}
+          disabled={uploading}
+        >
+          <Button icon={<UploadOutlined />} loading={uploading}>
+            上传 logo
+          </Button>
+        </Upload>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          支持 png / jpg / jpeg / webp / gif / svg，建议正方形。
+        </Text>
+      </div>
+      <Form
+        form={form}
+        layout="vertical"
+        initialValues={{ name: org.name, short_name: org.short_name || '' }}
+        style={{ maxWidth: 420 }}
+      >
+        <Form.Item name="name" label="组织名称" rules={[{ required: true, message: '请输入组织名称' }]}>
+          <Input maxLength={64} placeholder="组织名称" />
+        </Form.Item>
+        <Form.Item
+          name="short_name"
+          label="组织简称"
+          extra="侧边栏品牌区 / 工作区切换等紧凑处展示；最多 5 个字，留空则使用组织名称。"
+          rules={[{ max: 5, message: '简称最多 5 个字' }]}
+        >
+          <Input maxLength={5} placeholder="如：山雨" />
+        </Form.Item>
+        <Button type="primary" loading={saving} onClick={handleSave}>
+          保存
+        </Button>
+      </Form>
+    </Card>
+  )
+}
+
 export function OrgSettingsPage() {
   const { activeOrgId } = useAuthStore()
   const { data: orgs, isLoading } = useOrganizations()
@@ -361,6 +454,16 @@ export function OrgSettingsPage() {
             </div>
           ),
         },
+        // 「组织资料」标签（logo + 简称 + 名称）：owner/admin 可改，handler 层裁决。
+        ...(!isPersonal && isOrgAdmin
+          ? [
+              {
+                key: 'profile',
+                label: '组织资料',
+                children: <OrgProfileCard org={current} />,
+              },
+            ]
+          : []),
         // 「企业设置」标签按 org.settings 单独隐藏（admin 有成员管理但没有企业设置）
         ...(!isPersonal && can(PERM.ORG_SETTINGS)
           ? [

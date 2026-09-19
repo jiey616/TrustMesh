@@ -16,6 +16,7 @@ const (
 	AuditActionOrgCreate  = "org.create"
 	AuditActionOrgDisable = "org.disable"
 	AuditActionOrgRestore = "org.restore"
+	AuditActionOrgUpdate  = "org.update"
 
 	AuditActionOrgMemberAdd        = "org.member.add"
 	AuditActionOrgMemberRemove     = "org.member.remove"

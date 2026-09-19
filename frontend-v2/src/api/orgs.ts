@@ -57,3 +57,17 @@ export async function updateOrgMenuOverrides(id: string, menuOverrides: string[]
     .patch(`organizations/${id}/menu-overrides`, { json: { menu_overrides: menuOverrides } })
     .json<ApiResponse<OrgView>>()
 }
+
+/** 更新组织资料（名称 / 简称），需 owner 或 admin。 */
+export async function updateOrganizationProfile(id: string, input: { name: string; short_name?: string }) {
+  return apiClient.patch(`organizations/${id}`, { json: input }).json<ApiResponse<OrgView>>()
+}
+
+/** 上传组织 logo（multipart 字段 file），需 owner 或 admin。返回含 logo_url 的最新 OrgView。 */
+export async function uploadOrganizationLogo(id: string, file: File) {
+  const form = new FormData()
+  form.append('file', file)
+  return apiClient
+    .post(`organizations/${id}/logo`, { body: form })
+    .json<ApiResponse<OrgView>>()
+}

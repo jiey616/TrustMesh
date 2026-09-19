@@ -83,6 +83,16 @@ const menuIcons: Record<string, React.ReactNode> = {
   '/platform/usage': <BarChartOutlined />,
 }
 
+/**
+ * 组织显示名：优先用简称（short_name，≤5 字）；缺省回落组织名称并截断到 5 字，
+ * 满足侧边栏品牌区「最多展示 5 个字」的约束。
+ */
+function displayOrgName(org: { short_name?: string; name?: string }): string {
+  const short = (org.short_name || '').trim()
+  if (short) return short
+  return Array.from(org.name || '').slice(0, 5).join('')
+}
+
 export function MainLayout() {
   const [collapsed, setCollapsed] = useState(false)
   const navigate = useNavigate()
@@ -383,7 +393,7 @@ export function MainLayout() {
           .tm-iconbtn:hover { background: var(--surface); color: var(--text-primary); }
         `}</style>
         <div className="tm-sidebar" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-          {/* 顶部 Logo */}
+          {/* 顶部品牌区：个人空间 / 未校准显示平台名 TrustMesh；企业空间显示组织 logo + 简称 */}
           <div
             style={{
               height: 56,
@@ -392,9 +402,43 @@ export function MainLayout() {
               justifyContent: 'center',
               borderBottom: '1px solid var(--line)',
               flexShrink: 0,
+              padding: '0 12px',
             }}
           >
-            {collapsed ? (
+            {activeOrgId && activeOrg?.kind === 'enterprise' ? (
+              collapsed ? (
+                <Avatar
+                  size={30}
+                  src={activeOrg.logo_url}
+                  style={{ background: 'linear-gradient(135deg, var(--signal), var(--signal))', flexShrink: 0 }}
+                >
+                  {displayOrgName(activeOrg).slice(0, 1)}
+                </Avatar>
+              ) : (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, maxWidth: '100%', minWidth: 0 }}>
+                  <Avatar
+                    size={30}
+                    src={activeOrg.logo_url}
+                    style={{ background: 'linear-gradient(135deg, var(--signal), var(--signal))', flexShrink: 0 }}
+                  >
+                    {displayOrgName(activeOrg).slice(0, 1)}
+                  </Avatar>
+                  <span
+                    style={{
+                      fontSize: 15,
+                      fontWeight: 700,
+                      letterSpacing: '-0.3px',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      minWidth: 0,
+                    }}
+                  >
+                    {displayOrgName(activeOrg)}
+                  </span>
+                </span>
+              )
+            ) : collapsed ? (
               <span style={{ fontSize: 18, fontWeight: 700 }}>
                 <GradientText speed={5}>TM</GradientText>
               </span>
