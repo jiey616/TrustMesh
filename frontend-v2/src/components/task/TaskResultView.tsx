@@ -5,9 +5,12 @@ import {
   DownloadOutlined,
   EyeOutlined,
   FileTextOutlined,
+  DownOutlined,
+  UpOutlined,
 } from '@ant-design/icons'
 import { getTaskArtifactContent } from '@/api/tasks'
 import { useBindArtifactOutput } from '@/hooks/useTasks'
+import { isDeliverable, splitArtifacts } from '@/lib/artifactKind'
 import { Markdown } from './Markdown'
 import { FileViewer } from './FileViewer'
 import type { TaskArtifact, TaskResult, Todo, Workflow } from '@/types'
@@ -41,8 +44,8 @@ function formatFileSize(bytes: number) {
 
 export function TaskResultView({ taskId, result, artifacts, workflow, todos }: TaskResultViewProps) {
   const { message } = App.useApp()
-  const safeArtifacts = artifacts ?? []
-  const safeTodos = todos ?? []
+  const safeArtifacts = useMemo(() => artifacts ?? [], [artifacts])
+  const safeTodos = useMemo(() => todos ?? [], [todos])
   const summaryText = result?.summary ?? ''
   const finalOutputText = result?.final_output ?? ''
   const hasResult = summaryText || finalOutputText
@@ -57,6 +60,13 @@ export function TaskResultView({ taskId, result, artifacts, workflow, todos }: T
   const [bindArtifact, setBindArtifact] = useState<TaskArtifact | null>(null)
   const [bindOutputName, setBindOutputName] = useState<string | undefined>(undefined)
   const bindMutation = useBindArtifactOutput()
+
+  // 交付物 / 过程文件拆分（口径见 lib/artifactKind.ts）；过程文件默认折叠
+  const { deliverables, processes: processFiles } = useMemo(
+    () => splitArtifacts(safeArtifacts),
+    [safeArtifacts],
+  )
+  const [processOpen, setProcessOpen] = useState(false)
 
   // 计算每个 todo 对应的步骤声明输出位。匹配规则与后端 webhook 一致：
   // todo.order 优先，回退到 todos 数组下标。空数组 = 该步骤没声明输出位 → 隐藏绑定按钮。
@@ -146,6 +156,73 @@ export function TaskResultView({ taskId, result, artifacts, workflow, todos }: T
 
   const bindInfo = bindArtifact?.todo_id ? declaredByTodoId.get(bindArtifact.todo_id) : null
 
+  const renderArtifactRow = (artifact: TaskArtifact) => {
+    // 非「交付物」均可发起绑定（含 kind 为空的历史数据）；绑定目标输出位在 Modal 里选
+    const bindable = !isDeliverable(artifact) && !!artifact.todo_id && declaredByTodoId.has(artifact.todo_id)
+    return (
+      <div
+        key={artifact.transfer_id}
+        style={{
+          borderRadius: 'var(--radius-control)',
+          border: '1px solid var(--line)',
+          background: 'var(--surface)',
+          padding: 12,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 'var(--radius-control)', background: 'var(--surface-raised)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <FileTextOutlined style={{ color: 'var(--text-tertiary)' }} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{artifact.file_name}</span>
+              {isDeliverable(artifact) && (
+                <span style={{ flexShrink: 0, fontSize: 11, lineHeight: '18px', padding: '0 6px', borderRadius: 'var(--radius-control)', background: 'rgba(99,153,34,0.18)', color: '#97c459', border: '0.5px solid rgba(99,153,34,0.4)' }}>
+                  交付{artifact.output_name ? ` · ${artifact.output_name}` : ''}
+                </span>
+              )}
+              {!isDeliverable(artifact) && (
+                <span style={{ flexShrink: 0, fontSize: 11, lineHeight: '18px', padding: '0 6px', borderRadius: 'var(--radius-control)', background: 'var(--surface-raised)', color: 'var(--text-tertiary)', border: '0.5px solid var(--line-strong)' }}>
+                  过程
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text-quaternary)', marginTop: 2 }}>
+              {artifact.mime_type}{formatFileSize(artifact.file_size) ? ` · ${formatFileSize(artifact.file_size)}` : ''}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {bindable && (
+              <Button
+                size="small"
+                icon={<CheckCircleOutlined />}
+                onClick={() => openBindModal(artifact)}
+              >
+                绑定为交付物
+              </Button>
+            )}
+            <Button
+              size="small"
+              icon={loadingArtifactId === artifact.transfer_id ? <Spin size="small" /> : <EyeOutlined />}
+              onClick={() => handlePreview(artifact)}
+              disabled={loadingArtifactId === artifact.transfer_id}
+            >
+              预览
+            </Button>
+            <Button
+              size="small"
+              icon={downloadingArtifactId === artifact.transfer_id ? <Spin size="small" /> : <DownloadOutlined />}
+              onClick={() => handleDownload(artifact)}
+              disabled={downloadingArtifactId === artifact.transfer_id}
+            >
+              下载
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       {hasResult && (
@@ -172,75 +249,38 @@ export function TaskResultView({ taskId, result, artifacts, workflow, todos }: T
 
       {hasArtifacts && (
         <div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>交付物</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {safeArtifacts.map((artifact) => {
-              const bindable =
-                artifact.kind === 'process' && !!artifact.todo_id && declaredByTodoId.has(artifact.todo_id)
-              return (
-                <div
-                  key={artifact.transfer_id}
-                  style={{
-                    borderRadius: 'var(--radius-control)',
-                    border: '1px solid var(--line)',
-                    background: 'var(--surface)',
-                    padding: 12,
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div style={{ width: 32, height: 32, borderRadius: 'var(--radius-control)', background: 'var(--surface-raised)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      <FileTextOutlined style={{ color: 'var(--text-tertiary)' }} />
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{artifact.file_name}</span>
-                        {artifact.kind === 'deliverable' && (
-                          <span style={{ flexShrink: 0, fontSize: 11, lineHeight: '18px', padding: '0 6px', borderRadius: 'var(--radius-control)', background: 'rgba(99,153,34,0.18)', color: '#97c459', border: '0.5px solid rgba(99,153,34,0.4)' }}>
-                            交付{artifact.output_name ? ` · ${artifact.output_name}` : ''}
-                          </span>
-                        )}
-                        {artifact.kind === 'process' && (
-                          <span style={{ flexShrink: 0, fontSize: 11, lineHeight: '18px', padding: '0 6px', borderRadius: 'var(--radius-control)', background: 'var(--surface-raised)', color: 'var(--text-tertiary)', border: '0.5px solid var(--line-strong)' }}>
-                            过程
-                          </span>
-                        )}
-                      </div>
-                      <div style={{ fontSize: 13, color: 'var(--text-quaternary)', marginTop: 2 }}>
-                        {artifact.mime_type}{formatFileSize(artifact.file_size) ? ` · ${formatFileSize(artifact.file_size)}` : ''}
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      {bindable && (
-                        <Button
-                          size="small"
-                          icon={<CheckCircleOutlined />}
-                          onClick={() => openBindModal(artifact)}
-                        >
-                          绑定为交付物
-                        </Button>
-                      )}
-                      <Button
-                        size="small"
-                        icon={loadingArtifactId === artifact.transfer_id ? <Spin size="small" /> : <EyeOutlined />}
-                        onClick={() => handlePreview(artifact)}
-                        disabled={loadingArtifactId === artifact.transfer_id}
-                      >
-                        预览
-                      </Button>
-                      <Button
-                        size="small"
-                        icon={downloadingArtifactId === artifact.transfer_id ? <Spin size="small" /> : <DownloadOutlined />}
-                        onClick={() => handleDownload(artifact)}
-                        disabled={downloadingArtifactId === artifact.transfer_id}
-                      >
-                        下载
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>
+            交付物（{deliverables.length}）
           </div>
+          {deliverables.length === 0 ? (
+            <div style={{ padding: '8px 0', color: 'var(--text-quaternary)', fontSize: 13 }}>暂无交付物</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {deliverables.map(renderArtifactRow)}
+            </div>
+          )}
+
+          {processFiles.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => setProcessOpen((v) => !v)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') setProcessOpen((v) => !v)
+                }}
+                style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', cursor: 'pointer', userSelect: 'none', marginBottom: 8 }}
+              >
+                过程文件（{processFiles.length}）
+                {processOpen ? <UpOutlined style={{ fontSize: 10 }} /> : <DownOutlined style={{ fontSize: 10 }} />}
+              </div>
+              {processOpen && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {processFiles.map(renderArtifactRow)}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
