@@ -2,7 +2,9 @@ package store
 
 import (
 	"fmt"
+	"os"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -10,6 +12,20 @@ import (
 	"trustmesh/backend/internal/model"
 	"trustmesh/backend/internal/transport"
 )
+
+// declaredSlotStrict gates whether an explicit outputName is validated against
+// the step's declared output slots. It exists because the two binding routes
+// had drifted apart: the manual BindStepOutput path has always refused
+// undeclared names (OUTPUT_SLOT_NOT_DECLARED) and demoted displaced
+// deliverables, while the agent upload path trusted whatever name the agent
+// sent. 2026-09-19 画宗《双羊尊》 is the cost of that drift — the screenwriter's
+// 24 process .md drafts all carried the single declared slot name and were
+// filed as deliverables.
+//
+// Default ON. Set TRUSTMESH_DECLARED_SLOT_STRICT=false to restore the legacy
+// trust-the-agent behaviour (e.g. if a workflow template declares a wrong mime
+// and legitimate final deliverables start being demoted to process files).
+var declaredSlotStrict = os.Getenv("TRUSTMESH_DECLARED_SLOT_STRICT") != "false"
 
 // mimeToExt maps distinguishing fragments of a MIME type (or a bare extension)
 // to a canonical extension key. Workflow templates declare output slots with
@@ -135,8 +151,18 @@ type ArtifactFilingResult struct {
 	OutputName string
 	// Bound is true when the artifact was attached to a workflow output slot.
 	Bound bool
-	// BoundBy is "declared" when the agent supplied outputName explicitly,
-	// "inferred" when the backend matched it automatically, "" otherwise.
+	// BoundBy records how the classification was reached:
+	//   "declared"              the agent supplied outputName and it passed
+	//                           validation against the step's declared slots;
+	//   "inferred"              the backend matched a single declared slot;
+	//   "declared_slot_unknown" the agent supplied a name this step does not
+	//                           declare — rejected, filed as process;
+	//   "declared_mime_mismatch" the name is declared but its mime contract is
+	//                           not satisfied — rejected, filed as process;
+	//   ""                      not bound (no slots declared, ambiguous
+	//                           multi-slot step, or no mime match).
+	// The two rejection values are what lets callers explain *why* a file that
+	// looked like a deliverable was not filed as one.
 	BoundBy string
 	// UnboundWarn is true when the step declares output slots but this upload
 	// could not be matched to one — the caller should surface a warning.
@@ -149,7 +175,16 @@ type ArtifactFilingResult struct {
 // inferOutputBinding decides which workflow output slot an upload claims.
 //
 // Policy (deliberately conservative):
-//   - an explicit outputName always wins;
+//   - an explicit outputName wins **only after it passes the same contract the
+//     manual BindStepOutput path enforces**: the name must be one this step
+//     declares, and the upload's mime must satisfy that slot. A name the step
+//     does not declare can never be resolved by a downstream step, so trusting
+//     it files an unusable deliverable; a mime mismatch means the upload is not
+//     the artifact the slot describes (2026-09-04: an .md screenplay filed as
+//     the docx deliverable; 2026-09-19: 24 .md drafts filed as one slot).
+//     Rejections are handed back as boundBy so the caller can explain them.
+//     A step declaring no slots keeps the legacy free-form behaviour — there is
+//     nothing to validate against.
 //   - a step declaring exactly one slot whose mime matches is bound
 //     automatically;
 //   - a step declaring several slots is never auto-bound — which slot a file
@@ -159,8 +194,20 @@ type ArtifactFilingResult struct {
 //   - a single slot whose mime does not match is left unbound with a warning;
 //     an upload with unknown mime (empty after normalisation) also fails to
 //     match — call sites should backfill mime via InferMimeFromName first.
+//
+// See declaredSlotStrict for the kill switch.
 func inferOutputBinding(artifact model.TaskArtifact, declared []model.StepOutput) (outputName, boundBy string, unboundWarn bool) {
 	if artifact.OutputName != "" {
+		if len(declared) == 0 || !declaredSlotStrict {
+			return artifact.OutputName, "declared", false
+		}
+		slot, ok := declaredSlotByName(declared, artifact.OutputName)
+		if !ok {
+			return "", "declared_slot_unknown", true
+		}
+		if !mimeMatchesDeclared(slot.MimeType, artifact.MimeType) {
+			return "", "declared_mime_mismatch", true
+		}
 		return artifact.OutputName, "declared", false
 	}
 	if len(declared) == 0 {
@@ -173,6 +220,54 @@ func inferOutputBinding(artifact model.TaskArtifact, declared []model.StepOutput
 		return "", "", true
 	}
 	return declared[0].Name, "inferred", false
+}
+
+// declaredSlotByName finds the declared output slot carrying the given name.
+// Names are compared after trimming so a template that pads its slot name does
+// not silently reject a valid binding.
+func declaredSlotByName(declared []model.StepOutput, name string) (model.StepOutput, bool) {
+	want := strings.TrimSpace(name)
+	for _, d := range declared {
+		if strings.TrimSpace(d.Name) == want {
+			return d, true
+		}
+	}
+	return model.StepOutput{}, false
+}
+
+// stepForTodoUnsafe resolves which workflow step a todo belongs to, so the
+// store can read that step's declared output slots without going through the
+// clawSynapse webhook. The alignment is the same ordered role/agent match used
+// by applyWorkflowReviewFlags (workflow.go) and by
+// clawsynapse.stepIndexForTodo — deliberately mirrored rather than
+// re-invented, because a todo that aligns differently here than on upload
+// would validate an upload against the wrong step's slots.
+//
+// Returns ok=false when the task carries no workflow snapshot, the todo has no
+// match, or there is nothing to match on (todo without assignee and step
+// without explicit AgentID) — callers must treat that as "no declared slots"
+// and fall back to free-form naming.
+//
+// Caller must hold at least s.mu.RLock.
+func (s *Store) stepForTodoUnsafe(task *model.TaskDetail, todo *model.Todo) (model.WorkflowStep, bool) {
+	if task == nil || todo == nil || task.Workflow == nil || len(task.Workflow.Steps) == 0 {
+		return model.WorkflowStep{}, false
+	}
+	sorted := make([]model.Todo, len(task.Todos))
+	copy(sorted, task.Todos)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Order < sorted[j].Order })
+	cur := 0
+	for ti := 0; ti < len(sorted) && cur < len(task.Workflow.Steps); ti++ {
+		step := task.Workflow.Steps[cur]
+		if !stepMatchesTodo(step, sorted[ti], s.assigneeRoleUnsafe(sorted[ti])) {
+			continue
+		}
+		if sorted[ti].ID == todo.ID {
+			return step, true
+		}
+		cur++
+	}
+	return model.WorkflowStep{}, false
 }
 
 // taskArtifactsClosed reports whether a task no longer accepts new artifacts.
@@ -382,9 +477,17 @@ func (s *Store) SaveArtifactWithFiling(artifact model.TaskArtifact, declared []m
 		if pf != nil {
 			bound.FileRef = pf.ID
 		}
+		// An output slot holds exactly ONE deliverable. Remember what it was
+		// bound to before, so the superseded revision can be demoted below —
+		// the manual BindStepOutput path has always done this, and without it
+		// every revision an agent uploads keeps kind=deliverable, so the
+		// pipeline fallback branch lists them all (2026-09-19 画宗《双羊尊》:
+		// 24 revisions of a single slot all surfaced as deliverables).
+		displaced := ""
 		replacedOut := false
 		for i := range ownerTodo.Outputs {
 			if ownerTodo.Outputs[i].OutputName == artifact.OutputName {
+				displaced = ownerTodo.Outputs[i].ArtifactID
 				ownerTodo.Outputs[i] = bound
 				replacedOut = true
 				break
@@ -392,6 +495,9 @@ func (s *Store) SaveArtifactWithFiling(artifact model.TaskArtifact, declared []m
 		}
 		if !replacedOut {
 			ownerTodo.Outputs = append(ownerTodo.Outputs, bound)
+		}
+		if displaced != "" && displaced != artifact.TransferID {
+			s.demoteDisplacedDeliverableUnsafe(task, ownerTodo.ID, artifact.TransferID, displaced)
 		}
 		// P-03: receiving a declared deliverable is PRODUCTIVE progress — it must
 		// refresh the hard-deadline gate even if the agent never sent
@@ -435,6 +541,58 @@ func declaredSlotNames(declared []model.StepOutput) []string {
 		names = append(names, d.Name)
 	}
 	return names
+}
+
+// demoteDisplacedDeliverableUnsafe demotes the deliverable a slot was bound to
+// before being rebound, plus any redundant duplicate artifact pointing at the
+// same physical file, once no output slot references them any more.
+//
+// It mirrors the manual BindStepOutput path (workflow.go) so both binding
+// routes converge on one invariant: an output slot carries exactly one
+// deliverable. Without it, re-uploading a slot leaves every superseded
+// revision marked kind=deliverable, and stepOutputsUnsafe's fallback branch
+// (which collects deliverables by TodoID) lists them all on the pipeline.
+//
+// keepTransferID must be the artifact that just claimed the slot — it is never
+// demoted even when it happens to share a file with the displaced one.
+// Caller must hold s.mu.
+func (s *Store) demoteDisplacedDeliverableUnsafe(task *model.TaskDetail, todoID, keepTransferID, displacedTransferID string) {
+	if task == nil || displacedTransferID == "" {
+		return
+	}
+	arts := s.taskArtifacts[task.ID]
+	displacedFile := ""
+	for i := range arts {
+		if arts[i].TransferID == displacedTransferID {
+			displacedFile = arts[i].ProjectFileID
+			break
+		}
+	}
+	for i := range arts {
+		if arts[i].TransferID == keepTransferID {
+			continue
+		}
+		if arts[i].Kind != model.ArtifactKindDeliverable || arts[i].TodoID != todoID {
+			continue
+		}
+		sameFile := displacedFile != "" && arts[i].ProjectFileID == displacedFile
+		if !sameFile && arts[i].TransferID != displacedTransferID {
+			continue
+		}
+		// An artifact still bound by another slot must not be touched — it is
+		// a live deliverable elsewhere on the task.
+		if outputArtifactReferenced(task, arts[i].TransferID) {
+			continue
+		}
+		arts[i].Kind = model.ArtifactKindProcess
+		arts[i].OutputName = ""
+		if err := s.persistArtifactUnsafe(&arts[i]); err != nil && s.log != nil {
+			s.log.Warn("failed to demote displaced artifact",
+				zap.String("transfer_id", arts[i].TransferID),
+				zap.String("displaced_by", keepTransferID),
+				zap.Error(err))
+		}
+	}
 }
 
 // TransferOwner is the best-effort owner lookup result used when an agent
@@ -622,6 +780,25 @@ func (s *Store) copyTaskWithArtifactsUnsafe(task *model.TaskDetail) *model.TaskD
 // `--metadata outputName` and could not be auto-matched (ambiguous multi-slot
 // steps, unexpected mime types). Without it the only remedy was re-running the
 // transfer webhook by hand.
+//
+// 三条收敛口径（2026-09-19，与另外两个绑定入口对齐）：
+//  1. **名字必须在步骤声明的输出位里**，否则 400 OUTPUT_SLOT_NOT_DECLARED —— 与
+//     手工 BindStepOutput（workflow.go）逐字同款。理由不是"更严"，而是下游解析：
+//     下游步骤按 (步骤, output_name) 取上一步产物，拼出来的名字取不到就是一条
+//     断链，而且要到下游真正执行时才暴露。步骤未声明输出位时保持自由命名
+//     （无从校验），与 inferOutputBinding 的无声明分支一致。
+//  2. **mime 与声明位不符只告警、不拒绝**：本入口的存在意义之一就是"agent 上传
+//     mime 意外"的救场，兄弟实现 BindStepOutput 也不比对 mime；但它是"人明确
+//     点了一个位"的动作，偏离契约必须留痕（s.log.Warn）。
+//  3. **一个输出位只挂一个交付物**：覆盖旧绑定时把被顶掉的旧交付物（及其同一
+//     物理文件的冗余副本）降级为过程文件，否则 stepOutputsUnsafe 的兜底分支
+//     会继续把旧的列出来，pipeline 同一位置同时出现新旧两份。
+//
+// 用 declaredSlotStrict 开关吗？**不**。该开关是为 agent 上传路径准备的 ——
+// 那条路违规是"静默降级"，需要一个一键回退把行为还原成信任 agent。手工路径
+// 违规是可读的 400，且前端 TaskResultView 的下拉只喂声明位名字（不会产生非法
+// 名字），另一条手工路径 BindStepOutput 也从不带开关。两条手工路径保持同一
+// 口径比"多一个开关"更不容易出错。
 func (s *Store) BindArtifactOutput(sc Scope, taskID, todoID, transferID, outputName string) (*model.TaskArtifact, *transport.AppError) {
 	taskID = strings.TrimSpace(taskID)
 	todoID = strings.TrimSpace(todoID)
@@ -663,18 +840,61 @@ func (s *Store) BindArtifactOutput(sc Scope, taskID, todoID, transferID, outputN
 		return nil, transport.NotFound("artifact not found in task")
 	}
 
+	ownerTodo := &task.Todos[todoIdx]
+
+	// 口径 1：名字必须在步骤声明的输出位里。
+	// 步骤解析不到（任务无 workflow 快照 / todo 对不上步骤）⇒ 视为"未声明输出位"，
+	// 沿用自由命名，避免把存量数据与手工救场一并挡死。
+	var slot model.StepOutput
+	hasDeclaredSlots := false
+	if step, ok := s.stepForTodoUnsafe(task, ownerTodo); ok && len(step.Outputs) > 0 {
+		hasDeclaredSlots = true
+		found, ok := declaredSlotByName(step.Outputs, outputName)
+		if !ok {
+			names := make([]string, 0, len(step.Outputs))
+			for _, o := range step.Outputs {
+				names = append(names, o.Name)
+			}
+			return nil, transport.BadRequest("OUTPUT_SLOT_NOT_DECLARED",
+				fmt.Sprintf("步骤「%s」声明的输出位为 %s，不接受「%s」", step.Name, strings.Join(names, "、"), outputName))
+		}
+		slot = found
+	}
+
 	arts[artIdx].OutputName = outputName
 	arts[artIdx].Kind = model.ArtifactKindDeliverable
+	// 手工绑定是显式意图，绝不算「终态后迟到」（与 BindStepOutput 同款）。
+	arts[artIdx].Orphan = false
 
-	ownerTodo := &task.Todos[todoIdx]
+	// 口径 2：mime 偏离声明位只留痕，不拦截（救场场景需要它）。
+	if hasDeclaredSlots {
+		effectiveMime := strings.TrimSpace(arts[artIdx].MimeType)
+		if effectiveMime == "" {
+			effectiveMime = InferMimeFromName(arts[artIdx].FileName)
+		}
+		if !mimeMatchesDeclared(slot.MimeType, effectiveMime) && s.log != nil {
+			s.log.Warn("manual bind: artifact mime does not match the declared slot",
+				zap.String("task_id", taskID),
+				zap.String("todo_id", ownerTodo.ID),
+				zap.String("transfer_id", transferID),
+				zap.String("output_name", outputName),
+				zap.String("slot_mime", slot.MimeType),
+				zap.String("artifact_mime", effectiveMime),
+				zap.String("file_name", arts[artIdx].FileName))
+		}
+	}
+
 	bound := model.TodoOutput{
 		OutputName: outputName,
 		ArtifactID: transferID,
 		FileRef:    arts[artIdx].ProjectFileID,
 	}
+	// 口径 3：覆盖旧绑定时记住被顶掉的交付物，稍后降级。
+	displaced := ""
 	replaced := false
 	for i := range ownerTodo.Outputs {
 		if ownerTodo.Outputs[i].OutputName == outputName {
+			displaced = ownerTodo.Outputs[i].ArtifactID
 			ownerTodo.Outputs[i] = bound
 			replaced = true
 			break
@@ -682,6 +902,9 @@ func (s *Store) BindArtifactOutput(sc Scope, taskID, todoID, transferID, outputN
 	}
 	if !replaced {
 		ownerTodo.Outputs = append(ownerTodo.Outputs, bound)
+	}
+	if displaced != "" && displaced != arts[artIdx].TransferID {
+		s.demoteDisplacedDeliverableUnsafe(task, ownerTodo.ID, arts[artIdx].TransferID, displaced)
 	}
 	// P-03: a successful manual binding is productive progress too.
 	progressAt := time.Now().UTC()

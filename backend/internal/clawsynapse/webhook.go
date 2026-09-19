@@ -2565,26 +2565,48 @@ func (h *WebhookHandler) resolveStepInput(task *model.TaskDetail, current *model
 // downstream consumer. It prefers the explicitly bound todo.Outputs (populated
 // when an agent uploads a file with a declared outputName) and falls back to
 // the todo's artifacts classified as deliverable (newest first). Process-kind
-// artifacts are never returned: agents routinely upload drafts and intermediate
-// notes alongside the real deliverable, and silently feeding the first of them
-// into a downstream step produced the 2026-09-01/02 wrong-input incidents.
+// artifacts are never returned — regardless of which branch produced them:
+// agents routinely upload drafts and intermediate notes alongside the real
+// deliverable, and silently feeding the first of them into a downstream step
+// produced the 2026-09-01/02 wrong-input incidents. An explicit binding is
+// therefore re-checked against its artifact's kind before being handed over,
+// with the same tolerance stepOutputsUnsafe applies (an empty kind is legacy
+// data and stays valid; only an explicit process classification is dropped).
 // Tasks whose agents never declared an outputName resolve no inputs at all —
 // the declared-but-unresolved ref (Resolved:false) surfaces that expectation
 // instead of guessing.
 func (h *WebhookHandler) effectiveTodoOutputs(task *model.TaskDetail, todo *model.Todo) []model.WorkflowStepOutputRef {
+	if task == nil {
+		return nil
+	}
 	if len(todo.Outputs) > 0 {
 		outs := make([]model.WorkflowStepOutputRef, 0, len(todo.Outputs))
 		for _, o := range todo.Outputs {
+			// Explicit bindings are filtered by the backing artifact's nature
+			// too. A binding that resolves to a *process* artifact is a
+			// stale/superseded row (legacy data, or a slot that has since been
+			// rebound), and feeding it downstream is exactly the wrong-input
+			// incident this function exists to prevent. Same口径 as
+			// stepOutputsUnsafe, which also drops only explicit process rows:
+			// an empty kind is legacy data written before classification
+			// existed, and dropping it would silently break the historical
+			// bindings that still resolve correctly (see 2026-09-19 regression
+			// on TestBuildTodoInputsResolvesPrevOutput). A binding whose
+			// artifact cannot be resolved is likewise kept as-is.
+			if a := findArtifact(task, o.ArtifactID); a != nil && a.Kind == model.ArtifactKindProcess {
+				continue
+			}
 			outs = append(outs, model.WorkflowStepOutputRef{
 				OutputName: o.OutputName,
 				ArtifactID: o.ArtifactID,
 				FileID:     o.FileRef,
 			})
 		}
-		return outs
-	}
-	if task == nil {
-		return nil
+		if len(outs) > 0 {
+			return outs
+		}
+		// Every explicit binding turned out to be stale — fall through to the
+		// artifact scan instead of reporting this todo as producing nothing.
 	}
 	// Only declared deliverables feed downstream resolution. Process files
 	// (drafts, intermediate notes) stay visible in the file tree but must
@@ -3284,7 +3306,11 @@ func (h *WebhookHandler) warnTransferRejected(taskID, fromNode, transferID, file
 // process artifact and will never reach downstream steps or the workflow
 // diagram. The warning is throttled to one per todo: agents routinely upload
 // several intermediate drafts, and unthrottled warnings would bury the timeline.
-func (h *WebhookHandler) warnUnboundDeliverable(taskID, todoID, fromNode, transferID, fileName string, declaredNames []string) {
+//
+// boundBy carries ArtifactFilingResult.BoundBy so the message says *why* the
+// binding failed — "no outputName" and "declared a name this step does not
+// have" need different fixes from the agent.
+func (h *WebhookHandler) warnUnboundDeliverable(taskID, todoID, fromNode, transferID, fileName string, declaredNames []string, boundBy string) {
 	key := taskID + "|" + todoID
 	h.unboundWarnMu.Lock()
 	if h.unboundWarned == nil {
@@ -3301,12 +3327,8 @@ func (h *WebhookHandler) warnUnboundDeliverable(taskID, todoID, fromNode, transf
 	if slots == "" {
 		slots = "（该步骤未声明 mime 匹配的输出位）"
 	}
-	content := fmt.Sprintf(
-		"⚠️ 疑似最终交付物未绑定：本次上传的 `%s` 未携带 outputName，已按**过程文件**入库，不会出现在工作流图上、也不会作为下游步骤的输入。"+
-			"该步骤声明的输出位为：%s。"+
-			"请立即用 `clawsynapse transfer send --metadata taskId=… --metadata todoId=… --metadata outputName=<输出位名>` 重新上传同名文件，"+
-			"或在任务详情页手工「绑定为交付物」。",
-		strings.TrimSpace(fileName), slots)
+	content := fmt.Sprintf("⚠️ 疑似最终交付物未绑定：本次上传的 `%s` %s",
+		strings.TrimSpace(fileName), unboundDeliverableCause(boundBy, slots))
 	if transferID != "" {
 		content += fmt.Sprintf(" transferId=%s", transferID)
 	}
@@ -3322,13 +3344,46 @@ func (h *WebhookHandler) warnUnboundDeliverable(taskID, todoID, fromNode, transf
 		RuleID:   model.RuleDeliverableUnbound,
 		Severity: model.OpsSeverityCritical,
 		Title:    "交付物未绑定输出位",
-		Summary:  fmt.Sprintf("%s 未携带 outputName，已按过程文件入库（输出位：%s）", strings.TrimSpace(fileName), slots),
+		Summary:  fmt.Sprintf("%s %s（输出位：%s）", strings.TrimSpace(fileName), unboundDeliverableCauseShort(boundBy), slots),
 		TaskID:   taskID,
 		TodoID:   todoID,
 		NodeID:   fromNode,
 	})
 	// 干预留痕：把这次系统警告记进工单时间线（下发本体在上面既有链路完成）。
 	h.store.RecordOpsWarning(model.RuleDeliverableUnbound, taskID, todoID, fromNode, content)
+}
+
+// unboundDeliverableCause explains, in the words the agent/user needs to act
+// on, why an upload was not filed as a deliverable. boundBy is
+// ArtifactFilingResult.BoundBy; slots is the human-joined slot list.
+func unboundDeliverableCause(boundBy, slots string) string {
+	switch boundBy {
+	case "declared_slot_unknown":
+		return fmt.Sprintf("声明的 outputName 不在本步骤声明的输出位里（本步骤声明：%s）—— 下游步骤永远解析不到这个名字，"+
+			"因此已按**过程文件**入库。请改用上面已声明的输出位名 `--metadata outputName=<输出位名>` 重新上传，"+
+			"或在任务详情页手工「绑定为交付物」。", slots)
+	case "declared_mime_mismatch":
+		return fmt.Sprintf("声明的 outputName 是已声明的输出位，但文件类型与该输出位要求的类型不符，"+
+			"因此已按**过程文件**入库（本步骤声明：%s）。若这确实是最终交付物，请按输出位要求的格式重新导出后上传；"+
+			"若流程模板里的 mime 声明写错了，请修正模板后重传。", slots)
+	default:
+		return fmt.Sprintf("未携带可用的 outputName（本步骤声明的输出位为：%s），已按**过程文件**入库，"+
+			"不会出现在工作流图上、也不会作为下游步骤的输入。"+
+			"请立即用 `clawsynapse transfer send --metadata taskId=… --metadata todoId=… --metadata outputName=<输出位名>` 重新上传同名文件，"+
+			"或在任务详情页手工「绑定为交付物」。", slots)
+	}
+}
+
+// unboundDeliverableCauseShort is the one-phrase variant for the ops incident summary.
+func unboundDeliverableCauseShort(boundBy string) string {
+	switch boundBy {
+	case "declared_slot_unknown":
+		return "声明的 outputName 不在本步骤输出位内"
+	case "declared_mime_mismatch":
+		return "声明的 outputName 与输出位 mime 不符"
+	default:
+		return "未携带 outputName"
+	}
 }
 
 // findTodoByID locates a todo by id in a task detail; nil when absent or id empty.
@@ -3522,6 +3577,8 @@ func (h *WebhookHandler) handleTransferReceived(c *gin.Context, webhook protocol
 	// never told the slot name uploads without outputName; matching the file
 	// against the declaration lets the backend file it as the deliverable it
 	// actually is instead of silently degrading it to a process artifact.
+	// A name the agent DOES declare is now validated against this list — see
+	// store.inferOutputBinding — so a made-up name no longer claims a slot.
 	var declared []model.StepOutput
 	if todoID != "" {
 		if task := h.store.GetTaskInternal(taskID); task != nil {
@@ -3534,9 +3591,10 @@ func (h *WebhookHandler) handleTransferReceived(c *gin.Context, webhook protocol
 		}
 	}
 
-	// Classify up front so every copy of the artifact handed downstream
-	// (SaveArtifact AND the separate SaveProjectFileFromArtifact call below)
-	// carries the same file nature. SaveArtifact re-derives it as a fallback.
+	// Provisional classification for the copies handed to store functions that
+	// do not re-derive it. SaveArtifactWithFiling is authoritative and its
+	// verdict is mirrored back onto the local copy below (it may reject a
+	// declared name, or infer a binding the caller never declared).
 	if artifact.OutputName != "" {
 		artifact.Kind = model.ArtifactKindDeliverable
 	} else {
@@ -3568,8 +3626,9 @@ func (h *WebhookHandler) handleTransferReceived(c *gin.Context, webhook protocol
 		return
 	}
 	// Mirror the authoritative classification back onto the local copy: the
-	// backend may have inferred a binding the caller did not declare, and the
-	// ProjectFile created below must carry the same kind.
+	// backend may have inferred a binding the caller did not declare, or
+	// rejected a declared name that does not satisfy the step's slot contract,
+	// and the ProjectFile created below must carry the same kind.
 	artifact.OutputName = filing.OutputName
 	if filing.Bound {
 		artifact.Kind = model.ArtifactKindDeliverable
@@ -3583,8 +3642,25 @@ func (h *WebhookHandler) handleTransferReceived(c *gin.Context, webhook protocol
 			zap.String("todo_id", todoID),
 			zap.String("output_name", filing.OutputName))
 	}
+	if filing.BoundBy == "declared_slot_unknown" || filing.BoundBy == "declared_mime_mismatch" {
+		// Observability hook for the post-deploy check: these two lines are how
+		// a silently mis-filed deliverable becomes visible in the logs. Watch
+		// them after enabling declaredSlotStrict — a burst means a workflow
+		// template's declared slot name/mime no longer matches what its agent
+		// actually produces.
+		if h.log != nil {
+			h.log.Warn("declared output name rejected; filed as process artifact",
+				zap.String("transfer_id", msg.TransferID),
+				zap.String("task_id", taskID),
+				zap.String("todo_id", todoID),
+				zap.String("declared_output_name", outputName),
+				zap.String("reason", filing.BoundBy),
+				zap.String("mime_type", msg.MimeType),
+				zap.Strings("step_slots", filing.DeclaredNames))
+		}
+	}
 	if filing.UnboundWarn {
-		h.warnUnboundDeliverable(taskID, todoID, webhook.From, msg.TransferID, msg.FileName, filing.DeclaredNames)
+		h.warnUnboundDeliverable(taskID, todoID, webhook.From, msg.TransferID, msg.FileName, filing.DeclaredNames, filing.BoundBy)
 	}
 
 	// Auto-create ProjectFile and copy artifact to project files volume.
