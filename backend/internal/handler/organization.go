@@ -50,7 +50,9 @@ type orgView struct {
 	// MenuOverrides 企业级菜单隐藏项（owner 在设置页勾选，只能缩小；设计文档 §4）。
 	MenuOverrides []string `json:"menu_overrides,omitempty"`
 	// LogoURL 组织 logo 的访问地址（成员鉴权直出）；未设置时为空。
-	LogoURL   string       `json:"logo_url,omitempty"`
+	LogoURL string `json:"logo_url,omitempty"`
+	// ShortName 组织简称（≤5 字）；侧边栏品牌区等紧凑处展示，缺省回落 Name。
+	ShortName string       `json:"short_name,omitempty"`
 	CreatedAt string       `json:"created_at"`
 	Members   []memberView `json:"members,omitempty"`
 }
@@ -154,6 +156,7 @@ func (h *OrgHandler) toOrgView(org *model.Organization, role, roleID string) org
 		OwnerID: org.OwnerID, MyRole: role, MyRoleID: roleID, Quota: org.Quota,
 		MenuOverrides: org.MenuOverrides,
 		LogoURL:       h.orgLogoURL(org),
+		ShortName:     org.ShortName,
 		CreatedAt:     org.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
