@@ -44,8 +44,18 @@ export async function listTaskComments(taskId: string): Promise<Comment[]> {
   return res.data.items ?? []
 }
 
-export async function addTaskComment(taskId: string, content: string): Promise<void> {
-  await apiClient.post(`tasks/${taskId}/comments`, { json: { content } })
+/** 评论任务；mentions 非空时 @ 的数字员工会收到提醒（后端投递并回报 mention_deliveries） */
+export async function addTaskComment(
+  taskId: string,
+  content: string,
+  mentions?: Array<{ agent_id: string }>,
+): Promise<{ mention_deliveries?: Array<{ agent_name: string; status: string }> }> {
+  const res = await apiClient
+    .post(`tasks/${taskId}/comments`, {
+      json: { content, ...(mentions && mentions.length > 0 ? { mentions } : {}) },
+    })
+    .json<ApiResponse<{ mention_deliveries?: Array<{ agent_name: string; status: string }> }>>()
+  return res.data ?? {}
 }
 
 /** 规划澄清作答：把 ui_blocks 的答案连同正文一起回给 PM。 */

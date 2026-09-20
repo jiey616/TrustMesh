@@ -109,8 +109,9 @@ export interface TaskListItem {
   updated_at: string
 }
 
+/** 🔴 后端真实字段是 agent_id（桌面端同形状）；name 仅用于展示 */
 export interface TodoAssignee {
-  id?: string
+  agent_id?: string
   name?: string
 }
 
@@ -163,15 +164,26 @@ export interface TaskDetail {
   title: string
   description: string
   status: TaskStatus
+  pm_agent?: { id: string; name: string }
   todos: Todo[]
   artifacts: TaskArtifact[]
   messages?: TaskMessage[]
   updated_at: string
 }
 
+/** @ 提及候选（PM + 各步骤执行员工，去重后） */
+export interface MentionCandidate {
+  id: string
+  name: string
+  roleLabel: string
+}
+
 export interface TaskEvent {
   id: string
   event_type: string
+  actor_type?: 'user' | 'agent' | 'system'
+  actor_id?: string
+  actor_name?: string
   content?: string
   todo_id?: string
   created_at?: string

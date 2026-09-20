@@ -170,8 +170,8 @@ export function usePendingFeed(limit = 8) {
 
 // ─── 写操作 ───
 
-function useTaskMutation<TVars>(
-  fn: (vars: TVars) => Promise<void>,
+function useTaskMutation<TVars, TData = void>(
+  fn: (vars: TVars) => Promise<TData>,
   invalidate: (vars: TVars) => string[][],
 ) {
   const qc = useQueryClient()
@@ -224,8 +224,11 @@ export function useAppendMessage() {
 }
 
 export function useAddComment() {
-  return useTaskMutation<TaskVars & { content: string }>(
-    ({ taskId, content }) => addTaskComment(taskId, content),
+  return useTaskMutation<
+    TaskVars & { content: string; mentions?: Array<{ agent_id: string }> },
+    { mention_deliveries?: Array<{ agent_name: string; status: string }> }
+  >(
+    ({ taskId, content, mentions }) => addTaskComment(taskId, content, mentions),
     ({ taskId }) => [['taskComments', taskId]],
   )
 }

@@ -4,12 +4,13 @@ import { PageScaffold } from '@/components/PageScaffold'
 import { StatusTag } from '@/components/StatusTag'
 import { ArtifactList } from '@/components/ArtifactList'
 import { CommentBar, CommentList } from '@/components/CommentBar'
+import { EventFeed } from '@/components/EventFeed'
 import { PendingCard } from '@/components/PendingCard'
 import { EmptyState } from '@/components/EmptyState'
 import { useTask, useTaskComments, useTaskEvents } from '@/hooks/useTasks'
 import { collectPendingItems } from '@/lib/pendingItems'
 import { splitArtifacts } from '@/lib/artifacts'
-import type { Todo } from '@/types'
+import type { MentionCandidate, Todo } from '@/types'
 
 const TODO_DOT: Record<string, string> = {
   done: 'var(--tm-ok)',
@@ -17,6 +18,23 @@ const TODO_DOT: Record<string, string> = {
   in_progress: 'var(--tm-brand)',
   failed: 'var(--tm-danger)',
   pending: '#d3d1c7',
+}
+
+/** @ 提及候选：PM + 各步骤执行员工，按 agent_id 去重（桌面端同口径） */
+function buildMentionCandidates(task: NonNullable<ReturnType<typeof useTask>['data']>): MentionCandidate[] {
+  const seen = new Set<string>()
+  const out: MentionCandidate[] = []
+  if (task.pm_agent?.id && !seen.has(task.pm_agent.id)) {
+    out.push({ id: task.pm_agent.id, name: task.pm_agent.name, roleLabel: 'PM 数字员工' })
+    seen.add(task.pm_agent.id)
+  }
+  for (const todo of task.todos) {
+    const agentId = todo.assignee?.agent_id
+    if (!agentId || seen.has(agentId)) continue
+    out.push({ id: agentId, name: todo.assignee?.name || '未命名员工', roleLabel: '执行数字员工' })
+    seen.add(agentId)
+  }
+  return out
 }
 
 export function TaskDetailPage() {
@@ -94,6 +112,13 @@ export function TaskDetailPage() {
             </>
           ) : null}
 
+          {events.length > 0 ? (
+            <>
+              <h3 className="mb-2 mt-5 text-[13px] text-[var(--tm-text-2)]">执行过程</h3>
+              <EventFeed events={events} />
+            </>
+          ) : null}
+
           <button
             type="button"
             onClick={() => setShowTodos((v) => !v)}
@@ -162,7 +187,7 @@ export function TaskDetailPage() {
           <div className="h-4" />
         </PageScaffold>
       </div>
-      <CommentBar taskId={task.id} />
+      <CommentBar taskId={task.id} candidates={buildMentionCandidates(task)} />
     </div>
   )
 }
