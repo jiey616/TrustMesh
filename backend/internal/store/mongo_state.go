@@ -79,6 +79,12 @@ func (s *Store) enableMongo(cfg config.Config, log *zap.Logger) error {
 	// 桌面端发行版（docs/desktop-app-update-plan-2026-09-18.md）：Mongo 即权威，
 	// 不进内存状态机（同 audit_logs），故 loadMongoState 不加载它。
 	s.mongoDesktopReleases = db.Collection("desktop_releases")
+	// 平台「使用引导」单篇全局文档（固定 _id="global"）：Mongo 即权威，
+	// 不进内存状态机，故 loadMongoState 不加载它。
+	s.mongoPlatformGuides = db.Collection("platform_guides")
+	// 移动端安装包（Android APK）单条 current 记录（固定 _id="current"）：
+	// Mongo 即权威，不进内存状态机，故 loadMongoState 不加载它。
+	s.mongoMobileAppReleases = db.Collection("mobile_app_releases")
 	// T2.6 通用幂等键集合：_id 唯一由 Mongo 隐式保证（E11000 = 命中），
 	// expire_at 上的 TTL 索引（expireAfterSeconds=0）由 ensureMongoIndexes 创建。
 	s.mongoIdempotencyKeys = db.Collection("idempotency_keys")

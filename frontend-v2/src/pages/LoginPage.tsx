@@ -9,6 +9,7 @@ import { ApiRequestError } from '@/types'
 import type { AuthLoginRequest, AuthSuccessData } from '@/types'
 import { AuthBrandHero } from '@/components/login/AuthBrandHero'
 import { AuthTechShell } from '@/components/login/AuthTechShell'
+import { ClientDownloadLinks } from '@/components/login/ClientDownloadLinks'
 import { AUTH_TECH_CSS } from '@/pages/authTechCss'
 
 const { Text } = Typography
@@ -81,14 +82,18 @@ export function LoginPage() {
   )
 
   const foot = (
-    <div className="tm-login-form-foot">
-      <Text type="secondary" style={{ fontSize: 13 }}>
-        还没有账号？
-      </Text>
-      <Link to="/register" className="tm-login-link">
-        立即注册
-      </Link>
-    </div>
+    <>
+      <div className="tm-login-form-foot">
+        <Text type="secondary" style={{ fontSize: 13 }}>
+          还没有账号？
+        </Text>
+        <Link to="/register" className="tm-login-link">
+          立即注册
+        </Link>
+      </div>
+      {/* 客户端获取入口：Web 显示桌面下载 + 移动端扫码；桌面端只显示移动端扫码（组件内判定） */}
+      <ClientDownloadLinks />
+    </>
   )
 
   return (

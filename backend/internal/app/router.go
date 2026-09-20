@@ -168,6 +168,15 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	desktopFeed.GET("/latest.yml", platformDesktopReleaseHandler.LatestYML)
 	desktopFeed.GET("/:filename", platformDesktopReleaseHandler.DownloadReleaseFile)
 
+	// 平台「使用引导」：单篇全局 HTML（登录用户读 /guide；管理在 /platform/guide）。
+	platformGuideHandler := handler.NewPlatformGuideHandler(s)
+
+	// 移动端安装包（Android APK）：公开 meta/下载（扫码即下，未登录场景）；
+	// 管理在 /platform/mobile-app（上传即覆盖）。
+	mobileAppReleaseHandler := handler.NewMobileAppReleaseHandler(s)
+	v1.GET("/mobile/app/latest", mobileAppReleaseHandler.Latest)
+	v1.GET("/mobile/app/download", mobileAppReleaseHandler.Download)
+
 	authed := v1.Group("")
 	authed.Use(middleware.RequireAuth(jwtManager))
 	// 多租户阶段 0：解析 X-Org-Id 并注入 Scope。存量客户端不带该头，
@@ -177,6 +186,9 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	// /api/v1/platform/*，业务路由一律 403；账号/会话类外壳能力（/users、/organizations、
 	// /notifications、/events、/llm-config）仍放行。未配置 env 时恒放行（见上文）。
 	authed.Use(authz.RequireBusinessAccount(platformSeparationStrict, platformAdminChecker))
+
+	// 平台「使用引导」：全员基础权限（登录即可读），无角色权限点。
+	authed.GET("/guide", platformGuideHandler.Get)
 
 	authed.POST("/agents", az.RequirePerm(authz.PermAgentManage), agentHandler.Create)
 	authed.GET("/agents", az.RequirePerm(authz.PermAgentView), agentHandler.List)
@@ -551,6 +563,18 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	plat.POST("/desktop-releases/:id/publish", authz.RequirePlatformPerm(authz.PermPlatformDesktopRelease, platformAdminChecker), platformDesktopReleaseHandler.Publish)
 	plat.POST("/desktop-releases/:id/rollback", authz.RequirePlatformPerm(authz.PermPlatformDesktopRelease, platformAdminChecker), platformDesktopReleaseHandler.Rollback)
 	plat.DELETE("/desktop-releases/:id", authz.RequirePlatformPerm(authz.PermPlatformDesktopRelease, platformAdminChecker), platformDesktopReleaseHandler.Delete)
+
+	// 平台「使用引导」（单篇全局 HTML）：上传即覆盖（PUT），删除幂等。
+	// 阅读端点在 authed 组的 GET /guide —— 引导是给全员看的，登录即可读。
+	plat.GET("/guide", authz.RequirePlatformPerm(authz.PermPlatformGuideMgr, platformAdminChecker), platformGuideHandler.PlatformGet)
+	plat.PUT("/guide", authz.RequirePlatformPerm(authz.PermPlatformGuideMgr, platformAdminChecker), platformGuideHandler.PlatformUpload)
+	plat.DELETE("/guide", authz.RequirePlatformPerm(authz.PermPlatformGuideMgr, platformAdminChecker), platformGuideHandler.PlatformDelete)
+
+	// 移动端安装包：上传即覆盖（POST），删除幂等。三个动作共用 platform.mobileapp.mgr。
+	// 公开 meta/下载在 v1 组的 /mobile/app/latest 与 /mobile/app/download。
+	plat.GET("/mobile-app", authz.RequirePlatformPerm(authz.PermPlatformMobileAppMgr, platformAdminChecker), mobileAppReleaseHandler.PlatformGet)
+	plat.POST("/mobile-app", authz.RequirePlatformPerm(authz.PermPlatformMobileAppMgr, platformAdminChecker), mobileAppReleaseHandler.PlatformUpload)
+	plat.DELETE("/mobile-app", authz.RequirePlatformPerm(authz.PermPlatformMobileAppMgr, platformAdminChecker), mobileAppReleaseHandler.PlatformDelete)
 
 	// 企业层 LLM 配置：handler 层已有 owner/admin 守卫，路由层维持基础权限。
 	orgLLM := authed.Group("/organizations/:id/llm-config")

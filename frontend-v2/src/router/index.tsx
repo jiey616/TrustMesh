@@ -26,6 +26,7 @@ import { OrgSettingsPage } from '@/pages/OrgSettingsPage'
 import { ProfilePage } from '@/pages/ProfilePage'
 import { OpsIncidentsPage } from '@/pages/OpsIncidentsPage'
 import { ForbiddenPage } from '@/pages/ForbiddenPage'
+import { GuidePage } from '@/pages/GuidePage'
 import { PlatformOrgsPage } from '@/pages/platform/PlatformOrgsPage'
 import { PlatformOrgDetailPage } from '@/pages/platform/PlatformOrgDetailPage'
 import { PlatformUsersPage } from '@/pages/platform/PlatformUsersPage'
@@ -61,6 +62,8 @@ export function AppRouter() {
         {/* 越权统一落地页：平台管理员与业务账号都可访问，故不套业务门禁 */}
         <Route path="/403" element={<ForbiddenPage />} />
         <Route path="/profile" element={<ProfilePage />} />
+        {/* 使用引导：登录基础权限（普通用户只读；平台管理员在同一页获得管理能力） */}
+        <Route path="/guide" element={<GuidePage />} />
 
         {/* 平台管理命名空间：只认平台管理员标记（企业角色一律 403） */}
         <Route

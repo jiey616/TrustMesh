@@ -412,6 +412,39 @@ export const AUTH_TECH_CSS = `
 }
 .tm-login-link:hover { color: var(--signal-hover) !important; }
 
+/* 登录页底部「获取客户端」入口（桌面下载 + 移动端扫码） */
+.tm-login-clients {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+.tm-login-client-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.tm-login-qr-panel {
+  text-align: center;
+}
+/* 二维码固定白底黑码：扫码器对比度优先于主题一致性 */
+.tm-login-qr-box {
+  display: inline-block;
+  padding: 8px;
+  background: #ffffff;
+  border-radius: 8px;
+  line-height: 0;
+}
+.tm-login-qr-caption {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
 /* ========== 动画 ========== */
 @keyframes tm-float {
   0%, 100% { transform: translate(0, 0) scale(1); }

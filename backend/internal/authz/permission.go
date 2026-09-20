@@ -69,6 +69,14 @@ const (
 	// /api/v1/platform/desktop-releases 的增删改查。
 	// 方案：docs/desktop-app-update-plan-2026-09-18.md。
 	PermPlatformDesktopRelease = "platform.desktop.release"
+	// PermPlatformGuideMgr 平台「使用引导」管理（上传/替换/删除全局 HTML 文档）：
+	// /api/v1/platform/guide 的增删改查。阅读（/api/v1/guide）是登录基础权限，
+	// 不设权限点。
+	PermPlatformGuideMgr = "platform.guide.mgr"
+	// PermPlatformMobileAppMgr 移动端安装包（Android APK）管理（上传覆盖/删除）：
+	// /api/v1/platform/mobile-app 的增删改查。下载（/api/v1/mobile/app/download）
+	// 是**公开**端点（扫码即下，不要求登录），不设权限点。
+	PermPlatformMobileAppMgr = "platform.mobileapp.mgr"
 )
 
 // AllOrgPermissions 返回企业层全部权限点（= owner 权限集）。
@@ -89,5 +97,7 @@ func PlatformPermissions() []string {
 		PermPlatformUserManage,
 		PermPlatformExtAppMgr,
 		PermPlatformDesktopRelease,
+		PermPlatformGuideMgr,
+		PermPlatformMobileAppMgr,
 	}
 }

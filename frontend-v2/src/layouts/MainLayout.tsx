@@ -28,6 +28,7 @@ import {
   AuditOutlined,
   BarChartOutlined,
   WindowsOutlined,
+  ReadOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
 import { useAuthStore } from '@/stores/authStore'
@@ -82,6 +83,7 @@ const menuIcons: Record<string, React.ReactNode> = {
   '/platform/desktop-releases': <WindowsOutlined />,
   '/platform/audit': <AuditOutlined />,
   '/platform/usage': <BarChartOutlined />,
+  '/guide': <ReadOutlined />,
 }
 
 /**

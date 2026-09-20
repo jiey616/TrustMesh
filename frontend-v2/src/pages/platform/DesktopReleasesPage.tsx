@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Alert,
   App,
   Button,
   Card,
   Empty,
+  Input,
   Modal,
   Popconfirm,
   Progress,
@@ -19,6 +21,7 @@ import {
   CloudUploadOutlined,
   DeleteOutlined,
   InboxOutlined,
+  MobileOutlined,
   RollbackOutlined,
   SendOutlined,
   WindowsOutlined,
@@ -31,6 +34,7 @@ import {
   useRollbackDesktopRelease,
   useUploadDesktopRelease,
 } from '@/hooks/useDesktopReleases'
+import { deleteMobileAppRelease, getMobileAppRelease, uploadMobileAppRelease } from '@/api/mobileApp'
 import { getApiBase } from '@/stores/serverConfigStore'
 import { validateUploadPair } from '@/lib/desktopRelease'
 import { ApiRequestError } from '@/types'
@@ -147,6 +151,129 @@ function FileSlot({ label, hint, accept, required, fileList, onChange, dragger }
       </div>
       {body}
     </div>
+  )
+}
+
+/**
+ * 移动端安装包（Android APK）管理卡片：单条 current 记录，上传即覆盖。
+ * 登录页「移动端扫码下载」二维码直接指向该包的公开下载地址（/mobile/app/download），
+ * 未上传时登录页自动隐藏扫码入口。
+ */
+function MobileAppCard() {
+  const { message } = App.useApp()
+  const queryClient = useQueryClient()
+  const [apkFiles, setApkFiles] = useState<UploadFile[]>([])
+  const [version, setVersion] = useState('')
+
+  const { data } = useQuery({ queryKey: ['mobile-app'], queryFn: getMobileAppRelease })
+  const current = data?.data.mobile_app
+
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ['mobile-app'] })
+  }
+
+  const upload = useMutation({
+    mutationFn: ({ file, ver }: { file: File; ver: string }) => uploadMobileAppRelease(file, ver),
+    onSuccess: (res) => {
+      message.success(`移动端安装包已更新到 ${res.data.mobile_app.version}，登录页扫码即刻生效`)
+      setApkFiles([])
+      setVersion('')
+      invalidate()
+    },
+    onError: (err: unknown) => {
+      message.error(err instanceof ApiRequestError ? err.message : '上传失败')
+    },
+  })
+
+  const remove = useMutation({
+    mutationFn: deleteMobileAppRelease,
+    onSuccess: () => {
+      message.success('已删除移动端安装包，登录页扫码入口将隐藏')
+      invalidate()
+    },
+    onError: (err: unknown) => {
+      message.error(err instanceof ApiRequestError ? err.message : '删除失败')
+    },
+  })
+
+  const handleUpload = () => {
+    const file = apkFiles[0]?.originFileObj
+    const ver = version.trim()
+    if (!file || !ver) {
+      message.warning('请选择 .apk 文件并填写版本号')
+      return
+    }
+    if (!file.name.includes(ver)) {
+      message.error(`文件名 ${file.name} 不含版本号 ${ver}，请确认没有选错包或填错版本`)
+      return
+    }
+    upload.mutate({ file, ver })
+  }
+
+  return (
+    <Card
+      bordered={false}
+      style={{ background: 'var(--surface)', border: '1px solid var(--line)', marginTop: 16 }}
+      title={
+        <span>
+          <MobileOutlined style={{ marginRight: 8 }} />
+          移动端安装包（Android）
+        </span>
+      }
+    >
+      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        {current ? (
+          <Text style={{ fontSize: 13 }}>
+            当前版本 <b>v{current.version}</b>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {' '}
+              · {current.file_name} · {formatBytes(current.size)} · 更新于 {formatTime(current.updated_at)}
+            </Text>
+          </Text>
+        ) : (
+          <Empty description="尚未上传移动端安装包，登录页不显示扫码下载入口" imageStyle={{ height: 48 }} />
+        )}
+        <Space wrap>
+          <Upload
+            accept=".apk"
+            maxCount={1}
+            fileList={apkFiles}
+            beforeUpload={() => false}
+            onChange={({ fileList: fl }) => setApkFiles(fl.slice(-1))}
+            onRemove={() => setApkFiles([])}
+          >
+            <Button icon={<CloudUploadOutlined />}>选择 .apk 安装包</Button>
+          </Upload>
+          <Input
+            placeholder="版本号，如 1.0.0"
+            value={version}
+            onChange={(e) => setVersion(e.target.value)}
+            style={{ width: 180 }}
+            allowClear
+          />
+          <Button type="primary" loading={upload.isPending} onClick={handleUpload}>
+            上传并覆盖
+          </Button>
+          <Popconfirm
+            title={`删除移动端安装包 v${current?.version ?? ''}？`}
+            description="会同时删除服务器上的 APK 文件，登录页扫码入口随之隐藏，不可撤销。"
+            okText="删除"
+            cancelText="取消"
+            okButtonProps={{ danger: true }}
+            onConfirm={() => remove.mutate()}
+            disabled={!current}
+          >
+            <Button danger icon={<DeleteOutlined />} disabled={!current} loading={remove.isPending}>
+              删除
+            </Button>
+          </Popconfirm>
+        </Space>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          版本号必须出现在文件名里（如 TrustMesh-1.0.0.apk）。上传后登录页「移动端扫码下载」二维码立即指向新包；
+          下载地址公开（扫码发生在未登录的手机浏览器里），APK 不含任何租户数据。
+        </Text>
+      </Space>
+    </Card>
   )
 }
 
@@ -452,6 +579,8 @@ export function DesktopReleasesPage() {
           locale={{ emptyText: <Empty description="还没有上传过桌面端安装包" /> }}
         />
       </Card>
+
+      <MobileAppCard />
 
       <Modal
         open={modalOpen}

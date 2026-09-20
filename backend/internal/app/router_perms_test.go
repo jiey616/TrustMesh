@@ -229,6 +229,19 @@ var routePermManifest = map[string]string{
 	"POST /api/v1/platform/desktop-releases/:id/rollback": authz.PermPlatformDesktopRelease,
 	"DELETE /api/v1/platform/desktop-releases/:id":        authz.PermPlatformDesktopRelease,
 
+	// 平台「使用引导」（单篇全局 HTML）。阅读（/guide）是登录基础权限；
+	// 管理三动作共用 platform.guide.mgr（上传即覆盖，破坏力同档）。
+	"GET /api/v1/guide":             permBase,
+	"GET /api/v1/platform/guide":    authz.PermPlatformGuideMgr,
+	"PUT /api/v1/platform/guide":    authz.PermPlatformGuideMgr,
+	"DELETE /api/v1/platform/guide": authz.PermPlatformGuideMgr,
+
+	// 移动端安装包（Android APK）。管理三动作共用 platform.mobileapp.mgr；
+	// 公开 meta/下载在下方 publicRoutes（扫码即下，未登录场景）。
+	"GET /api/v1/platform/mobile-app":    authz.PermPlatformMobileAppMgr,
+	"POST /api/v1/platform/mobile-app":   authz.PermPlatformMobileAppMgr,
+	"DELETE /api/v1/platform/mobile-app": authz.PermPlatformMobileAppMgr,
+
 	// ── LLM 助手与配置 ──
 	// 租户层 LLM 配置在 handler 层已有细粒度守卫（租户层 owner-admin / 个人层本人），
 	// 路由层记 base；平台层的三条已收敛到上面的平台命名空间。
@@ -264,6 +277,10 @@ var publicRoutes = map[string]bool{
 	// 要求鉴权会让「登出已久」的机器静默地永远升不了级（方案 §1 决策 6）。
 	"GET /api/v1/desktop/releases/feed/latest.yml": true,
 	"GET /api/v1/desktop/releases/feed/:filename":  true,
+	// 移动端安装包 meta/下载：**刻意公开** —— 扫码发生在未登录的手机浏览器里，
+	// 要求登录会把「下载安装包」变成不可能任务；APK 不含租户数据。
+	"GET /api/v1/mobile/app/latest":   true,
+	"GET /api/v1/mobile/app/download": true,
 }
 
 // conditionalRoutes 按需注册（当前仅 market 系列依赖 roles_index.json 存在），

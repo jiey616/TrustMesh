@@ -46,6 +46,14 @@ const (
 	AuditActionDesktopReleasePublish  = "desktop_release.publish"
 	AuditActionDesktopReleaseRollback = "desktop_release.rollback"
 	AuditActionDesktopReleaseDelete   = "desktop_release.delete"
+
+	// 平台「使用引导」（单篇全局 HTML）：上传（覆盖）/ 删除。
+	AuditActionPlatformGuideUpload = "platform_guide.upload"
+	AuditActionPlatformGuideDelete = "platform_guide.delete"
+
+	// 移动端安装包（Android APK）：上传（覆盖）/ 删除。
+	AuditActionMobileAppUpload = "mobile_app.upload"
+	AuditActionMobileAppDelete = "mobile_app.delete"
 )
 
 // 审计目标类型（target_type 枚举）。
@@ -61,6 +69,10 @@ const (
 	// AuditTargetDesktopRelease 的 target_id 用**版本号**而不是文档 ID：
 	// 排查时的检索键是「用户在界面上看到的 0.3.0」，不是内部 24 位随机串。
 	AuditTargetDesktopRelease = "desktop_release"
+	// AuditTargetPlatformGuide 全局单篇，target_id 固定为上传文件名。
+	AuditTargetPlatformGuide = "platform_guide"
+	// AuditTargetMobileApp 单条 current，target_id 用**版本号**（与桌面包同口径）。
+	AuditTargetMobileApp = "mobile_app"
 )
 
 // AuditLog 一条审计记录。
