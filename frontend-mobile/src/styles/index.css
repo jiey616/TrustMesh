@@ -1,0 +1,49 @@
+@import 'tailwindcss';
+
+/* ── 设计令牌（与桌面端品牌色保持一致） ───────────────────────────── */
+:root {
+  --tm-brand: #6d5ff5;
+  --tm-brand-soft: #eeedfe;
+  --tm-ok: #1d9e75;
+  --tm-warn: #ef9f27;
+  --tm-danger: #e24b4a;
+  --tm-text-1: #1f1f26;
+  --tm-text-2: #6b6b76;
+  --tm-text-3: #9a9aa4;
+  --tm-line: #ececf1;
+  --tm-surface: #f7f7fa;
+  --tm-radius-card: 14px;
+
+  /* antd-mobile 主题变量（组件库内部读这些） */
+  --adm-color-primary: var(--tm-brand);
+  --adm-color-success: var(--tm-ok);
+  --adm-color-warning: var(--tm-warn);
+  --adm-color-danger: var(--tm-danger);
+  --adm-font-size-main: 15px;
+  --adm-border-color: var(--tm-line);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--tm-text-1);
+  background: var(--tm-surface);
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', system-ui,
+    sans-serif;
+  /* 移动端禁用双击缩放带来的 300ms 延迟与误触 */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 安全区：配合 index.html 的 viewport-fit=cover */
+.tm-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.tm-safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}

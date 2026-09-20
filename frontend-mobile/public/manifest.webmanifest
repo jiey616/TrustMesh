@@ -1,0 +1,11 @@
+{
+  "name": "TrustMesh",
+  "short_name": "TrustMesh",
+  "description": "面向业务人员的 TrustMesh 移动端",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#6d5ff5",
+  "orientation": "portrait",
+  "lang": "zh-CN"
+}
