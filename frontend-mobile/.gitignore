@@ -11,3 +11,9 @@ _*.png
 _*.mjs
 _*.cjs
 _edgeprof/
+
+# 🔴 根 .gitignore 的 `*.png` 是为会话截图设的全局规则，会误伤安卓图标与资源——
+# 这里定向反白名单：仅 frontend-mobile 的工程 PNG 进库（探针 _*.png 仍被上面规则拦住）。
+!assets/**/*.png
+!src/assets/**/*.png
+!android/**/*.png

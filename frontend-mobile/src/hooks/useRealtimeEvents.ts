@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '@/stores/authStore'
 import { API_BASE } from '@/api/client'
+import { notifyTaskEvent } from '@/lib/native'
 
 // 照搬桌面端 hooks/useRealtimeEvents.ts（SSE → 失效 React Query → 页面实时刷新），
 // 四个已踩过的坑必须保留：CRLF 切帧、token 过期重连死循环防护、
@@ -69,6 +70,18 @@ export function useRealtimeEvents() {
     const handlePayload = (payload: Record<string, unknown>) => {
       const type = typeof payload.type === 'string' ? payload.type : ''
 
+      // P3.2：任务终态（完成/失败）弹本地通知（原生壳内；Web no-op）
+      if (type === 'task.updated') {
+        const task = (payload.payload as { task?: { id?: string; title?: string; status?: string } } | undefined)?.task
+        if (task?.id) {
+          if (task.status === 'done') {
+            notifyTaskEvent({ title: '任务已完成', body: task.title ? `「${task.title}」已完成` : '任务已完成', taskId: task.id })
+          } else if (task.status === 'failed') {
+            notifyTaskEvent({ title: '任务失败', body: task.title ? `「${task.title}」执行失败` : '任务执行失败', taskId: task.id })
+          }
+        }
+      }
+
       const inv = invalidationsFor(type)
       if (inv.length > 0) {
         for (const key of inv) void qc.invalidateQueries({ queryKey: key })
@@ -83,6 +96,15 @@ export function useRealtimeEvents() {
         const eventType = envelope?.event?.event_type
         const taskId = envelope?.task_id ?? envelope?.event?.task_id
         if (!eventType || !taskId) return
+        // P3.2：原生壳内把需要人关注的事件弹成本地通知（Web 上 no-op）
+        const todoTitle = (envelope?.event as { todo_title?: string } | undefined)?.todo_title ?? ''
+        if (eventType === 'todo_completed') {
+          notifyTaskEvent({ title: '步骤已完成', body: todoTitle ? `「${todoTitle}」已完成` : '有步骤已完成', taskId })
+        } else if (eventType === 'todo_ask_received') {
+          notifyTaskEvent({ title: '需要你确认', body: todoTitle ? `「${todoTitle}」需要你确认` : '有事项需要你确认', taskId })
+        } else if (eventType === 'todo_failed') {
+          notifyTaskEvent({ title: '执行失败', body: todoTitle ? `「${todoTitle}」执行失败` : '有步骤执行失败', taskId })
+        }
         if (eventType === 'todo_progress') {
           // 高频：只精准失效该任务的事件流，避免详情页轮询风暴
           void qc.invalidateQueries({ queryKey: ['taskEvents', taskId] })

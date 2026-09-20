@@ -1,6 +1,9 @@
+import { useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { App as CapApp } from '@capacitor/app'
+import { Capacitor } from '@capacitor/core'
 import { LoginPage } from '@/pages/LoginPage'
 import { TabLayout } from '@/components/TabLayout'
 import { HomePage } from '@/pages/HomePage'
@@ -27,7 +30,27 @@ function RequireAuth({ children }: { children: ReactNode }) {
   return <>{children}</>
 }
 
+/** 原生壳内把 Android 物理返回键接到路由历史；根页面才允许退出。Web 上 no-op。 */
+function useAndroidBackButton() {
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return
+    let cleanup: (() => void) | undefined
+    void CapApp.addListener('backButton', () => {
+      const hash = window.location.hash
+      if (!hash || hash === '#/' || hash === '#/login') {
+        void CapApp.exitApp()
+      } else {
+        window.history.back()
+      }
+    }).then((handle) => {
+      cleanup = () => void handle.remove()
+    })
+    return () => cleanup?.()
+  }, [])
+}
+
 export function App() {
+  useAndroidBackButton()
   return (
     <QueryClientProvider client={queryClient}>
       <HashRouter>

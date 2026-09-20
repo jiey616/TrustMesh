@@ -1,8 +1,18 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { unstableSetRender } from 'antd-mobile'
+import { Capacitor } from '@capacitor/core'
+import { StatusBar, Style } from '@capacitor/status-bar'
 import { App } from './App'
 import './styles/index.css'
+
+// 原生壳内：状态栏浅色样式（近白界面）；Web 上 no-op
+if (Capacitor.isNativePlatform()) {
+  void StatusBar.setStyle({ style: Style.Light })
+  void StatusBar.setBackgroundColor({ color: '#FAFAFA' }).catch(() => {
+    /* Android 15+ 部分机型不支持 setBackgroundColor */
+  })
+}
 
 // 🔴 antd-mobile v5 默认只兼容 React 16~18：React 19 调整了 react-dom 的导出方式，
 // 组件库内部的 ReactDOM.render 会变成 undefined（表现为 Toast/Popup 直接报错）。

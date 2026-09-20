@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  TrustMesh 移动端（Android）网络安全配置 —— 企业内部分发专用
+  ============================================================
+  背景：生产 https://175.27.135.91 使用**自签证书**（subject == issuer，
+  CN=175.27.135.91 / O=TrustMesh / C=CN，Basic Constraints CA:TRUE，
+  SAN = IP:175.27.135.91 + DNS:localhost，有效期至 2036-08-30）。
+  Android 系统层不允许 App 绕过证书校验，Android 7+ 也不再信任用户手动安装的 CA，
+  因此必须把该证书作为**信任锚**随包预置。
+
+  本配置要点：
+  1. base-config 保持系统信任库 + 明确禁止明文（cleartextTrafficPermitted="false"）。
+  2. 仅对目标 domain（生产 IP）**追加**我们预置的 CA。
+  3. 该 domain 下**不保留 system**：形成真正的 pinning，避免被任何公共 CA 中间人。
+     若将来换成正式证书（如 Let's Encrypt），必须同步改回 `src="system"`。
+
+  ⚠️ 证书一旦在服务器上重新签发，本文件与 prod_ca.crt 都必须同步更新，否则 App 直接连不上。
+-->
+<network-security-config>
+
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <domain-config>
+        <domain includeSubdomains="false">175.27.135.91</domain>
+        <trust-anchors>
+            <certificates src="@raw/prod_ca" />
+        </trust-anchors>
+    </domain-config>
+
+</network-security-config>

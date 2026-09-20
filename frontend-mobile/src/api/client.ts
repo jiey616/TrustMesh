@@ -1,7 +1,8 @@
 import ky from 'ky'
 import { useAuthStore } from '@/stores/authStore'
 import { useWorkspaceStore } from '@/stores/workspaceStore'
-import { resolveApiBase } from '@/lib/resolveApiBase'
+import { isNativeApp } from '@/lib/native'
+import { DEFAULT_NATIVE_API_BASE, resolveApiBase } from '@/lib/resolveApiBase'
 import { ApiRequestError } from '@/types'
 
 // 后端错误体统一为 { error: { code, message } }。
@@ -15,6 +16,7 @@ interface ApiErrorBody {
 export const API_BASE = resolveApiBase({
   override: useAuthStore.getState().apiBaseOverride,
   envBase: import.meta.env.VITE_API_BASE_URL,
+  nativeDefault: isNativeApp() ? DEFAULT_NATIVE_API_BASE : null,
 })
 
 /** 裸 ky（无 hooks）：仅用于 401 重放，避免重入 afterResponse 形成刷新风暴。 */

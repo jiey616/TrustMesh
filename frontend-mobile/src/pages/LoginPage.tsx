@@ -4,6 +4,7 @@ import { Button, Input, Toast } from 'antd-mobile'
 import { login } from '@/api/auth'
 import { useAuthStore } from '@/stores/authStore'
 import { apiBaseLabel } from '@/lib/apiBaseLabel'
+import logoSvg from '@/assets/logo.svg'
 
 /**
  * 登录页：1:1 复刻 frontend-v2 登录页（AuthTechShell 近白主题窄屏形态）。
@@ -69,6 +70,7 @@ export function LoginPage() {
 
   return (
     <div className="tm-safe-top flex min-h-full flex-col justify-center px-6">
+      <img src={logoSvg} alt="TrustMesh" width={52} height={52} className="mb-5" />
       <div className="font-mono text-[11px] tracking-[3px] text-[#7C3AED]">WELCOME BACK</div>
       <h1 className="mt-3 text-[30px] font-semibold leading-tight tracking-[-0.5px] text-[var(--tm-text-1)]">
         登录
