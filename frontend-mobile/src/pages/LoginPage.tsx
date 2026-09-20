@@ -70,14 +70,16 @@ export function LoginPage() {
 
   return (
     <div className="tm-safe-top flex min-h-full flex-col justify-center px-6">
-      <img src={logoSvg} alt="TrustMesh" width={52} height={52} className="mb-5" />
-      <div className="font-mono text-[11px] tracking-[3px] text-[#7C3AED]">WELCOME BACK</div>
-      <h1 className="mt-3 text-[30px] font-semibold leading-tight tracking-[-0.5px] text-[var(--tm-text-1)]">
-        登录
-      </h1>
-      <p className="mt-2 text-[14px] leading-relaxed text-[var(--tm-text-2)]">
-        连接你的工作空间，继续未完成的协作
-      </p>
+      <div className="flex flex-col items-center text-center">
+        <img src={logoSvg} alt="TrustMesh" width={52} height={52} className="mb-5" />
+        <div className="font-mono text-[11px] tracking-[3px] text-[#7C3AED]">WELCOME BACK</div>
+        <h1 className="mt-3 text-[30px] font-semibold leading-tight tracking-[-0.5px] text-[var(--tm-text-1)]">
+          登录
+        </h1>
+        <p className="mt-2 text-[14px] leading-relaxed text-[var(--tm-text-2)]">
+          连接你的工作空间，继续未完成的协作
+        </p>
+      </div>
 
       <div className="mt-8 space-y-4">
         <div className="flex h-[48px] items-center rounded-[10px] border border-[rgba(10,10,10,0.10)] bg-[#F4F4F5] px-4 transition-colors focus-within:border-[#7C3AED] focus-within:ring-[3px] focus-within:ring-[rgba(124,58,237,0.10)]">
