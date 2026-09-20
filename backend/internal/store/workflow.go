@@ -3413,39 +3413,10 @@ func (s *Store) BindStepOutput(sc Scope, projectID string, stepIndex int, req Bi
 		owner.Outputs = append(owner.Outputs, bound)
 	}
 	if displaced != "" && displaced != arts[artIdx].TransferID {
-		// 被顶掉的那个产物，以及同一 todo 下指向同一文件的重复副本，全都要降级。
-		// agent 重复上传会留下多条指向同一文件的冗余 artifact，只降级
-		// todo.Outputs 里记录的那一条不够 —— 兜底分支还会把副本列出来，
-		// pipeline 上新旧两份并存（2026-09-11 实测 TD_06 即如此）。
-		displacedFile := ""
-		for i := range arts {
-			if arts[i].TransferID == displaced {
-				displacedFile = arts[i].ProjectFileID
-				break
-			}
-		}
-		for i := range arts {
-			if arts[i].TransferID == arts[artIdx].TransferID || arts[i].Kind != model.ArtifactKindDeliverable {
-				continue
-			}
-			if arts[i].TodoID != owner.ID {
-				continue
-			}
-			sameFile := displacedFile != "" && arts[i].ProjectFileID == displacedFile
-			if !sameFile && arts[i].TransferID != displaced {
-				continue
-			}
-			// 还被别的输出位引用的产物不能动。
-			if outputArtifactReferenced(target, arts[i].TransferID) {
-				continue
-			}
-			arts[i].Kind = model.ArtifactKindProcess
-			arts[i].OutputName = ""
-			if err := s.persistArtifactUnsafe(&arts[i]); err != nil && s.log != nil {
-				s.log.Warn("failed to demote displaced artifact",
-					zap.String("transfer_id", arts[i].TransferID), zap.Error(err))
-			}
-		}
+		// 与 BindArtifactOutput 共用同一份降级口径（同一 todo 的同物理文件冗余副本、
+		// 仍被别的输出位引用的跳过、§4.1 的项目文件树标签同步）。此前这里是内联副本，
+		// 已知缺项目文件树同步 —— 双份口径迟早各说各话，收敛到一个函数。
+		s.demoteDisplacedDeliverableUnsafe(target, owner.ID, arts[artIdx].TransferID, displaced)
 	}
 	// P-03: 手工绑定是正向进展（与 BindArtifactOutput 同款语义）。
 	owner.LastActivityAt = &now

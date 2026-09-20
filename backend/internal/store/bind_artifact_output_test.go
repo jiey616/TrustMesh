@@ -195,3 +195,91 @@ func TestBindArtifactOutputWarnsOnMimeMismatchButStillBinds(t *testing.T) {
 		t.Fatalf("expected exactly 1 mime-mismatch warning, got %d (%v)", got, logs.All())
 	}
 }
+
+// TestBindArtifactOutputSyncsProjectFileTags §4.1：降级/绑定必须镜像到项目文件树，
+// 否则文件树与任务结果页各说各话 —— 被顶掉的文件旧到下次重传才丢「交付」标签，
+// 手工绑定的历史过程文件则永远显示「过程」。
+func TestBindArtifactOutputSyncsProjectFileTags(t *testing.T) {
+	s, userID, taskID := newBindArtifactFixture(t, []model.StepOutput{{Name: "剧名_分镜头脚本", MimeType: "xlsx"}})
+	s.taskArtifacts[taskID] = []model.TaskArtifact{
+		{TransferID: "tr-v1", TaskID: taskID, TodoID: "TD_02", ProjectFileID: "pf-v1",
+			FileName: "shotlist_v1.xlsx", MimeType: xlsxMime,
+			Kind: model.ArtifactKindDeliverable, OutputName: "剧名_分镜头脚本"},
+		{TransferID: "tr-v2", TaskID: taskID, TodoID: "TD_02", ProjectFileID: "pf-v2",
+			FileName: "shotlist_v2.xlsx", MimeType: xlsxMime, Kind: model.ArtifactKindProcess},
+	}
+	s.tasks[taskID].Todos[1].Outputs = []model.TodoOutput{
+		{OutputName: "剧名_分镜头脚本", ArtifactID: "tr-v1", FileRef: "pf-v1"},
+	}
+	s.projectFiles["pf-v1"] = &model.ProjectFile{ID: "pf-v1", ProjectID: "p1", TaskID: taskID,
+		FileName: "shotlist_v1.xlsx", Kind: model.ArtifactKindDeliverable, OutputName: "剧名_分镜头脚本", Version: 1}
+	s.projectFiles["pf-v2"] = &model.ProjectFile{ID: "pf-v2", ProjectID: "p1", TaskID: taskID,
+		FileName: "shotlist_v2.xlsx", Kind: model.ArtifactKindProcess, Version: 1}
+
+	if _, appErr := s.BindArtifactOutput(Scope{UserID: userID}, taskID, "TD_02", "tr-v2", "剧名_分镜头脚本"); appErr != nil {
+		t.Fatalf("bind: %v", appErr)
+	}
+	if pf := s.projectFiles["pf-v1"]; pf.Kind != model.ArtifactKindProcess || pf.OutputName != "" {
+		t.Fatalf("demoted artifact's project file = kind %q output %q, want process/empty", pf.Kind, pf.OutputName)
+	}
+	if pf := s.projectFiles["pf-v2"]; pf.Kind != model.ArtifactKindDeliverable || pf.OutputName != "剧名_分镜头脚本" {
+		t.Fatalf("bound artifact's project file = kind %q output %q, want deliverable promotion", pf.Kind, pf.OutputName)
+	}
+}
+
+// TestBindArtifactOutputKeepsProjectFileWhenStillReferenced 三条引用链任一活着 ⇒ 不清
+// 「交付」标签：同物理文件的 keeper（artifact 链）与 todo 输出位的 file_ref 都要保它。
+// 2026-09-20 生产回填实测：只查 artifact 链会把 keeper 的 file_ref 文件误降。
+func TestBindArtifactOutputKeepsProjectFileWhenStillReferenced(t *testing.T) {
+	s, userID, taskID := newBindArtifactFixture(t, []model.StepOutput{{Name: "剧名_分镜头脚本", MimeType: "xlsx"}})
+	s.taskArtifacts[taskID] = []model.TaskArtifact{
+		{TransferID: "tr-v1", TaskID: taskID, TodoID: "TD_02", ProjectFileID: "pf-shared",
+			FileName: "shotlist.xlsx", MimeType: xlsxMime,
+			Kind: model.ArtifactKindDeliverable, OutputName: "剧名_分镜头脚本"},
+		// 去重后的 keeper：与被顶掉的 artifact 共享同一个 ProjectFile。
+		{TransferID: "tr-v2", TaskID: taskID, TodoID: "TD_02", ProjectFileID: "pf-shared",
+			FileName: "shotlist.xlsx", MimeType: xlsxMime, Kind: model.ArtifactKindProcess},
+	}
+	s.tasks[taskID].Todos[1].Outputs = []model.TodoOutput{
+		{OutputName: "剧名_分镜头脚本", ArtifactID: "tr-v1", FileRef: "pf-shared"},
+	}
+	s.projectFiles["pf-shared"] = &model.ProjectFile{ID: "pf-shared", ProjectID: "p1", TaskID: taskID,
+		FileName: "shotlist.xlsx", Kind: model.ArtifactKindDeliverable, OutputName: "剧名_分镜头脚本", Version: 1}
+
+	if _, appErr := s.BindArtifactOutput(Scope{UserID: userID}, taskID, "TD_02", "tr-v2", "剧名_分镜头脚本"); appErr != nil {
+		t.Fatalf("bind: %v", appErr)
+	}
+	pf := s.projectFiles["pf-shared"]
+	if pf.Kind != model.ArtifactKindDeliverable || pf.OutputName != "剧名_分镜头脚本" {
+		t.Fatalf("shared project file must stay deliverable, got kind %q output %q", pf.Kind, pf.OutputName)
+	}
+}
+
+// TestBindArtifactOutputDemotesLegacyEmptyKind kind 为空但带 output_name 的存量记录
+// 按正向口径也是交付物，被覆盖时同样要降级 —— 写成 `kind != deliverable ⇒ 过程文件`
+// 会把 kind 字段出现之前的绑定永远留在交付位上。
+func TestBindArtifactOutputDemotesLegacyEmptyKind(t *testing.T) {
+	s, userID, taskID := newBindArtifactFixture(t, []model.StepOutput{{Name: "剧名_分镜头脚本", MimeType: "xlsx"}})
+	s.taskArtifacts[taskID] = []model.TaskArtifact{
+		{TransferID: "tr-legacy", TaskID: taskID, TodoID: "TD_02", ProjectFileID: "pf-lg",
+			FileName: "shotlist_old.xlsx", MimeType: xlsxMime, Kind: "", OutputName: "剧名_分镜头脚本"},
+		{TransferID: "tr-new", TaskID: taskID, TodoID: "TD_02", ProjectFileID: "pf-new",
+			FileName: "shotlist_new.xlsx", MimeType: xlsxMime, Kind: model.ArtifactKindProcess},
+	}
+	s.tasks[taskID].Todos[1].Outputs = []model.TodoOutput{
+		{OutputName: "剧名_分镜头脚本", ArtifactID: "tr-legacy", FileRef: "pf-lg"},
+	}
+	s.projectFiles["pf-lg"] = &model.ProjectFile{ID: "pf-lg", ProjectID: "p1", TaskID: taskID,
+		FileName: "shotlist_old.xlsx", Kind: model.ArtifactKindDeliverable, OutputName: "剧名_分镜头脚本", Version: 1}
+
+	if _, appErr := s.BindArtifactOutput(Scope{UserID: userID}, taskID, "TD_02", "tr-new", "剧名_分镜头脚本"); appErr != nil {
+		t.Fatalf("bind: %v", appErr)
+	}
+	a := s.taskArtifacts[taskID][0]
+	if a.Kind != model.ArtifactKindProcess || a.OutputName != "" {
+		t.Fatalf("legacy deliverable = kind %q output %q, want demoted", a.Kind, a.OutputName)
+	}
+	if pf := s.projectFiles["pf-lg"]; pf.Kind != model.ArtifactKindProcess || pf.OutputName != "" {
+		t.Fatalf("legacy project file = kind %q output %q, want demoted", pf.Kind, pf.OutputName)
+	}
+}

@@ -572,7 +572,9 @@ func (s *Store) demoteDisplacedDeliverableUnsafe(task *model.TaskDetail, todoID,
 		if arts[i].TransferID == keepTransferID {
 			continue
 		}
-		if arts[i].Kind != model.ArtifactKindDeliverable || arts[i].TodoID != todoID {
+		// 降级资格按「正向交付物」口径：kind=deliverable，或 kind 为空但带
+		// output_name 的存量数据（kind 字段晚于绑定出现，不能反向排除）。
+		if !artifactDeliverableLike(&arts[i]) || arts[i].TodoID != todoID {
 			continue
 		}
 		sameFile := displacedFile != "" && arts[i].ProjectFileID == displacedFile
@@ -592,6 +594,85 @@ func (s *Store) demoteDisplacedDeliverableUnsafe(task *model.TaskDetail, todoID,
 				zap.String("displaced_by", keepTransferID),
 				zap.Error(err))
 		}
+	}
+	// §4.1（2026-09-20）：artifact 降级必须镜像到项目文件树 —— 被顶掉的文件若还挂着
+	// 「交付」标签，文件树与任务结果页会各说各话，标签要旧到下次重传才收敛。
+	s.demoteLinkedProjectFileUnsafe(task, displacedFile)
+}
+
+// artifactDeliverableLike 是前端 isDeliverable 的后端镜像（正向判定）：
+// kind=deliverable，或 kind 为空但 output_name 非空的存量记录。写成
+// `kind != deliverable ⇒ 过程文件` 会把 kind 字段出现之前的绑定记录误降级。
+func artifactDeliverableLike(a *model.TaskArtifact) bool {
+	if a == nil {
+		return false
+	}
+	if a.Kind == model.ArtifactKindDeliverable {
+		return true
+	}
+	return a.Kind == "" && strings.TrimSpace(a.OutputName) != ""
+}
+
+// demoteLinkedProjectFileUnsafe 把 artifact 降级镜像到它指向的 ProjectFile，
+// 让文件树的「交付/过程」标签与任务结果页保持一致（§4.1，2026-09-20）。
+//
+// 只有当该文件在**两条引用链**上都不再有活绑定时才清标签：
+//  1. artifact.project_file_id（同物理文件的 keeper 冗余副本仍交付 ⇒ 保留）
+//  2. todo.outputs[].file_ref（输出位仍引用该文件 ⇒ 保留；流水线进度面板的
+//     steps outputs 引用即由此派生，保住这条链即保住全部下游取数）
+//
+// 2026-09-20 生产回填实测：只查 artifact 链会把 keeper 的 file_ref 文件误降。
+func (s *Store) demoteLinkedProjectFileUnsafe(task *model.TaskDetail, projectFileID string) {
+	if task == nil || projectFileID == "" {
+		return
+	}
+	for i := range s.taskArtifacts[task.ID] {
+		a := &s.taskArtifacts[task.ID][i]
+		if a.ProjectFileID == projectFileID && artifactDeliverableLike(a) {
+			return
+		}
+	}
+	for i := range task.Todos {
+		for _, o := range task.Todos[i].Outputs {
+			if o.FileRef == projectFileID {
+				return
+			}
+		}
+	}
+	pf, ok := s.projectFiles[projectFileID]
+	if !ok || (pf.Kind != model.ArtifactKindDeliverable && pf.OutputName == "") {
+		return
+	}
+	pf.Kind = model.ArtifactKindProcess
+	pf.OutputName = ""
+	// 与 BindStepOutput 的项目文件标签写点同款 warn-only 取舍（T2.3b）：只是清一个
+	// 归类标签，不涉及记录存在性；写失败短期分叉，下次成功写自动收敛。
+	if appErr := s.persistProjectFileUnsafe(pf); appErr != nil && s.log != nil {
+		s.log.Warn("failed to demote displaced project file",
+			zap.String("project_file_id", pf.ID),
+			zap.String("task_id", task.ID), zap.Error(appErr))
+	}
+}
+
+// promoteLinkedProjectFileUnsafe 是 demoteLinkedProjectFileUnsafe 的镜像：手工绑定
+// 成功后把 artifact 指向的 ProjectFile 标成交付物。没有这一步，一份历史上被建成
+// 「过程文件」的 artifact 在手工绑定后文件树仍显示「过程」（2026-09-20 生产回填的
+// 4 条反向失配皆源于此）。
+func (s *Store) promoteLinkedProjectFileUnsafe(artifact *model.TaskArtifact, outputName string) {
+	if artifact == nil || artifact.ProjectFileID == "" {
+		return
+	}
+	pf, ok := s.projectFiles[artifact.ProjectFileID]
+	if !ok || (pf.Kind == model.ArtifactKindDeliverable && pf.OutputName == outputName) {
+		return
+	}
+	pf.Kind = model.ArtifactKindDeliverable
+	pf.OutputName = outputName
+	// 同上：标签补写走 warn-only（T2.3b 对 BindStepOutput 标签写点的既定取舍）。
+	if appErr := s.persistProjectFileUnsafe(pf); appErr != nil && s.log != nil {
+		s.log.Warn("failed to persist project file kind",
+			zap.String("file_id", pf.ID),
+			zap.String("transfer_id", artifact.TransferID), zap.Error(appErr))
 	}
 }
 
@@ -906,6 +987,9 @@ func (s *Store) BindArtifactOutput(sc Scope, taskID, todoID, transferID, outputN
 	if displaced != "" && displaced != arts[artIdx].TransferID {
 		s.demoteDisplacedDeliverableUnsafe(task, ownerTodo.ID, arts[artIdx].TransferID, displaced)
 	}
+	// 文件树同步：手工绑定成功 ⇒ 该 artifact 指向的 ProjectFile 标成交付物
+	//（镜像 BindStepOutput 的标签写点；否则历史过程文件绑定后文件树仍显示「过程」）。
+	s.promoteLinkedProjectFileUnsafe(&arts[artIdx], outputName)
 	// P-03: a successful manual binding is productive progress too.
 	progressAt := time.Now().UTC()
 	ownerTodo.LastActivityAt = &progressAt
