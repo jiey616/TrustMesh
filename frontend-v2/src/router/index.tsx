@@ -27,6 +27,7 @@ import { ProfilePage } from '@/pages/ProfilePage'
 import { OpsIncidentsPage } from '@/pages/OpsIncidentsPage'
 import { ForbiddenPage } from '@/pages/ForbiddenPage'
 import { GuidePage } from '@/pages/GuidePage'
+import { ManualPage } from '@/pages/manual/ManualPage'
 import { PlatformOrgsPage } from '@/pages/platform/PlatformOrgsPage'
 import { PlatformOrgDetailPage } from '@/pages/platform/PlatformOrgDetailPage'
 import { PlatformUsersPage } from '@/pages/platform/PlatformUsersPage'
@@ -64,6 +65,8 @@ export function AppRouter() {
         <Route path="/profile" element={<ProfilePage />} />
         {/* 使用引导：登录基础权限（普通用户只读；平台管理员在同一页获得管理能力） */}
         <Route path="/guide" element={<GuidePage />} />
+        {/* 平台操作手册：同为登录基础权限；平台管理员在同一页获得结构化编辑能力 */}
+        <Route path="/manual" element={<ManualPage />} />
 
         {/* 平台管理命名空间：只认平台管理员标记（企业角色一律 403） */}
         <Route

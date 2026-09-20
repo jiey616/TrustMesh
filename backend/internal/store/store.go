@@ -203,6 +203,8 @@ type Store struct {
 	mongoDesktopReleases   *mongo.Collection // 桌面端发行版（Mongo 权威，不进内存状态机）
 	mongoMobileAppReleases *mongo.Collection // 移动端安装包单条 current 记录（Mongo 权威，不进内存状态机）
 	mongoPlatformGuides    *mongo.Collection // 平台「使用引导」单篇文档（Mongo 权威，不进内存状态机）
+	mongoPlatformManual    *mongo.Collection // 平台操作手册结构化单篇文档（Mongo 权威，不进内存状态机）
+	mongoManualImages      *mongo.Collection // 手册配图资源元数据（Mongo 权威，正文在文件存储）
 
 	// desktopReleasePathCache 把「公开 feed 文件名 → 磁盘路径」缓存在内存，
 	// 免掉每次下载的 Mongo 实时查询（发行版文件路径写入后不变，删除时全量失效）。

@@ -171,6 +171,13 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	// 平台「使用引导」：单篇全局 HTML（登录用户读 /guide；管理在 /platform/guide）。
 	platformGuideHandler := handler.NewPlatformGuideHandler(s)
 
+	// 平台操作手册（结构化）：登录用户读 /manual；管理在 /platform/manual。
+	// 与「使用引导」并存不冲突 —— 后者是整篇 HTML，本套是结构化数据 + 平台组件渲染。
+	platformManualHandler := handler.NewPlatformManualHandler(s)
+	// 配图公开只读（不含租户数据；正文里的 <img> 由所有登录用户加载，鉴权会逼出
+	// token-in-URL 之类的劣化方案）。写在 v1 组下，故不经 RequireAuth。
+	v1.GET("/manual/images/:id", platformManualHandler.ServeImage)
+
 	// 移动端安装包（Android APK）：公开 meta/下载（扫码即下，未登录场景）；
 	// 管理在 /platform/mobile-app（上传即覆盖）。
 	mobileAppReleaseHandler := handler.NewMobileAppReleaseHandler(s)
@@ -189,6 +196,7 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 
 	// 平台「使用引导」：全员基础权限（登录即可读），无角色权限点。
 	authed.GET("/guide", platformGuideHandler.Get)
+	authed.GET("/manual", platformManualHandler.Get)
 
 	authed.POST("/agents", az.RequirePerm(authz.PermAgentManage), agentHandler.Create)
 	authed.GET("/agents", az.RequirePerm(authz.PermAgentView), agentHandler.List)
@@ -569,6 +577,13 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	plat.GET("/guide", authz.RequirePlatformPerm(authz.PermPlatformGuideMgr, platformAdminChecker), platformGuideHandler.PlatformGet)
 	plat.PUT("/guide", authz.RequirePlatformPerm(authz.PermPlatformGuideMgr, platformAdminChecker), platformGuideHandler.PlatformUpload)
 	plat.DELETE("/guide", authz.RequirePlatformPerm(authz.PermPlatformGuideMgr, platformAdminChecker), platformGuideHandler.PlatformDelete)
+
+	// 平台操作手册（结构化）：读取/保存/传图共用 platform.guide.mgr —— 与「使用引导」
+	// 同属「平台内容维护」这一档权限，复用权限点不新开（管理员心智负担最小）。
+	// 阅读端点与配图在 authed/v1 组（见上）。
+	plat.GET("/manual", authz.RequirePlatformPerm(authz.PermPlatformGuideMgr, platformAdminChecker), platformManualHandler.PlatformGet)
+	plat.PUT("/manual", authz.RequirePlatformPerm(authz.PermPlatformGuideMgr, platformAdminChecker), platformManualHandler.PlatformSave)
+	plat.POST("/manual/images", authz.RequirePlatformPerm(authz.PermPlatformGuideMgr, platformAdminChecker), platformManualHandler.UploadImage)
 
 	// 移动端安装包：上传即覆盖（POST），删除幂等。三个动作共用 platform.mobileapp.mgr。
 	// 公开 meta/下载在 v1 组的 /mobile/app/latest 与 /mobile/app/download。

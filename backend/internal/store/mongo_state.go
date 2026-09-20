@@ -82,6 +82,10 @@ func (s *Store) enableMongo(cfg config.Config, log *zap.Logger) error {
 	// 平台「使用引导」单篇全局文档（固定 _id="global"）：Mongo 即权威，
 	// 不进内存状态机，故 loadMongoState 不加载它。
 	s.mongoPlatformGuides = db.Collection("platform_guides")
+	// 平台操作手册（结构化章节树，固定 _id="global"）+ 配图资源：
+	// Mongo 即权威，不进内存状态机，故 loadMongoState 不加载它们。
+	s.mongoPlatformManual = db.Collection("platform_manual")
+	s.mongoManualImages = db.Collection("manual_image_assets")
 	// 移动端安装包（Android APK）单条 current 记录（固定 _id="current"）：
 	// Mongo 即权威，不进内存状态机，故 loadMongoState 不加载它。
 	s.mongoMobileAppReleases = db.Collection("mobile_app_releases")

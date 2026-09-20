@@ -313,6 +313,9 @@ export function MainLayout() {
     ...(!isPlatformAdmin && (!permReady || ORG_DOMAIN_PERMS.some((p) => permissions.includes(p)))
       ? ([{ key: 'org-manage', icon: <CrownOutlined />, label: '组织管理' }] as const)
       : []),
+    // 平台操作手册：登录基础权限（后端 GET /manual 只要求登录），故所有账号可见。
+    // 放在「组织管理」与「设置」之间——它是「了解平台」类入口，与「我的账号」类入口（设置）分开。
+    { key: 'manual', icon: <BookOutlined />, label: '平台操作手册' },
     { type: 'divider' as const },
     // 账号资料与服务器地址属同一页（/profile），故只保留一个入口，统一叫「设置」。
     // 服务器配置在页内（且仅桌面端渲染），不再单列菜单项 —— Web 端固定同源 /api/v1/，本就无此项。
@@ -551,6 +554,7 @@ export function MainLayout() {
                 onClick: ({ key }) => {
                   if (key === 'logout') handleLogout()
                   else if (key === 'org-manage') navigate('/organizations')
+                  else if (key === 'manual') navigate('/manual')
                   else if (key === 'settings') navigate('/profile')
                   // 其余 key 为工作区 id（含 __personal__）
                   else handleOrgSwitch(key)

@@ -236,6 +236,13 @@ var routePermManifest = map[string]string{
 	"PUT /api/v1/platform/guide":    authz.PermPlatformGuideMgr,
 	"DELETE /api/v1/platform/guide": authz.PermPlatformGuideMgr,
 
+	// 平台操作手册（结构化）。阅读（/manual）是登录基础权限；管理三动作
+	// （读取/保存/传图）与「使用引导」共用 platform.guide.mgr。
+	"GET /api/v1/manual":                  permBase,
+	"GET /api/v1/platform/manual":         authz.PermPlatformGuideMgr,
+	"PUT /api/v1/platform/manual":         authz.PermPlatformGuideMgr,
+	"POST /api/v1/platform/manual/images": authz.PermPlatformGuideMgr,
+
 	// 移动端安装包（Android APK）。管理三动作共用 platform.mobileapp.mgr；
 	// 公开 meta/下载在下方 publicRoutes（扫码即下，未登录场景）。
 	"GET /api/v1/platform/mobile-app":    authz.PermPlatformMobileAppMgr,
@@ -281,6 +288,9 @@ var publicRoutes = map[string]bool{
 	// 要求登录会把「下载安装包」变成不可能任务；APK 不含租户数据。
 	"GET /api/v1/mobile/app/latest":   true,
 	"GET /api/v1/mobile/app/download": true,
+	// 手册配图：**刻意公开** —— 图片不含租户数据，且正文（含 img src）下发给
+	// 所有登录用户；若图片要鉴权，前端就得给每个 <img> 挂 token 或改 blob 加载。
+	"GET /api/v1/manual/images/:id": true,
 }
 
 // conditionalRoutes 按需注册（当前仅 market 系列依赖 roles_index.json 存在），
