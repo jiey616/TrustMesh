@@ -1,5 +1,7 @@
 import { Capacitor } from '@capacitor/core'
 import { LocalNotifications } from '@capacitor/local-notifications'
+import { Directory, Filesystem } from '@capacitor/filesystem'
+import { Share } from '@capacitor/share'
 
 /**
  * 原生壳（Android/iOS）专属能力桥：所有调用都先判 isNativePlatform()，
@@ -63,4 +65,37 @@ export function notifyTaskEvent(n: { title: string; body: string; taskId?: strin
   }).catch(() => {
     /* 通知失败不影响主流程 */
   })
+}
+
+/** blob → base64（去掉 dataURL 前缀，Filesystem.writeFile 只吃裸 base64） */
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onloadend = () => {
+      const r = String(reader.result ?? '')
+      const i = r.indexOf(',')
+      resolve(i >= 0 ? r.slice(i + 1) : r)
+    }
+    reader.onerror = () => reject(new Error('读取文件失败'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+/**
+ * 原生壳：把 blob 写入应用缓存并拉起系统分享/打开面板（用户可选 WPS/浏览器打开或保存）。
+ * 🔴 WebView 里 `<a download>` 与 `window.open(blob:)` 均无效，非原生返回 false 由调用方走 Web 分支。
+ */
+export async function shareBlobAsFile(blob: Blob, fileName: string): Promise<boolean> {
+  if (!isNativeApp()) return false
+  const base64 = await blobToBase64(blob)
+  const path = `deliverables/${Date.now()}-${fileName}`
+  await Filesystem.writeFile({
+    path,
+    data: base64,
+    directory: Directory.Cache,
+    recursive: true,
+  })
+  const { uri } = await Filesystem.getUri({ path, directory: Directory.Cache })
+  await Share.share({ title: fileName, url: uri, dialogTitle: '打开或保存文件' })
+  return true
 }

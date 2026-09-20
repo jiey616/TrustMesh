@@ -24,6 +24,11 @@ export function isPreviewableImage(a: TaskArtifact): boolean {
   return a.mime_type.startsWith('image/')
 }
 
+export function isVideo(a: TaskArtifact): boolean {
+  if (a.mime_type.startsWith('video/')) return true
+  return /\.(mp4|webm|mov|m4v)$/i.test(a.file_name)
+}
+
 export function isPdf(a: TaskArtifact): boolean {
   return a.mime_type === 'application/pdf' || a.file_name.toLowerCase().endsWith('.pdf')
 }
