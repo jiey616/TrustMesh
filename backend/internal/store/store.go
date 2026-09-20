@@ -203,10 +203,18 @@ type Store struct {
 	mongoDesktopReleases   *mongo.Collection // 桌面端发行版（Mongo 权威，不进内存状态机）
 	mongoMobileAppReleases *mongo.Collection // 移动端安装包单条 current 记录（Mongo 权威，不进内存状态机）
 	mongoPlatformGuides    *mongo.Collection // 平台「使用引导」单篇文档（Mongo 权威，不进内存状态机）
-	mongoIdempotencyKeys   *mongo.Collection // T2.6 通用幂等键集合（唯一键 _id + TTL 索引 expire_at）
-	mongoLeaderLeases      *mongo.Collection // T3.1 后台循环 leader 租约集合（单文档 CAS）
-	mongoTimeout           time.Duration
-	log                    *zap.Logger
+
+	// desktopReleasePathCache 把「公开 feed 文件名 → 磁盘路径」缓存在内存，
+	// 免掉每次下载的 Mongo 实时查询（发行版文件路径写入后不变，删除时全量失效）。
+	// 背景：Mongo 抖动时段 FindOne 误报 ErrNoDocuments → 下载 404 连环失败
+	// （2026-09-20 生产实况），高频下载路径不应依赖 Mongo 实时可用性。
+	// 条目 ≤ 2×DesktopReleaseRetain，全量失效零成本；零值可用。
+	desktopReleasePathCache sync.Map // fileName(string) → path(string)
+
+	mongoIdempotencyKeys *mongo.Collection // T2.6 通用幂等键集合（唯一键 _id + TTL 索引 expire_at）
+	mongoLeaderLeases    *mongo.Collection // T3.1 后台循环 leader 租约集合（单文档 CAS）
+	mongoTimeout         time.Duration
+	log                  *zap.Logger
 
 	// T3.1 leader 选举：门禁关闭（默认）时 isLeaderForBackground 恒 true，
 	// 三个有外部副作用的 ticker 行为与改造前逐字节一致。

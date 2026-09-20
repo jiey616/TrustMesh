@@ -18,14 +18,14 @@ import (
 // 与 desktop_releases 同策略：**Mongo 权威，不进全内存状态机** —— 平台级低频
 // 管理数据，无需 FlushPersistAll 镜像。固定 _id="global"，重复上传即覆盖。
 //
-// 上限取 2MiB：BSON 单文档 16MiB 是硬顶，但引导页是给人看的静态文档，
-// 2MiB 的 HTML 已经异常（通常是误传了带内联资源的工程产物），
-// 在入口拒绝比让它进库后拖慢每个用户的 /guide 拉取更合理。
+// 上限取 15MiB：BSON 单文档 16MiB 是硬顶（留出字段名/元数据的编码余量），
+// 自包含 HTML（内联图片走 data URI）实测轻松超 2MiB —— 旧值 2MiB 会卡住
+// 正常文档；仍保持「静态文档、有上限」的定位，入口拒绝优于进库后拖慢拉取。
 // ────────────────────────────────────────────────────────────────────────────
 
 const (
-	// platformGuideMaxUpload 是 HTML 正文的字节上限。
-	platformGuideMaxUpload = 2 << 20
+	// platformGuideMaxUpload 是 HTML 正文的字节上限（15MiB，BSON 16MiB 硬顶内）。
+	platformGuideMaxUpload = 15 << 20
 	// platformGuideHTMLSuffix 是允许的文件扩展名（需求约定：.html）。
 	platformGuideHTMLSuffix = ".html"
 )
@@ -55,7 +55,7 @@ func validateGuideUpload(fileName string, html []byte) *transport.AppError {
 	}
 	if len(html) > platformGuideMaxUpload {
 		return transport.Validation("document too large", map[string]any{
-			"file":      "must be at most 2MiB",
+			"file":      "must be at most 15MiB",
 			"max_bytes": platformGuideMaxUpload,
 		})
 	}

@@ -30,7 +30,8 @@ func NewPlatformGuideHandler(s *store.Store) *PlatformGuideHandler {
 
 // guideMaxUpload 与 store 侧 platformGuideMaxUpload 同值双保险：
 // 网关/MaxBytesReader 先拦一层，store 校验再兜一层（绕过 handler 直调时仍受保护）。
-const guideMaxUpload = 2 << 20
+// 15MiB：自包含 HTML（内联图片走 data URI）实测轻松超 2MiB；BSON 单文档 16MiB 硬顶内取值。
+const guideMaxUpload = 15 << 20
 
 // Get 面向登录用户的读取端点。从未上传过 → 200 + guide:null（前端空态，不算错误）。
 func (h *PlatformGuideHandler) Get(c *gin.Context) {

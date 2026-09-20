@@ -187,6 +187,10 @@ func (s *Store) GetDesktopRelease(id string) (*model.DesktopRelease, *transport.
 // ResolveDesktopReleaseFilePath 把公开 feed 的文件名解析为磁盘绝对路径。
 // 同时接受安装包名与 .blockmap 名（差分下载会直接来拉 blockmap）。
 // 按**库字段**匹配，不做任何路径拼接 —— 天然免疫目录穿越。
+//
+// 路径解析结果走内存缓存（desktopReleasePathCache）：发行版文件路径写入后
+// 不再变更，命中缓存的下载请求完全不依赖 Mongo 的实时可用性。缓存写时失效
+// （Create / SetBlockMap / Delete 全量清空；发布/回滚不改路径，无需失效）。
 func (s *Store) ResolveDesktopReleaseFilePath(name string) (string, *transport.AppError) {
 	if appErr := s.requireDesktopReleaseMongo(); appErr != nil {
 		return "", appErr
@@ -194,6 +198,9 @@ func (s *Store) ResolveDesktopReleaseFilePath(name string) (string, *transport.A
 	n := strings.TrimSpace(name)
 	if n == "" || strings.ContainsAny(n, `/\`) {
 		return "", transport.Validation("invalid file name", map[string]any{"filename": "invalid"})
+	}
+	if cached, ok := s.desktopReleasePathCache.Load(n); ok {
+		return cached.(string), nil
 	}
 	ctx, cancel := s.mongoContext()
 	defer cancel()
@@ -208,10 +215,25 @@ func (s *Store) ResolveDesktopReleaseFilePath(name string) (string, *transport.A
 		}
 		return "", mongoWriteError(err)
 	}
+	// 两个名字都进缓存：file_name → FilePath、block_map_file_name → BlockMapPath。
+	// BlockMapFileName 为空（未上传 blockmap 的 draft）时只缓存安装包名。
+	s.desktopReleasePathCache.Store(rel.FileName, rel.FilePath)
+	if rel.BlockMapFileName != "" {
+		s.desktopReleasePathCache.Store(rel.BlockMapFileName, rel.BlockMapPath)
+	}
 	if rel.FileName == n {
 		return rel.FilePath, nil
 	}
 	return rel.BlockMapPath, nil
+}
+
+// invalidateDesktopReleasePathCache 全量清空文件路径缓存。
+// 调用点 = 任何可能改变「文件名 → 路径」映射的写操作；条目极少，全清零成本。
+func (s *Store) invalidateDesktopReleasePathCache() {
+	s.desktopReleasePathCache.Range(func(key, _ any) bool {
+		s.desktopReleasePathCache.Delete(key)
+		return true
+	})
 }
 
 // CreateDesktopRelease 落一条 draft 发行版：**先写盘、后写库**（写库失败则回收文件）。
@@ -313,6 +335,7 @@ func (s *Store) CreateDesktopRelease(in model.DesktopReleaseInput, file io.Reade
 		}
 		return nil, mongoWriteError(err)
 	}
+	s.invalidateDesktopReleasePathCache()
 	return rel, nil
 }
 
@@ -390,6 +413,7 @@ func (s *Store) SetDesktopReleaseBlockMap(id string, r io.Reader) (*model.Deskto
 	rel.BlockMapFileName = bmName
 	rel.BlockMapPath = path
 	rel.BlockMapSize = fi.Size()
+	s.invalidateDesktopReleasePathCache()
 	return rel, nil
 }
 
@@ -457,6 +481,7 @@ func (s *Store) DeleteDesktopRelease(id string) *transport.AppError {
 	if _, err := s.mongoDesktopReleases.DeleteOne(ctx, bson.M{"_id": id}); err != nil {
 		return mongoWriteError(err)
 	}
+	s.invalidateDesktopReleasePathCache()
 	s.deleteDesktopReleaseFiles(rel)
 	return nil
 }

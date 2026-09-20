@@ -10,7 +10,7 @@ import { deletePlatformGuide, getGuide, getPlatformGuide, uploadPlatformGuide } 
 
 const { Text } = Typography
 
-const MAX_GUIDE_BYTES = 2 << 20
+const MAX_GUIDE_BYTES = 15 << 20
 
 function GuideFrame({ html }: { html: string }) {
   return (
@@ -103,7 +103,7 @@ function GuideAdmin() {
                   return Upload.LIST_IGNORE
                 }
                 if (file.size > MAX_GUIDE_BYTES) {
-                  message.error('文件超过 2MiB 上限')
+                  message.error('文件超过 15MiB 上限')
                   return Upload.LIST_IGNORE
                 }
                 setPendingFile(file)

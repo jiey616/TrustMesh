@@ -47,10 +47,10 @@ func TestValidateGuideUpload(t *testing.T) {
 	}
 }
 
-// 2MiB 恰好等于上限：边界值必须通过（off-by-one 是这类校验最典型的回归）。
+// 恰好等于上限的边界值必须通过（off-by-one 是这类校验最典型的回归）。
 func TestValidateGuideUploadExactBoundary(t *testing.T) {
 	exact := make([]byte, platformGuideMaxUpload)
 	if err := validateGuideUpload("guide.html", exact); err != nil {
-		t.Errorf("恰好 2MiB 应通过，实际 %v", err)
+		t.Errorf("恰好等于上限应通过，实际 %v", err)
 	}
 }

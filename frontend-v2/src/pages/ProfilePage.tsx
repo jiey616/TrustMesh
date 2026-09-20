@@ -18,6 +18,7 @@ import {
 } from 'antd'
 import {
   AppstoreOutlined,
+  BookOutlined,
   EditOutlined,
   LockOutlined,
   LogoutOutlined,
@@ -277,6 +278,27 @@ export function ProfilePage() {
           </Text>
         </Card>
       )}
+
+      {/* 「使用引导」入口原本是侧边栏独立菜单项，现统一收在本页（与组织管理/外部应用同策略）。
+          登录基础权限，所有用户可见；平台管理员进入后额外获得上传/删除能力。 */}
+      <Card
+        title="使用引导"
+        style={{ marginBottom: 16 }}
+        extra={
+          <Button
+            type="link"
+            icon={<BookOutlined />}
+            onClick={() => navigate('/guide')}
+            style={{ paddingInline: 4 }}
+          >
+            查看使用引导
+          </Button>
+        }
+      >
+        <Text type="secondary" style={{ fontSize: 13 }}>
+          平台使用说明与操作指引（全平台共享）。管理员可在引导页上传 / 更新 .html 文档。
+        </Text>
+      </Card>
 
       <EditProfileModal
         open={editOpen}

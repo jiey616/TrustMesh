@@ -29,8 +29,7 @@ export const BUSINESS_MENUS: MenuDef[] = [
   { key: '/knowledge', label: '知识库' },
   { key: '/market', label: '市场', perm: PERM.MARKET_BROWSE },
   { key: '/ops', label: '运维工单', perm: PERM.OPS_VIEW },
-  // 使用引导：登录即见（内容全平台共享，由平台管理员维护）。
-  { key: '/guide', label: '使用引导' },
+  // 「使用引导」不放侧边栏：入口收在「个人中心」（ProfilePage），路由 /guide 保留（深链可用）。
 ]
 
 /** 平台管理菜单组（仅平台管理员可见，设计文档 §3.2）。 */
@@ -42,8 +41,6 @@ export const PLATFORM_MENUS: MenuDef[] = [
   { key: '/platform/desktop-releases', label: '桌面端安装包' },
   { key: '/platform/audit', label: '审计日志' },
   { key: '/platform/usage', label: '用量总览' },
-  // 平台管理员也可见使用引导（登录基础权限；管理员在同一页获得上传/删除能力）。
-  { key: '/guide', label: '使用引导' },
 ]
 
 /** 企业可隐藏的菜单（菜单覆盖只能缩小可见性；API 鉴权不受影响）。 */
