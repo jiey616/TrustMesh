@@ -1,4 +1,4 @@
-import { getApiBase } from '@/stores/serverConfigStore'
+import { getApiBase, getEffectiveServerUrl, isElectronRuntime } from '@/stores/serverConfigStore'
 
 /**
  * 客户端下载 / 扫码入口（登录页用）。
@@ -28,14 +28,19 @@ export interface MobileAppReleaseInfo {
 }
 
 /**
- * 绝对 API 根地址（二维码必须绝对 URL）。
- * - 桌面端：getApiBase() 本就是绝对地址（serverUrl 拼装）。
- * - Web：getApiBase() 是同源相对路径 `/api/v1/`，补上当前 origin。
+ * 绝对 **origin**（不含 `/api/v1` 前缀）——仅供「后端已返回含前缀的路径」时拼装。
+ *
+ * 🔴 为什么不能复用 getApiBase()：`/mobile/app/latest` 返回的 `download_path`
+ *    本身**已含** `/api/v1`（后端 mobile_app_release.go 写死
+ *    `"/api/v1/mobile/app/download"`）。若再拼一次 getApiBase()，就会得到
+ *    `.../api/v1/api/v1/mobile/app/download` ⇒ 扫码 404（2026-09-21 事故）。
+ * ⇒ 这里只取 origin：
+ *   - 桌面端：getEffectiveServerUrl() = `https://175.27.135.91`（已剥掉 /api/v1）。
+ *   - Web：同源，用 window.location.origin。
  */
-export function getAbsoluteApiBase(): string {
-  const base = getApiBase()
-  if (/^https?:\/\//i.test(base)) return base
-  return `${window.location.origin}${base}`
+export function getAbsoluteOrigin(): string {
+  if (isElectronRuntime()) return getEffectiveServerUrl().replace(/\/+$/, '')
+  return window.location.origin.replace(/\/+$/, '')
 }
 
 /**
@@ -51,16 +56,33 @@ export async function fetchLatestMobileRelease(signal?: AbortSignal): Promise<Mo
     }
     const app = body.data?.mobile_app
     const version = app?.version?.trim()
-    const downloadPath = app?.download_path?.trim()
-    if (!version || !downloadPath) return null
+    const rawPath = app?.download_path?.trim()
+    if (!version || !rawPath) return null
     return {
       version,
       fileName: app?.file_name ?? `TrustMesh-${version}.apk`,
-      downloadUrl: `${getAbsoluteApiBase().replace(/\/+$/, '')}${downloadPath}`,
+      // 用 origin + 规范化后的 path 拼装（见 normalizeApiPath 注释）。
+      downloadUrl: `${getAbsoluteOrigin()}${normalizeApiPath(rawPath)}`,
     }
   } catch {
     return null
   }
+}
+
+/**
+ * 把后端给的下载路径规范化成「恰好一层 /api/v1 前缀」的绝对路径。
+ *
+ * 后端当前返回 `"/api/v1/mobile/app/download"`（含前缀）。这里做防御式处理：
+ * 若将来改成返回 `"/mobile/app/download"`（去掉前缀），本函数自动补上，
+ * 使 payload 形态无论哪种都拼出唯一正确地址，不再出现双前缀 / 缺前缀。
+ */
+export function normalizeApiPath(path: string): string {
+  let s = path.replace(/^\/+/, '')
+  // 反复剥离可能存在的多层 api/v1 前缀（幂等：无论 0/1/N 层都收敛到 1 层）
+  while (/^api\/v1\/+/i.test(s)) {
+    s = s.replace(/^api\/v1\/+/i, '')
+  }
+  return `/api/v1/${s}`
 }
 
 /** latest.yml 是受控 YAML 子集（所有值带双引号），按行正则提取即可，无需引 YAML 解析器。 */

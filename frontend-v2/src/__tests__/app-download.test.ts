@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it, vi } from 'vitest'
-import { fetchLatestMobileRelease, parseLatestYML } from '@/lib/appDownload'
+import { fetchLatestMobileRelease, normalizeApiPath, parseLatestYML } from '@/lib/appDownload'
 
 const API_BASE = '/api/v1/'
 
@@ -73,8 +73,19 @@ describe('fetchLatestMobileRelease', () => {
     const info = await fetchLatestMobileRelease()
     expect(info?.version).toBe('1.0.0')
     expect(info?.fileName).toBe('TrustMesh-1.0.0.apk')
-    expect(info?.downloadUrl).toMatch(/\/api\/v1\/mobile\/app\/download$/)
-    expect(info?.downloadUrl).toMatch(/^https?:\/\//)
+    // 🔴 必须断言「完整路径且只有一层 /api/v1」——2026-09-21 事故：
+    //    旧断言用 /\/api\/v1\/mobile\/app\/download$/（未锚定开头），
+    //    于是 `.../api/v1/api/v1/mobile/app/download` 也能“匹配”通过，
+    //    扫码 404 的 bug 就这样逃过了单测。这里改为锚定整个 path。
+    expect(info?.downloadUrl).toMatch(/^https?:\/\/[^/]+\/api\/v1\/mobile\/app\/download$/)
+    expect(info?.downloadUrl).not.toMatch(/\/api\/v1\/api\/v1\//)
+  })
+
+  it('normalizeApiPath：带/不带 /api/v1 前缀都收敛成唯一一层', () => {
+    expect(normalizeApiPath('/api/v1/mobile/app/download')).toBe('/api/v1/mobile/app/download')
+    expect(normalizeApiPath('/mobile/app/download')).toBe('/api/v1/mobile/app/download')
+    expect(normalizeApiPath('mobile/app/download')).toBe('/api/v1/mobile/app/download')
+    expect(normalizeApiPath('/api/v1/api/v1/mobile/app/download')).toBe('/api/v1/mobile/app/download')
   })
 
   it('无包（mobile_app:null）返回 null，扫码入口隐藏', async () => {
