@@ -214,6 +214,18 @@ export function useReopenTaskTodo() {
   })
 }
 
+// 失败任务的「重试/继续」：理由必填。与 useReopenTaskTodo 的区别是后端会**同时**
+// 把 todo 重开为 in_progress 并发出带 resume 标记的 todo.remind（执行侧据此继续干活，
+// 而不是只报进度），所以不需要用户再去评论区 @ 执行员工。
+export function useResumeTaskTodo() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ taskId, todoId, reason }: { taskId: string; todoId: string; reason: string }) =>
+      tasksApi.resumeTodo(taskId, todoId, reason),
+    onSuccess: (_res, { taskId }) => invalidateTask(qc, taskId),
+  })
+}
+
 // 把归档的过程文件提升为某工作流步骤的交付物。绑定成功后会触发任务详情刷新，
 // 让文件 badge 从「过程」变成「交付 · 输出位名」，并把它接到工作流图的下游步骤上。
 export function useBindArtifactOutput() {

@@ -77,6 +77,20 @@ func (s *Store) maybeCreateNotificationUnsafe(event *model.Event) {
 		}
 		category = "todo"
 		priority = "medium"
+	case "todo_resumed":
+		// 用户主动点了「重试/继续」：与 todo_reopened 的区别在于这是**人为的
+		// 重跑决定**（会消耗执行额度），所以带上理由，方便回看是谁为什么让它重跑的。
+		title = "任务已按用户要求重试"
+		if t, ok := event.Metadata["todo_title"].(string); ok && t != "" {
+			body = "「" + t + "」已重新开始执行"
+			if r, ok := event.Metadata["reason"].(string); ok && r != "" {
+				body += "（理由：" + r + "）"
+			}
+		} else {
+			body = stringOrDefault(event.Content, "任务已按用户要求重试")
+		}
+		category = "todo"
+		priority = "medium"
 	case "todo_dispatch_failed":
 		// P-01: automatic sequential dispatch failed (all retries exhausted).
 		// Surfaced because a silent dispatch failure used to stall the whole

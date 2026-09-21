@@ -214,8 +214,11 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
     }
   }
 
-  // 重开失败/已取消的 todo：两步内联确认（与删除同款交互）。重开不自动派发，
-  // 成功后提醒用户去任务评论 @ 执行员工唤醒其继续执行。
+  // 重开失败/已取消的 todo：两步内联确认（与删除同款交互）。
+  // 重开只把状态拉回 in_progress、**不通知执行者**（见 ReopenTodo 的注释：自动派发会
+  // 造成同一步骤并发执行）。所以这里的成功文案必须说清「还得做什么」，不能再说
+  // 「去评论区 @ 执行员工」——@ 走的是 chat 通道，在已失败的 todo 上没有在途 run，
+  // 只会让数字员工聊一轮。要真正让数字员工接着干，走 Composer 的「重试/继续」。
   const handleReopen = async (todoId: string) => {
     if (reopeningId !== todoId) {
       setReopeningId(todoId)
@@ -223,7 +226,7 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
     }
     try {
       await reopenTodo.mutateAsync({ taskId: task.id, todoId })
-      message.success('已重开，请到任务评论 @ 执行员工唤醒其继续执行')
+      message.success('已重开为进行中。如需数字员工继续执行，请在输入框处点「重试/继续」并填写理由')
       setReopeningId(null)
     } catch (err) {
       message.error(err instanceof Error ? err.message : '重开失败')
@@ -298,7 +301,11 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
         const isDeleting = deletingId === todo.id
         const isReopening = reopeningId === todo.id
         const canModify = todo.status === 'pending' && editable
-        const canReopen = todo.status === 'failed' || todo.status === 'canceled'
+        // 与后端 ResumeFailedTodo 的语义保持一致：只有 failed 才是「非自愿中断」，
+        // canceled 是人的主动决定（继续它等于推翻决定，应新建任务）。
+        // done 不在此列（已完成任务的追加工作是新需求）。后端 ReopenTodo 允许三态，
+        // 那是为了回补迟到产物，不是给用户点着玩的。
+        const canReopen = todo.status === 'failed'
         const isAwaitingReview = todo.review_status === 'pending_approval'
         const isRejected = todo.review_status === 'rejected'
 

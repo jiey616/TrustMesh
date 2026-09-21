@@ -136,6 +136,149 @@ func TestReopenTodoRespectsMaxReopens(t *testing.T) {
 	}
 }
 
+// ────────────────────── 「重试/继续」 (user-initiated resume) ──────────────────────
+//
+// ResumeFailedTodo is the primitive behind the failed-task 「重试/继续」 entry.
+// It is stricter than ReopenTodo on purpose: only `failed` qualifies (canceled
+// is a human decision to stop, done means finished) and the reason is
+// mandatory, because the reason is the only thing telling the agent what to
+// fix — and because resuming burns execution budget.
+
+func TestResumeFailedTodoRequiresReason(t *testing.T) {
+	for _, reason := range []string{"", " ", "x"} {
+		s, userID, _, taskID, todoID := seedTerminalTodoState(t)
+		_, _, appErr := s.ResumeFailedTodo(Scope{UserID: userID}, taskID, todoID, reason)
+		if appErr == nil {
+			t.Fatalf("resume with reason %q must be rejected", reason)
+		}
+		if appErr.Status != 422 {
+			t.Fatalf("reason %q: status=%d, want 422", reason, appErr.Status)
+		}
+		// A rejected resume must not have touched the todo.
+		if got := s.tasks[taskID].Todos[1].Status; got != "failed" {
+			t.Fatalf("rejected resume mutated the todo: status=%s", got)
+		}
+	}
+}
+
+func TestResumeFailedTodoOnlyAcceptsFailed(t *testing.T) {
+	// canceled / done / in_progress / pending are all out of scope for a retry.
+	for _, status := range []string{"canceled", "done", "in_progress", "pending"} {
+		s, userID, _, taskID, todoID := seedTerminalTodoState(t)
+		s.tasks[taskID].Todos[1].Status = status
+
+		_, _, appErr := s.ResumeFailedTodo(Scope{UserID: userID}, taskID, todoID, "这次一定改好")
+		if appErr == nil {
+			t.Fatalf("resuming a %s todo must be rejected", status)
+		}
+		if appErr.Status != 409 || appErr.Code != "TODO_NOT_FAILED" {
+			t.Fatalf("%s: status=%d code=%s, want 409 TODO_NOT_FAILED", status, appErr.Status, appErr.Code)
+		}
+	}
+}
+
+func TestResumeFailedTodoReopensAndRecordsReason(t *testing.T) {
+	s, userID, _, taskID, todoID := seedTerminalTodoState(t)
+
+	old := time.Now().UTC().Add(-3 * time.Hour)
+	td := &s.tasks[taskID].Todos[1]
+	td.FailedAt = &old
+	errMsg := "OAuth 回调地址错误"
+	td.Error = &errMsg
+	td.RemindCount = 3
+	td.RemindAt = &old
+
+	task, resumed, appErr := s.ResumeFailedTodo(Scope{UserID: userID}, taskID, todoID, "上次失败是因为 OAuth 回调地址写错了")
+	if appErr != nil {
+		t.Fatalf("resume failed todo: %v", appErr)
+	}
+
+	// in_progress is what unblocks the agent's later todo.complete
+	// (otherwise FailTodoByNode/CompleteTodoByNode reject with
+	// TODO_ALREADY_FAILED and the work is silently discarded).
+	if resumed.Status != "in_progress" {
+		t.Fatalf("resumed todo should be in_progress, got %s", resumed.Status)
+	}
+	if resumed.FailedAt != nil || resumed.Error != nil {
+		t.Fatalf("failure markers must be cleared: FailedAt=%v Error=%v", resumed.FailedAt, resumed.Error)
+	}
+	if resumed.ReopenCount != 1 {
+		t.Fatalf("ReopenCount = %d, want 1", resumed.ReopenCount)
+	}
+	if resumed.RemindCount != 0 || resumed.RemindAt != nil {
+		t.Fatalf("liveness counters must reset: RemindCount=%d RemindAt=%v", resumed.RemindCount, resumed.RemindAt)
+	}
+
+	// The task aggregate must stop reporting failed.
+	if task.Status == "failed" {
+		t.Fatalf("task should no longer be failed after its only failed todo resumed")
+	}
+	if got := s.tasks[taskID].Todos[1].Status; got != "in_progress" {
+		t.Fatalf("persisted todo status = %s, want in_progress", got)
+	}
+
+	var found bool
+	for _, ev := range s.taskEvents[taskID] {
+		if ev.EventType == "todo_resumed" {
+			found = true
+			if ev.Metadata["reason"] != "上次失败是因为 OAuth 回调地址写错了" {
+				t.Fatalf("event reason = %v", ev.Metadata["reason"])
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected todo_resumed event")
+	}
+}
+
+func TestResumeFailedTodoRespectsMaxReopens(t *testing.T) {
+	s, userID, _, taskID, todoID := seedTerminalTodoState(t)
+
+	for i := 0; i < maxReopens; i++ {
+		s.tasks[taskID].Todos[1].Status = "failed"
+		if _, _, appErr := s.ResumeFailedTodo(Scope{UserID: userID}, taskID, todoID, "再来一次"); appErr != nil {
+			t.Fatalf("resume #%d should succeed: %v", i+1, appErr)
+		}
+	}
+
+	s.tasks[taskID].Todos[1].Status = "failed"
+	_, _, appErr := s.ResumeFailedTodo(Scope{UserID: userID}, taskID, todoID, "再来一次")
+	if appErr == nil {
+		t.Fatalf("resume beyond the cap must be rejected")
+	}
+	if appErr.Status != 409 || appErr.Code != "TODO_REOPEN_LIMIT" {
+		t.Fatalf("status=%d code=%s, want 409 TODO_REOPEN_LIMIT", appErr.Status, appErr.Code)
+	}
+}
+
+// TestResumedTodoAcceptsCompletion is the regression guard for the whole point
+// of reopening before reminding: once resumed, the agent's todo.complete must
+// go through instead of being rejected with TODO_ALREADY_FAILED.
+func TestResumedTodoAcceptsCompletion(t *testing.T) {
+	s, userID, developer, taskID, todoID := seedTerminalTodoState(t)
+	s.tasks[taskID].Todos[1].Assignee = model.TodoAssignee{
+		AgentID: developer.ID,
+		Name:    "Developer",
+		NodeID:  "node-dev-001",
+	}
+
+	if _, _, appErr := s.ResumeFailedTodo(Scope{UserID: userID}, taskID, todoID, "重新执行"); appErr != nil {
+		t.Fatalf("resume: %v", appErr)
+	}
+
+	_, _, appErr := s.CompleteTodoByNode("node-dev-001", TodoCompleteInput{
+		TaskID: taskID,
+		TodoID: todoID,
+		Result: model.TodoResult{Summary: "重试后完成", Output: "已按理由修复"},
+	})
+	if appErr != nil {
+		t.Fatalf("todo.complete after resume must be accepted, got %v", appErr)
+	}
+	if got := s.tasks[taskID].Todos[1].Status; got != "done" {
+		t.Fatalf("todo status = %s, want done", got)
+	}
+}
+
 // TestLateArtifactMarksOrphan covers the "failed todo with a done deliverable"
 // case: the deliverable must be accepted and flagged, and must not be dropped
 // nor duplicated.

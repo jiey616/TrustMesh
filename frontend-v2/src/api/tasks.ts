@@ -113,6 +113,12 @@ export async function reopenTodo(taskId: string, todoId: string, reason?: string
   return apiClient.post(`tasks/${taskId}/todos/${todoId}/reopen`, { json: { reason: reason ?? '' } }).json<ApiResponse<TaskDetail>>()
 }
 
+// 失败任务的「重试/继续」：理由必填。后端会在同一次请求里把 todo 重开为 in_progress
+// 并发出带 resume 标记的 todo.remind，所以前端只需等这一个调用返回即可。
+export async function resumeTodo(taskId: string, todoId: string, reason: string) {
+  return apiClient.post(`tasks/${taskId}/todos/${todoId}/resume`, { json: { reason } }).json<ApiResponse<TaskDetail>>()
+}
+
 export async function reviewTodo(taskId: string, todoId: string, action: 'approve' | 'reject', reason?: string) {
   return apiClient.post(`tasks/${taskId}/todos/${todoId}/review`, { json: { action, reason: reason ?? '' } }).json<ApiResponse<TaskDetail>>()
 }

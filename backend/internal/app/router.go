@@ -407,6 +407,7 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	authed.POST("/tasks/:id/todos/:todoId/outputs/bind", taskHandler.BindTodoOutput)
 	authed.POST("/tasks/:id/todos/:todoId/review", taskHandler.ReviewTodo)
 	authed.POST("/tasks/:id/todos/:todoId/reopen", taskHandler.ReopenTodo)
+	authed.POST("/tasks/:id/todos/:todoId/resume", taskHandler.ResumeTodo)
 	authed.POST("/tasks/:id/todos/:todoId/answer", taskHandler.AnswerTodo)
 	authed.GET("/tasks/:id/comments", taskHandler.ListComments)
 	authed.POST("/tasks/:id/comments", taskHandler.AddComment)

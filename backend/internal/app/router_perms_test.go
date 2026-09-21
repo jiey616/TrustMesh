@@ -115,6 +115,7 @@ var routePermManifest = map[string]string{
 	"POST /api/v1/tasks/:id/todos/:todoId/outputs/bind":   permBase,
 	"POST /api/v1/tasks/:id/todos/:todoId/review":         permBase,
 	"POST /api/v1/tasks/:id/todos/:todoId/reopen":         permBase,
+	"POST /api/v1/tasks/:id/todos/:todoId/resume":         permBase,
 	"POST /api/v1/tasks/:id/todos/:todoId/answer":         permBase,
 	"GET /api/v1/tasks/:id/comments":                      permBase,
 	"POST /api/v1/tasks/:id/comments":                     permBase,

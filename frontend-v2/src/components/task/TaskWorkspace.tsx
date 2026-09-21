@@ -43,6 +43,7 @@ import { stripReplyPrefix } from '@/lib/text'
 import { TaskDescription } from '@/components/task/TaskDescription'
 import { TaskResultView } from '@/components/task/TaskResultView'
 import { TaskTodoPanel } from '@/components/task/TaskTodoPanel'
+import { TaskResumeEntry } from '@/components/task/TaskResumeEntry'
 import { UIBlockRenderer } from '@/components/task/UIBlockRenderer'
 import { PendingApprovalsDrawer } from '@/components/task/PendingApprovalsDrawer'
 import { collectPendingItems, findPendingUIBlocks } from '@/lib/pendingItems'
@@ -1107,6 +1108,10 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
 
   const isPlanningMode = task ? ['planning', 'review'].includes(task.status) : false
   const activeStatus = task && !['done', 'failed', 'canceled'].includes(task.status)
+  // 终态：不再接受评论输入（评论无法触发执行，留着输入框会误导用户）。
+  const isTerminal = task ? ['failed', 'canceled', 'done'].includes(task.status) : false
+  // 失败任务里所有 failed 的 todo —— 「重试/继续」的作用对象。
+  const failedTodos = useMemo(() => (task?.todos ?? []).filter((t) => t.status === 'failed'), [task])
   const mentionCandidates = useMemo(() => buildTaskMentionCandidates(task), [task])
   const todoStats = useMemo(() => {
     const todos = task?.todos ?? []
@@ -1360,7 +1365,10 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
         )}
       </div>
 
-      {/* Composer */}
+      {/* Composer —— 终态（failed/canceled/done）不再允许评论：
+          评论在终态任务上没有任何通道能触发执行（见 docs/design-comment-resume-failed-task.md），
+          继续保留输入框只会让用户以为发了评论就能让数字员工继续干活。
+          失败态额外给一个「重试/继续」入口，它会走平台的重开+带 resume 标记的 remind。 */}
       <div style={{ borderTop: '1px solid var(--line)', background: 'var(--surface)', padding: '10px 16px', flexShrink: 0 }}>
         {isPlanningMode ? (
           pendingUIBlocks ? (
@@ -1373,6 +1381,18 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
               pending={appendMessage.isPending}
               onSubmit={handleSendPlanning}
             />
+          )
+        ) : isTerminal ? (
+          taskId && failedTodos.length > 0 ? (
+            <TaskResumeEntry taskId={taskId} failedTodos={failedTodos} />
+          ) : (
+            <div style={{ maxWidth: 560, margin: '0 auto', textAlign: 'center' }}>
+              <Text type="secondary" style={{ fontSize: 13 }}>
+                {task?.status === 'done'
+                  ? '任务已完成，如需继续处理请新建任务'
+                  : '任务已终止，如需继续处理请新建任务'}
+              </Text>
+            </div>
           )
         ) : (
           <TaskCommentComposer

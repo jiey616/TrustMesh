@@ -1875,7 +1875,37 @@ func (h *WebhookHandler) RedispatchTodo(ctx context.Context, taskID, todoID stri
 // assignee is already working in. task.mention would go through the chat
 // session instead, leaving the agent with no todo context and causing it to
 // restart the workflow from step 1 after every reminder.
+//
+// The "user asked it to retry" variant is ResumeTodo below. Both share
+// remindTodo so the timeout wording and payload stay byte-identical.
 func (h *WebhookHandler) RemindTodo(ctx context.Context, taskID, todoID string) {
+	h.remindTodo(ctx, taskID, todoID, "", "")
+}
+
+// ResumeTodo nudges a todo's assignee because a USER explicitly asked it to
+// keep working (the "重试/继续" entry on a failed todo), rather than because it
+// went quiet.
+//
+// Why a separate payload shape: the exec skill (tm-task-exec) treats every
+// todo.remind as a liveness ping and only reports progress — it never resumes
+// work. So the platform marks this variant with `resume: true` + the user's
+// `reason`; the skill branches on that flag and treats it as an execution
+// instruction. `source` is always sent (timeout_remind / user_resume) for
+// observability, but the flag the skill keys on is `resume` alone, so an old
+// node that has not seen the new skill still degrades safely (it just reports
+// progress) instead of erroring on an unknown field.
+//
+// Callers MUST have reopened the todo first (store.ReopenTodo → in_progress):
+// a todo still in `failed` rejects the agent's todo.complete with
+// TODO_ALREADY_FAILED, which would silently discard its work.
+func (h *WebhookHandler) ResumeTodo(ctx context.Context, taskID, todoID, reason string) {
+	h.remindTodo(ctx, taskID, todoID, reason, "user_resume")
+}
+
+// remindTodo is the shared core of RemindTodo / ResumeTodo. reason == "" (or
+// source == "") means the plain timeout path, so the original payload and
+// wording are preserved byte-for-byte for existing callers.
+func (h *WebhookHandler) remindTodo(ctx context.Context, taskID, todoID, reason, source string) {
 	if h == nil || h.client == nil {
 		return
 	}
@@ -1892,16 +1922,35 @@ func (h *WebhookHandler) RemindTodo(ctx context.Context, taskID, todoID string) 
 		"project_id": task.ProjectID,
 		"todo_id":    todo.ID,
 		"todo_title": todo.Title,
+	}
+	meta := map[string]any{}
+	if source == "user_resume" {
+		reason = strings.TrimSpace(reason)
+		payload["resume"] = true
+		payload["reason"] = reason
+		payload["source"] = "user_resume"
+		payload["content"] = fmt.Sprintf(
+			"【用户要求继续执行】用户判定此前失败可修复，并已把该 Todo 重新打开（状态回到 in_progress），现要求你接着把《%s》做完。用户的理由：%s\n请以该理由为最高优先级输入，复用你已有的上下文继续推进，不要从头重跑已完成的部分；完成后按常规用 todo.complete 交付，若这次仍无法完成则用 todo.fail 说明原因。这不是超时催办，请不要只回报一句进度就停下。",
+			todo.Title, reason,
+		)
+		meta["source"] = "user_resume"
+	} else {
 		// 催办文案必须显式声明「不是新任务」：上下文压缩失败/失忆的执行者会把
 		// 提醒当成重新指派，从第 1 步重跑整个流程（山雨编剧实测案例）。
-		"content": fmt.Sprintf(
+		payload["content"] = fmt.Sprintf(
 			"【执行超时催办】这是对既有任务《%s》的进度催办，不是新任务指派，请勿重新开始执行流程，应基于已完成的工作继续推进。请立即用 todo.progress 回报当前进度与剩余工作；若实际工作已完成，请直接用 todo.complete 交付；确实无法继续才用 todo.fail 说明原因。多次提醒无响应平台将判定任务失败。",
 			todo.Title,
-		),
+		)
+		meta["source"] = "timeout_remind"
 	}
-	if _, err := h.client.Publish(ctx, todo.Assignee.NodeID, "todo.remind", payload, task.ID, map[string]any{"source": "timeout_remind"}); err != nil {
+	if _, err := h.client.Publish(ctx, todo.Assignee.NodeID, "todo.remind", payload, task.ID, meta); err != nil {
 		if h.log != nil {
-			h.log.Warn("timeout reminder failed", zap.String("task_id", task.ID), zap.String("todo_id", todo.ID), zap.String("target_node", todo.Assignee.NodeID), zap.Error(err))
+			h.log.Warn("todo.remind publish failed",
+				zap.String("task_id", task.ID),
+				zap.String("todo_id", todo.ID),
+				zap.String("target_node", todo.Assignee.NodeID),
+				zap.String("source", meta["source"].(string)),
+				zap.Error(err))
 		}
 	}
 }

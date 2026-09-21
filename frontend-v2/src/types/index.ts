@@ -493,6 +493,8 @@ export type EventType =
   | 'todo_timeout'
   | 'todo_timeout_remind'
   | 'todo_timeout_failed'
+  | 'todo_reopened'
+  | 'todo_resumed'
   | 'todo_updated'
   | 'todo_appended'
   | 'todo_removed'
@@ -751,6 +753,9 @@ export interface Todo {
   review_reason?: string | null
   rework_count?: number
   max_reworks?: number
+  /** 终态 todo 被拉回 in_progress 的次数（上限 maxReopens = 3）。「重试/继续」会 +1。 */
+  reopen_count?: number
+  max_reopens?: number
   questions?: TodoQuestion[]
   /** agent 上传并认领了输出位的文件，下游步骤据此取「上一个流程的输出文件」 */
   outputs?: TodoOutput[]

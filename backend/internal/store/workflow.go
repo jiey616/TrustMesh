@@ -2388,6 +2388,104 @@ func (s *Store) ReopenTodo(sc Scope, taskID, todoID, reason string) (*model.Task
 	return s.copyTaskWithArtifactsUnsafe(task), todo, nil
 }
 
+// resumeReasonMinLen is the shortest acceptable user-supplied reason for
+// resuming a failed todo. The reason is mandatory (not decorative like
+// ReopenTodo's): it is the only signal telling the agent WHAT to fix, and a
+// resume that burns execution budget without a stated reason is exactly the
+// uncontrolled-retry hazard this feature has to avoid.
+const resumeReasonMinLen = 2
+
+// ResumeFailedTodo is the "重试/继续" primitive: a user asks a FAILED todo to
+// run again, stating why.
+//
+// It differs from ReopenTodo in two deliberate ways:
+//
+//  1. Only `failed` is accepted. `canceled` is a human decision and reviving it
+//     is a new task, not a retry; `done` means the work is finished and any
+//     follow-up is new scope. ReopenTodo accepts all three because it exists to
+//     reconcile late artifacts — a different problem.
+//  2. The reason is REQUIRED, not descriptive.
+//
+// Like ReopenTodo it restores in_progress and deliberately does NOT dispatch:
+// the caller pairs it with a resume-marked todo.remind. It returns the todo so
+// the caller can publish only after this write has succeeded, which is what
+// keeps the agent's later todo.complete from hitting TODO_ALREADY_FAILED.
+func (s *Store) ResumeFailedTodo(sc Scope, taskID, todoID, reason string) (*model.TaskDetail, *model.Todo, *transport.AppError) {
+	taskID = strings.TrimSpace(taskID)
+	todoID = strings.TrimSpace(todoID)
+	reason = strings.TrimSpace(reason)
+	if taskID == "" || todoID == "" {
+		return nil, nil, transport.Validation("invalid resume payload", map[string]any{"task_id": "required", "todo_id": "required"})
+	}
+	if len([]rune(reason)) < resumeReasonMinLen {
+		return nil, nil, transport.Validation("resume reason is required", map[string]any{"reason": fmt.Sprintf("at least %d characters", resumeReasonMinLen)})
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	task, ok := s.tasks[taskID]
+	if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
+		return nil, nil, transport.NotFound("task not found")
+	}
+	if appErr := s.ensureTaskProjectActiveUnsafe(task); appErr != nil {
+		return nil, nil, appErr
+	}
+	idx := findTodoIndex(task, todoID)
+	if idx < 0 {
+		return nil, nil, transport.NotFound("todo not found")
+	}
+	todo := &task.Todos[idx]
+	if todo.Status != "failed" {
+		// Deliberately narrow: see the doc comment. The frontend only offers the
+		// resume entry on failed todos, so this is a server-side backstop, not
+		// the primary UX gate.
+		return nil, nil, transport.Conflict("TODO_NOT_FAILED",
+			fmt.Sprintf("only a failed todo can be resumed, got %s", todo.Status))
+	}
+	if todo.ReopenCount >= maxReopens {
+		return nil, nil, transport.Conflict("TODO_REOPEN_LIMIT",
+			fmt.Sprintf("todo already reopened %d times (limit %d)", todo.ReopenCount, maxReopens))
+	}
+
+	now := time.Now().UTC()
+	todo.Status = "in_progress"
+	todo.CompletedAt = nil
+	todo.FailedAt = nil
+	todo.CanceledAt = nil
+	todo.Error = nil
+	todo.CancelReason = nil
+	// Fresh timeout budget, same rationale as ReopenTodo: otherwise reminders
+	// accumulated while the todo sat failed would fail it again immediately.
+	todo.RemindCount = 0
+	todo.RemindAt = nil
+	todo.LastProgressAt = &now
+	todo.LastActivityAt = &now
+	todo.ReopenCount++
+
+	userName := ""
+	if u, ok := s.users[sc.UserID]; ok {
+		userName = u.Name
+	}
+	msg := fmt.Sprintf("todo resumed by user (%s): %s", reason, todo.Title)
+	s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, todo.ID, "user", sc.UserID, userName,
+		"todo_resumed", &msg, map[string]any{
+			"todo_id":      todo.ID,
+			"task_title":   task.Title,
+			"todo_title":   todo.Title,
+			"reason":       reason,
+			"reopen_count": todo.ReopenCount,
+		}, now)
+
+	s.updateTaskStatusUnsafe(task, now)
+	if err := s.persistTaskBundleUnsafe(task.ID); err != nil {
+		return nil, nil, mongoWriteError(err)
+	}
+	_ = s.persistTaskEventsUnsafe(task.ID)
+	s.publishTaskUnsafe(task.ID)
+	return s.copyTaskWithArtifactsUnsafe(task), todo, nil
+}
+
 // triggerReworkUnsafe cascades a rework request starting at the audited todo
 // auditedIdx. The audited todo and every todo from that point onward (for
 // agent reviews this includes the reviewer itself) are reset to pending,

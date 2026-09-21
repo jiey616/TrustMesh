@@ -395,6 +395,58 @@ func (h *TaskHandler) ReviewTodo(c *gin.Context) {
 	transport.WriteData(c, http.StatusOK, task)
 }
 
+// ResumeTodo is the "重试/继续" entry for a FAILED todo: the user states why it
+// should run again, and the platform (1) reopens the todo and (2) nudges the
+// assignee with a resume-marked reminder.
+//
+// The two steps must happen in this order, in this one request:
+//
+//	ReopenTodo first — it flips the todo to in_progress, which is what stops the
+//	agent's eventual todo.complete from being rejected with
+//	TODO_ALREADY_FAILED. Publishing the reminder without reopening would let the
+//	agent do the work and then have it silently discarded.
+//	Remind second, and only if the reopen succeeded — the reminder IS the
+//	dispatch. A reminder that arrives for a todo still in `failed` is worse than
+//	no reminder at all.
+//
+// Only `failed` is resumable (enforced in the store): canceled is a human
+// decision to stop, and done means the work is finished.
+func (h *TaskHandler) ResumeTodo(c *gin.Context) {
+	sc, ok := currentScope(c)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil && !errors.Is(err, io.EOF) {
+		transport.WriteError(c, transport.Validation("invalid resume payload", map[string]any{"body": "malformed json"}))
+		return
+	}
+	reason := strings.TrimSpace(body.Reason)
+	if reason == "" {
+		transport.WriteError(c, transport.Validation("resume reason is required", map[string]any{"reason": "required"}))
+		return
+	}
+
+	taskID := c.Param("id")
+	todoID := c.Param("todoId")
+	task, _, appErr := h.store.ResumeFailedTodo(sc, taskID, todoID, reason)
+	if appErr != nil {
+		transport.WriteError(c, appErr)
+		return
+	}
+
+	// Reopen is committed; the reminder is the dispatch step. A publish failure
+	// must not fail the request — the todo is already in_progress and the user
+	// can re-trigger or dispatch manually.
+	if h.webhookHandler != nil {
+		h.webhookHandler.ResumeTodo(c.Request.Context(), taskID, todoID, reason)
+	}
+	transport.WriteData(c, http.StatusOK, task)
+}
+
 // ReopenTodo brings a finished todo back to in_progress. Used when an agent
 // actually delivered after its todo had already been failed (late artifact,
 // slow retry, ...) - before this the platform had no way back from a terminal
