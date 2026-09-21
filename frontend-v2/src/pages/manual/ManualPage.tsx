@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Button, Empty, Input, Skeleton, Spin, Typography } from 'antd'
 import { EditOutlined, SearchOutlined } from '@ant-design/icons'
 import { usePermStore } from '@/stores/permStore'
-import { getManual } from '@/api/platformManual'
+import { getManual, getPlatformManual } from '@/api/platformManual'
 import type { ManualSection, PlatformManual } from '@/api/platformManual'
 import { ManualBlockView } from './ManualBlocks'
 import { ManualEditor } from './ManualEditor'
@@ -228,8 +228,15 @@ export function ManualPage() {
   const [editing, setEditing] = useState(false)
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['manual'],
-    queryFn: getManual,
+    // 🔴 读接口必须按身份分流（与写路径 savePlatformManual 保持一致）：
+    //   - 普通用户 → GET /manual          （登录基础权限）
+    //   - 平台管理员 → GET /platform/manual（platform.guide.mgr）
+    // 不能对所有人一律用 /manual：本部署设了 PLATFORM_ADMIN_EMAILS（种子模式），
+    // 后端会**刻意反向拒绝**平台管理员访问业务 API，返回
+    //   403 "platform admin account cannot access business APIs; use /api/v1/platform/*"
+    // ⇒ 管理员一进页面就 403 → 误显示「手册加载失败」（实为权限模型的预期行为）。
+    queryKey: ['manual', isPlatformAdmin ? 'platform' : 'user'],
+    queryFn: isPlatformAdmin ? getPlatformManual : getManual,
     enabled: permReady,
   })
 

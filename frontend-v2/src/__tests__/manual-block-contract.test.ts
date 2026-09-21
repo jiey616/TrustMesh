@@ -63,3 +63,41 @@ describe('平台操作手册 · 前端类型声明', () => {
     expect(members).toEqual(backendTypes())
   })
 })
+
+// 平台操作手册 · 读接口按身份分流（2026-09-21 线上事故回归）
+//
+// 🔴 事故经过：ManualPage 曾对所有身份一律用 getManual（GET /manual）。
+// 本部署设了 PLATFORM_ADMIN_EMAILS（种子模式），后端**刻意反向拒绝**平台管理员
+// 访问业务 API：
+//   403 "platform admin account cannot access business APIs; use /api/v1/platform/*"
+// ⇒ 平台管理员一打开手册页就 403，界面显示「手册加载失败」。
+// 后端两条路都是对的（防越权设计），错在前端没分流。
+//
+// 反向也要守住：普通用户走 /platform/manual 会 403 "platform admin only"。
+describe('平台操作手册 · 读接口按身份分流', () => {
+  const PAGE = path.join(ROOT, 'frontend-v2/src/pages/manual/ManualPage.tsx')
+
+  it('ManualPage 同时持有两个读接口，并按 isPlatformAdmin 分流', () => {
+    const src = fs.readFileSync(PAGE, 'utf8')
+    // 两个函数都要 import
+    expect(src).toMatch(/import\s*\{[^}]*\bgetManual\b[^}]*\}\s*from\s*'@\/api\/platformManual'/)
+    expect(src).toMatch(/import\s*\{[^}]*\bgetPlatformManual\b[^}]*\}\s*from\s*'@\/api\/platformManual'/)
+    // queryFn 必须是三元分流，不能写死成 getManual
+    expect(src).toMatch(/queryFn:\s*isPlatformAdmin\s*\?\s*getPlatformManual\s*:\s*getManual/)
+  })
+
+  it('queryKey 必须带身份区分，避免两个身份共用缓存', () => {
+    const src = fs.readFileSync(PAGE, 'utf8')
+    expect(src).toMatch(/queryKey:\s*\['manual',\s*isPlatformAdmin\s*\?\s*'platform'\s*:\s*'user'\]/)
+  })
+
+  it('两个读接口的 URL 前缀截然不同（getManual=业务、getPlatformManual=platform）', () => {
+    const src = fs.readFileSync(path.join(ROOT, 'frontend-v2/src/api/platformManual.ts'), 'utf8')
+    const g = src.match(/export async function getManual\(\)[\s\S]*?\n\}/)
+    const gp = src.match(/export async function getPlatformManual\(\)[\s\S]*?\n\}/)
+    if (!g || !gp) throw new Error('manual api fns not found')
+    expect(g[0]).toMatch(/\.get\('manual'\)/)
+    expect(g[0]).not.toMatch(/\.get\('platform\/manual'\)/)
+    expect(gp[0]).toMatch(/\.get\('platform\/manual'\)/)
+  })
+})
