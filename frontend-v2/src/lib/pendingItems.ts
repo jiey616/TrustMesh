@@ -57,6 +57,20 @@ export interface PendingUIBlocks {
   blocks: UIBlock[]
 }
 
+/**
+ * 可以内联到 composer 条（顶掉评论框）的待确认类型。
+ *
+ * 只收「一眼就能决策」的两类：
+ *   - `todo_ask`    一个问题 + 选项，本质就是「回复」；
+ *   - `todo_review` 通过 / 退回，依据是卡片里已给出的结果摘要。
+ * 刻意**不含** `plan_review`（要通读整份方案才能点头）与 `plan_clarify`（多字段表单）：
+ * 把它们塞进一条固定高度的输入条，会诱导用户没看内容就点通过，比多一次点击危险得多。
+ */
+export function isInlineConfirmable(item: PendingItem | null | undefined): boolean {
+  if (!item) return false
+  return item.kind === 'todo_ask' || item.kind === 'todo_review'
+}
+
 /** 抽屉里的分组标题，按处理优先级排：先把卡住流程的放前面 */
 export const pendingKindLabel: Record<PendingKind, string> = {
   plan_clarify: '规划澄清',

@@ -25,15 +25,29 @@ export interface PendingDraft {
 interface PendingState {
   open: boolean
   drafts: Record<string, PendingDraft>
+  /**
+   * 正在提交的条目 id。
+   *
+   * 🔴 动机：同一条待确认事项**可能同时被两处渲染** —— composer 条的内联确认控件
+   * （`TaskPendingConfirmEntry`）和待确认抽屉。两者是各自独立的组件实例，各自的
+   * `mutation.isPending` 互不可见，用户在内联处提交后若立刻打开抽屉再点一次，就会
+   * 发出两次请求（同一问答/同一审核）。这里用一个共享的在途标记把两边串起来。
+   *
+   * 用 `beginSubmit` 做原子的「测试并置位」，返回 false 表示别处已在提交。
+   */
+  submitting: Record<string, true>
   setOpen: (open: boolean) => void
   setDraft: (id: string, patch: Partial<PendingDraft>) => void
   clearDraft: (id: string) => void
   getDraft: (id: string) => PendingDraft
+  beginSubmit: (id: string) => boolean
+  endSubmit: (id: string) => void
 }
 
 export const usePendingStore = create<PendingState>()((set, get) => ({
   open: false,
   drafts: {},
+  submitting: {},
   setOpen: (open) => set({ open }),
   setDraft: (id, patch) =>
     set((s) => ({ drafts: { ...s.drafts, [id]: { ...s.drafts[id], ...patch } } })),
@@ -45,4 +59,16 @@ export const usePendingStore = create<PendingState>()((set, get) => ({
       return { drafts: next }
     }),
   getDraft: (id) => get().drafts[id] ?? {},
+  beginSubmit: (id) => {
+    if (get().submitting[id]) return false
+    set((s) => ({ submitting: { ...s.submitting, [id]: true } }))
+    return true
+  },
+  endSubmit: (id) =>
+    set((s) => {
+      if (!s.submitting[id]) return s
+      const next = { ...s.submitting }
+      delete next[id]
+      return { submitting: next }
+    }),
 }))

@@ -46,7 +46,8 @@ import { TaskTodoPanel } from '@/components/task/TaskTodoPanel'
 import { TaskResumeEntry } from '@/components/task/TaskResumeEntry'
 import { UIBlockRenderer } from '@/components/task/UIBlockRenderer'
 import { PendingApprovalsDrawer } from '@/components/task/PendingApprovalsDrawer'
-import { collectPendingItems, findPendingUIBlocks } from '@/lib/pendingItems'
+import { TaskPendingConfirmEntry } from '@/components/task/TaskPendingConfirmEntry'
+import { collectPendingItems, findPendingUIBlocks, isInlineConfirmable } from '@/lib/pendingItems'
 import { usePendingStore } from '@/stores/pendingStore'
 import { usePermStore } from '@/stores/permStore'
 import { PERM } from '@/lib/perms'
@@ -1123,6 +1124,18 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
   const pendingUIBlocks = useMemo(() => findPendingUIBlocks(task)?.blocks ?? null, [task])
   const pendingItems = useMemo(() => collectPendingItems(task, events), [task, events])
 
+  /**
+   * 恰好一项、且属于「一眼能决策」的类型时，把它内联到 composer 条（顶掉评论框）。
+   * 其余情况（≥2 项，或 plan_review / plan_clarify）返回 null —— 回退到评论框 + 待确认抽屉：
+   *   - ≥2 项：输入条只能容纳一项，硬塞会丢掉其余待办；
+   *   - plan_review / plan_clarify：需要先通读内容才能决策，内联会诱导「没看就点通过」。
+   * 判定与抽屉共用 collectPendingItems，避免两处漂移。
+   */
+  const inlinePending = useMemo(
+    () => (pendingItems.length === 1 && isInlineConfirmable(pendingItems[0]) ? pendingItems[0] : null),
+    [pendingItems],
+  )
+
   const pendingOpen = usePendingStore((s) => s.open)
   const setPendingOpen = usePendingStore((s) => s.setOpen)
 
@@ -1394,6 +1407,10 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
               </Text>
             </div>
           )
+        ) : inlinePending ? (
+          /* 非终态但有一项待确认：评论框在此处「看着能用、实际推不动任务」（评论走 chat 通道，
+             既不回答问题也不批准审核），所以让可操作的确认控件顶掉它。 */
+          <TaskPendingConfirmEntry item={inlinePending} />
         ) : (
           <TaskCommentComposer
             candidates={mentionCandidates}

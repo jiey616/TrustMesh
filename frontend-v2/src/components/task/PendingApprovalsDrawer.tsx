@@ -182,22 +182,31 @@ function PlanReviewCard({ item }: { item: PlanReviewPending }) {
  *  3. 执行提问：agent 中途 ask，等人回答
  * ------------------------------------------------------------------ */
 
-function TodoAskCard({ item }: { item: TodoAskPending }) {
+/** 执行提问卡：抽屉与 composer 条内联控件共用同一份实现（避免两份逻辑漂移）。 */
+export function TodoAskCard({ item }: { item: TodoAskPending }) {
   const { message } = App.useApp()
   const answerTodo = useAnswerTodo()
   const draft = usePendingStore((s) => s.drafts[item.id])
   const setDraft = usePendingStore((s) => s.setDraft)
   const clearDraft = usePendingStore((s) => s.clearDraft)
+  const isSubmitting = usePendingStore((s) => !!s.submitting[item.id])
+  const beginSubmit = usePendingStore((s) => s.beginSubmit)
+  const endSubmit = usePendingStore((s) => s.endSubmit)
   const value = draft?.text ?? ''
+  const busy = answerTodo.isPending || isSubmitting
 
   const submit = async (answer: string) => {
-    if (!answer.trim() || answerTodo.isPending) return
+    if (!answer.trim() || busy) return
+    // 内联控件与抽屉可能同时渲染本条目 ⇒ 用共享在途标记防重复提交。
+    if (!beginSubmit(item.id)) return
     try {
       await answerTodo.mutateAsync({ taskId: item.taskId, todoId: item.todoId, questionId: item.questionId, answer: answer.trim() })
       clearDraft(item.id)
       message.success('已提交，数字员工继续执行中')
     } catch (err) {
       message.error(err instanceof Error ? err.message : '提交失败，请稍后重试')
+    } finally {
+      endSubmit(item.id)
     }
   }
 
@@ -213,7 +222,7 @@ function TodoAskCard({ item }: { item: TodoAskPending }) {
             <Button
               key={opt}
               size="small"
-              disabled={answerTodo.isPending}
+              disabled={busy}
               onClick={() => void submit(opt)}
               style={{ borderColor: 'rgba(109,95,245,0.5)', background: 'rgba(109,95,245,0.1)', color: 'var(--signal-hover)' }}
             >
@@ -229,7 +238,7 @@ function TodoAskCard({ item }: { item: TodoAskPending }) {
           value={value}
           onChange={(e) => setDraft(item.id, { text: e.target.value })}
           onPressEnter={() => void submit(value)}
-          disabled={answerTodo.isPending}
+          disabled={busy}
           placeholder={item.options.length > 0 ? '或输入自定义回答…' : '输入你的回答…'}
           style={{ flex: 1 }}
         />
@@ -237,8 +246,8 @@ function TodoAskCard({ item }: { item: TodoAskPending }) {
           size="small"
           type="primary"
           icon={<SendOutlined />}
-          disabled={!value.trim() || answerTodo.isPending}
-          loading={answerTodo.isPending}
+          disabled={!value.trim() || busy}
+          loading={busy}
           onClick={() => void submit(value)}
         >
           提交
@@ -252,22 +261,31 @@ function TodoAskCard({ item }: { item: TodoAskPending }) {
  *  4. 成果审核：todo 做完，等人通过或退回重做
  * ------------------------------------------------------------------ */
 
-function TodoReviewCard({ item }: { item: TodoReviewPending }) {
+/** 成果审核卡：抽屉与 composer 条内联控件共用同一份实现（避免两份逻辑漂移）。 */
+export function TodoReviewCard({ item }: { item: TodoReviewPending }) {
   const { message } = App.useApp()
   const reviewTodo = useReviewTodo()
   const draft = usePendingStore((s) => s.drafts[item.id])
   const setDraft = usePendingStore((s) => s.setDraft)
   const clearDraft = usePendingStore((s) => s.clearDraft)
+  const isSubmitting = usePendingStore((s) => !!s.submitting[item.id])
+  const beginSubmit = usePendingStore((s) => s.beginSubmit)
+  const endSubmit = usePendingStore((s) => s.endSubmit)
   const reason = draft?.text ?? ''
   const rejecting = draft?.rejecting ?? false
+  const busy = reviewTodo.isPending || isSubmitting
 
   const handleApprove = async () => {
+    if (busy) return
+    if (!beginSubmit(item.id)) return
     try {
       await reviewTodo.mutateAsync({ taskId: item.taskId, todoId: item.todoId, action: 'approve' })
       clearDraft(item.id)
       message.success(`${item.todoTitle} 已确认通过`)
     } catch (err) {
       message.error(err instanceof Error ? err.message : '操作失败，请稍后重试')
+    } finally {
+      endSubmit(item.id)
     }
   }
 
@@ -276,12 +294,16 @@ function TodoReviewCard({ item }: { item: TodoReviewPending }) {
       message.error('请填写退回原因')
       return
     }
+    if (busy) return
+    if (!beginSubmit(item.id)) return
     try {
       await reviewTodo.mutateAsync({ taskId: item.taskId, todoId: item.todoId, action: 'reject', reason: reason.trim() })
       clearDraft(item.id)
       message.success(`${item.todoTitle} 已退回上一个 Todo 重做`)
     } catch (err) {
       message.error(err instanceof Error ? err.message : '操作失败，请稍后重试')
+    } finally {
+      endSubmit(item.id)
     }
   }
 
@@ -315,16 +337,17 @@ function TodoReviewCard({ item }: { item: TodoReviewPending }) {
             placeholder="请填写退回原因（必填）"
             rows={3}
             style={inputStyle}
+            disabled={busy}
             autoFocus
           />
           <div style={{ display: 'flex', gap: 8 }}>
-            <Button size="small" danger type="primary" loading={reviewTodo.isPending} onClick={() => void handleReject()}>确认退回</Button>
+            <Button size="small" danger type="primary" disabled={busy} loading={busy} onClick={() => void handleReject()}>确认退回</Button>
             <Button size="small" onClick={() => setDraft(item.id, { rejecting: false, text: '' })}>取消</Button>
           </div>
         </div>
       ) : (
         <div style={{ display: 'flex', gap: 8 }}>
-          <Button size="small" type="primary" style={{ background: 'var(--success)', borderColor: 'var(--success)' }} loading={reviewTodo.isPending} onClick={() => void handleApprove()}>
+          <Button size="small" type="primary" disabled={busy} style={{ background: 'var(--success)', borderColor: 'var(--success)' }} loading={busy} onClick={() => void handleApprove()}>
             通过
           </Button>
           <Button size="small" style={{ borderColor: 'var(--error)', color: 'var(--error)' }} onClick={() => setDraft(item.id, { rejecting: true })}>

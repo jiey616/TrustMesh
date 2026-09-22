@@ -7,7 +7,7 @@ description: >
 compatibility: Requires clawsynapse CLI
 metadata:
   author: TrustMesh
-  version: "2.5"
+  version: "2.7"
 allowed-tools:
   - "Bash(clawsynapse:*)"
 ---
@@ -27,7 +27,9 @@ allowed-tools:
   3. 开始执行，发送 todo.progress 报告进度
   4. 执行过程中，把 task.comment 当作默认工作日志持续发送
   5. 在关键里程碑发送 todo.progress
-  3.5. 任何时刻收到 todo.remind → 跳转到「汇报进度」动作（发 1 条 todo.progress / task.comment 说明当前状态），不进入新阶段、不重置流程、不绕过 todo.ask 确认
+  3.5. 任何时刻收到 todo.remind → **先看 payload 有没有 `resume: true`**（见「todo.remind」一节的两种分支）：
+       普通提醒 → 跳转到「汇报进度」动作（发 1 条 todo.progress / task.comment 说明当前状态），不进入新阶段、不重置流程、不绕过 todo.ask 确认；
+       用户发起的「重试/继续」→ payload 含 `resume: true` + `reason`，按「继续执行」分支处理（不要只回一句进度就停）
   6. 成功前先发总结 comment，再发送 todo.complete（附带结果）
   7. 失败前先发总结 comment，再发送 todo.fail（附带错误原因）
 ```
@@ -53,7 +55,7 @@ allowed-tools:
 2.3. **每个明显步骤后继续发 comment。** 读完代码、执行命令、完成一段修改、做出关键判断、发现风险、遇到阻塞后，都应补 1 条 `task.comment`。
 2.4. **拿不准要不要发时，默认发。** 宁可多发简短 comment，也不要长时间沉默。
 2.5. **`todo.progress` 负责里程碑，`task.comment` 负责过程。** `todo.progress` 用于状态推进；`task.comment` 用于记录观察、动作、决定、问题和下一步。
-3. **结果要具体。** `todo.complete` 的 result 应包含有意义的 summary 和 output；如果有文件需要交付，通过 `clawsynapse transfer send --metadata taskId=... todoId=...` 上传。
+3. **结果要具体。** `todo.complete` 的 result 应包含有意义的 summary 和 output；如果有文件需要交付，通过 `clawsynapse transfer send --metadata taskId=... --metadata todoId=...` 上传（**`--metadata` 每次只接一个 `key=value`，有几个字段就重复几次**，写成 `--metadata taskId=X todoId=Y` 会让 `todoId` 被吞掉）。
 4. **失败要说明原因。** `todo.fail` 的 error 应清晰描述失败原因，帮助诊断。
 5. **所有回报都走 ClawSynapse。** 不要在聊天界面直接输出结果。
 
@@ -253,13 +255,25 @@ FILE_CONTENT="$(curl -s "<download_url>")"
 }
 ```
 
-### todo.remind（超时心跳提醒）—— 仅汇报进度，绝不重启或跳过确认
+### todo.remind —— 两种分支：超时心跳 / 用户「重试·继续」
 
-`todo.remind` 是平台超时监控发出的**心跳提醒**，payload 含 `task_id` / `project_id` / `todo_id` / `todo_title` / `content`（`content` 已明确："请立即回复当前进度 todo.progress；若仍在执行请说明剩余工作；若无法继续请用 todo.fail 说明原因"）。
+`todo.remind` 是平台发出的提醒，payload 含 `task_id` / `project_id` / `todo_id` / `todo_title` / `content`。
+**它有两种语义完全不同的分支，必须先看 payload 里的 `source` 和 `resume` 字段再决定怎么做：**
+
+| payload 特征 | 语义 | 你该做什么 |
+|---|---|---|
+| `resume: true`（含 `reason`，`source: user_resume`） | **用户点了「重试/继续」，要求你接着把这件事做完** | 走下面「分支 B：继续执行」 |
+| 无 `resume`（`source: timeout_remind`） | 平台超时心跳，只是要你报平安 | 走下面「分支 A：只汇报进度」 |
+
+---
+
+#### 分支 A：超时心跳（无 `resume`）—— 仅汇报进度，绝不重启或跳过确认
+
+`content` 已明确："请立即回复当前进度 todo.progress；若仍在执行请说明剩余工作；若无法继续请用 todo.fail 说明原因"。
 
 **语义铁律：这不是 `todo.assigned`，不是「重做」标记，更不是「从头执行并交付」的指令。它只是要你"报个平安"。**
 
-收到 todo.remind 后必须：
+收到**无 `resume`** 的 todo.remind 后必须：
 
 1. **当成"续命心跳"，不要当成"新任务"。** 不要假装没收到过 `todo.assigned`、重走阶段0/1/2 确认流程。你已处于某执行阶段，提醒只是要你回报当前状态。
 2. **绝不绕过待确认点。** 若之前发过 `todo.ask` 正 `waiting_user`（等用户回答），提醒时**只能**回报「正在等待用户确认 X，暂未推进」，**不得**替用户做主、自行推进并 `todo.complete`。
@@ -271,10 +285,46 @@ FILE_CONTENT="$(curl -s "<download_url>")"
 5. **子任务委派期间心跳由父 Agent 自己发。** 把工作委派给子 Agent（sub-agent）时，**父 Todo 必须由你自己**继续每 10 分钟发 1 条 `todo.progress`（"子任务进行中，等待返回"）。子 Agent 的活跃**不计入**父 Todo 的最后活跃时间，父 Todo 静默照样触发超时提醒（本次误判的根因）。
 6. **remind_count 不是重试次数。** 连续 3 次提醒无响应平台才判 failed；只要持续汇报就不会被重置或打断。
 
-**反模式（⚠️ 严格禁止）：**
+**分支 A 反模式（⚠️ 严格禁止）：**
 - ❌「此前未收到可执行的 todo.assigned 明细，现按超时提醒开始执行」——提醒里没有任务明细，强行"重新开始"会丢弃已完成的确认与上下文，等于凭空重启。
 - ❌ 收到提醒就跳过待确认点、直接 `todo.complete`。
 - ❌ 把 `todo.remind` 当作 `todo.assigned` 重新派发给自己、开新一轮。
+
+---
+
+#### 分支 B：用户「重试/继续」（payload 含 `resume: true`）—— 这是**执行指令**，不是心跳
+
+用户在该 Todo 失败后主动点了「重试/继续」并填写了理由。**平台已经把 Todo 状态从 `failed` 改回 `in_progress`**，
+所以你现在**可以**正常收尾并 `todo.complete` / `todo.fail`（不会再被 `TODO_ALREADY_FAILED` 拒收）。
+
+payload 形如：
+
+```json
+{
+  "task_id": "task_123",
+  "todo_id": "todo_2",
+  "todo_title": "实现后端登录接口",
+  "resume": true,
+  "source": "user_resume",
+  "reason": "上次失败是因为 OAuth 回调地址写错了，请按新地址重做",
+  "content": "用户要求继续执行此 todo。理由：上次失败是因为 OAuth 回调地址写错了，请按新地址重做"
+}
+```
+
+收到**含 `resume: true`** 的 todo.remind 后必须：
+
+1. **当成执行指令，不要当成心跳。** 这与分支 A 相反：这里正是要你**继续干活**，只回一句进度就停下是**错误的**。
+2. **先读 `reason`。** 用户填写理由是**必须**的，它说明了他认为上次为什么失败、希望你这次怎么做。**这是最高优先级的输入**，优先于你原本的执行计划。
+3. **确认 Todo 当前状态。** 若不确定当前状态/前序产出，用 `task.context.query` 拉一次快照；`reason` 与你的判断冲突时，以 `reason` 为准并在 `task.comment` 里说明差异。
+4. **接着做，不要从头再来。** 复用你上次的会话上下文（同一 `session-key`），只做 `reason` 要求你补/改的部分；已完成且未被质疑的部分**不要推倒重做**——重复劳动会浪费额度。
+5. **开工先发 1 条 `task.comment`**，写明「收到重试/继续，理由：<reason>；我打算这样做：…」，让用户知道你确实读了他的理由。
+6. **正常收尾。** 完成后照常「先总结 comment → `todo.complete`」；若这次仍无法完成，照常 `todo.fail` 并说明原因（可再次被重试，但有次数上限）。
+7. **⚠️ 重试有上限。** 平台对同一 Todo 的重开次数有上限（当前 3 次）；用尽后用户只能新建任务。所以**不要敷衍交差**——认真解决 `reason` 指出的问题。
+
+**分支 B 反模式（⚠️ 严格禁止）：**
+- ❌ 把带 `resume: true` 的提醒当成普通心跳，只回一句「仍在进行中」就结束——用户点了重试，你什么都没做。
+- ❌ 忽略 `reason`，按自己的旧计划原样重跑一遍。
+- ❌ 把已完成的部分全部推倒重来（除非 `reason` 明确要求）。
 
 ## 三、发送消息
 
@@ -433,7 +483,7 @@ payload="$(jq -nc \
 
 ### 文件交付
 
-文件交付与 `todo.complete` 完全解耦。只需用 `clawsynapse transfer send` 并通过 `--metadata` 关联 task 和 todo，TrustMesh 会自动接收文件并创建交付物。
+文件交付与 `todo.complete` 完全解耦。只需用 `clawsynapse transfer send` 并通过 `--metadata` 关联 task 和 todo，TrustMesh 就会接收文件并入库——**它是被记为「交付物」还是「过程文件」，由你带的 `outputName` 和文件类型共同决定**（见下方规则）。
 
 **你可以在执行过程中随时发送文件**——开始工作后、关键里程碑、完成前。但**发完 `todo.complete` 后即视为本轮交付结束**，不再新增文件（见下方规则）。
 
@@ -447,8 +497,9 @@ payload="$(jq -nc \
 **规则**：
 
 - `--target` 使用 incoming header 中 `from` 的值（TrustMesh 节点）
-- `--metadata` 必须包含 `taskId`，`todoId` 可选但推荐
+- `--metadata` **必须同时带 `taskId` 和 `todoId`**。`taskId` 漏了平台会拒收（422；仅在能按你当前在办任务兜底推断时才放过）。`todoId` **不是"可选但推荐"，它决定平台能不能校验你的 `outputName`**：平台靠 `todoId` 查出本步骤声明的输出位，缺了它 `outputName` 就**不做任何校验、直接当交付物收下**——错名、错类型都拦不住，事后也没人会发现。
 - **最终交付文件必须额外带 `--metadata "outputName=<输出位名>"`** —— 不带就会被判为**过程文件**：不上工作流图、下游步骤拿不到输入（详见下方「输出位（outputName）从哪来」）
+- 🔴 **带 `outputName` 的同时，文件类型必须与输出位声明的 `mime_type` 相符。** 名字对但类型不符，平台同样判为**过程文件**（详见下方「mime 必须匹配——第二个静默降级点」）
 - 同一 `transferId` 重复发送会覆盖旧文件（可用于修订）
 - **命名前先查知识库**：交付文件命名前，用 `knowledge.query` 查询"文件命名规范"（如版本号 v{n} + 日期 YYYYMMDD、重做版本号递增），按规范命名
 - **⚠️ 每个文件只上传一次。** 同一个交付物**禁止**用近似文件名重复 transfer（如「xx-rework1.md」又传「xx-重做1.md」——这是同一份，重复传会让文件列表出现冗余）。需修订时**沿用原文件名**重新 transfer，后端会自动覆盖同名文件（同一 todo 内按文件名去重）。
@@ -495,13 +546,15 @@ clawsynapse transfer send \
 
 多个文件时，对每个文件分别执行一次 `transfer send`，每次都带上 `--metadata taskId=...`。
 
-**⚠️ 顺序铁律：所有文件传完之后，才能发 `todo.complete`。**
+**⚠️ 顺序铁律：所有文件传完之后，再发 `todo.complete`。**
 
-这是**强制**的，不是建议。任务进入终态后平台会关闭交付通道，此时再传的文件一律返回 `409 TODO_ALREADY_DONE`——
-文件确实落到了传输卷上，但**永远不会出现在文件列表里**，用户在任务时间线上只会看到一条「文件上传未入库」的 ⚠️。
+注意这**不是**因为平台会拒收——`todo.complete` 之后到达的文件**依然会入库、依然会认领输出位、下游依然取得到**，
+只是会被打上 `orphan`（迟到交付物）标记。这个标记读起来是「已终态的 todo 却挂着交付物」，对用户和 PM 是噪声，
+也说明你的交付顺序有问题。
 
-> 2026-09-03 真实事故：资产提取任务先传完 4 个 xlsx，随即发了 `todo.complete`，最后才传第 5 个文件
-> （剧本解析.md）→ 409 被拒，文件留在传输卷、平台看不到。任务本身是 done，交付物也在，就这一个文件凭空消失。
+真正的风险在**你无法验证上传结果**（见下方「上传后自检」）：`transfer send` 的返回只代表文件已发出，
+平台是否收下、是否认领成功，你这边看不到。如果先发 `todo.complete`，一旦某个文件在队列里失败了，
+任务已经标记完成、交付物却缺了一件，**你和用户都无从察觉**。
 
 正确做法：
 
@@ -509,9 +562,9 @@ clawsynapse transfer send \
 2. 全部传完后，最后才发 `todo.complete`
 3. 在 `todo.complete` 的 `result` 里列出实际传了哪些文件、各自带了什么 outputName
 
-**不要"边传边完成"。** `todo.complete` 与文件传输是两条异步通道，你发 complete 的那一刻可能还有文件在队列里——
-它们到达时通道已经关了。同理，**任务已 done 就不要重跑整轮再传一遍**：重传同名文件会被拒，
-虽然平台不会再报「未入库」（会识别为重复上传），但纯属无用功。
+**不要"边传边完成"。** `todo.complete` 与文件传输是两条异步通道，你发 complete 的那一刻可能还有文件在队列里。
+同理，**任务已 done 就不要重跑整轮再传一遍**：重传同名文件会**覆盖**已入库的那份（同一 todo 内按文件名去重），
+纯属无用功，还可能把已经绑好的交付物换成新的一份。
 
 ### 输出位（outputName）从哪来
 
@@ -536,20 +589,49 @@ clawsynapse transfer send \
 
 （对照：`inputs[]` 是**上游**步骤给你的输入文件，带 `download_url` 可直接下载；`outputs[]` 是**你**要产出的交付位。别搞反。）
 
+### mime 必须匹配——第二个静默降级点
+
+输出位除了 `name` 还有 `mime_type`（上面示例里的 `"docx"`）。**名字对只过了一半**：平台还会拿你上传的
+文件类型去比对这条声明，**不符照样按过程文件入库**，表现和「名字写错」一模一样。
+
+规矩：
+
+1. **上传时显式带 `--mime-type`，并与输出位声明的类型一致。** 别指望平台猜——CLI 默认发空串，
+   平台只能按文件扩展名回填；扩展名和真实格式不符（例如临时文件名 `/tmp/out.md` 其实是要交的 docx）就会误判。
+2. **交付物要用输出位要求的格式产出。** 输出位要 `docx`，就不要拿 `.md` 当成品交——哪怕内容一样。先导出成 docx 再传。
+3. 类型确实对不上（例如流程模板把 mime 声明写错了），**不要硬传**：在 `task.comment` 里说明，
+   或让用户在任务详情页手工「绑定为交付物」。
+
+| 输出位声明 | 你应该带 |
+|---|---|
+| `docx` | `--mime-type application/vnd.openxmlformats-officedocument.wordprocessingml.document` |
+| `markdown` / `md` | `--mime-type text/markdown` |
+| `xlsx` | `--mime-type application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` |
+| `pdf` | `--mime-type application/pdf` |
+| `png` / `jpg` | `--mime-type image/png` / `image/jpeg` |
+| `mp4` | `--mime-type video/mp4` |
+
+> 2026-09-04 / 09-19 真实事故：`.md` 稿子被当成 `docx` 输出位的交付物上传。09-04 是一次；09-19 更严重——
+> 编剧的 24 份 `.md` 过程草稿全部顶着同一个输出位名上传，而当时平台只校验**名字**、不校验类型，
+> 于是 24 份草稿被当成交付物收下并互相覆盖。这正是平台后来对「名字 + 类型」都启用严格校验的直接原因，
+> 也是你现在必须同时对齐 `outputName` 和 `--mime-type` 的原因。
+
 ### 上传后自检
 
 `transfer send` 返回 `transfer.sent` 和 `transferId`，**只代表文件已发出，不代表已入库**。
 文件经消息队列异步送到平台，平台的接收结果（成功 / 被拒 / 判为过程文件）你这边**看不到**。
 
-会无声失败的三种情况：
+会无声失败的情况：
 
 | 情况 | 后果 |
 |---|---|
 | 漏了 `--metadata taskId=` | 平台 422 拒收，文件留在传输卷，用户在平台文件列表里**什么都看不到** |
-| `outputName` 拼错或自创 | 文件入库但不认领任何输出位，降级为过程文件，不上工作流图 |
-| 步骤声明了多个输出位却没带 outputName | 同上，且平台会在任务时间线留一条 ⚠️ 提示 |
-| **发完 `todo.complete` 才传文件** | 平台 409 拒收（`TODO_ALREADY_DONE`），文件留在传输卷、永远进不了文件列表，任务时间线留一条 ⚠️「文件上传未入库」 |
-| **重传已入库的同名文件** | 平台 409 拒收，但**不会**报「未入库」——平台识别出该文件已在列表里，视为重复上传静默忽略 |
+| 漏了 `--metadata todoId=` | 🔴 平台查不到本步骤声明的输出位，**`outputName` 不做任何校验就被当交付物收下**——错名、错类型都拦不住，也不会留 ⚠️ |
+| `outputName` 拼错或自创 | 文件入库但不认领任何输出位，降级为**过程文件**，不上工作流图；任务时间线留一条 ⚠️ |
+| 🔴 **`outputName` 对、但文件类型与输出位 mime 不符** | 同样降级为**过程文件** + ⚠️。输出位声明 `docx` 而你传 `.md`，必踩 |
+| 步骤声明了多个输出位却没带 outputName | 无法判定归属，降级为**过程文件** + ⚠️ |
+| 发完 `todo.complete` 才传文件 | **仍然入库**（平台不拒收），但被打上 `orphan`（迟到交付物）标记，时间线可读性变差 |
+| 重传已入库的同名文件 | **覆盖**旧的那份（同一 todo 内按文件名去重），不报错；若新的更差，等于把好文件换掉了 |
 
 **命令返回成功 ≠ 交付完成。** 在 `todo.complete` 的 `result` 里写清楚你上传了哪些文件、各自带了什么 outputName，
 用户或 PM 发现对不上时会据此让你重传。
@@ -701,8 +783,10 @@ clawsynapse --json publish \
 
 - **永远不要用你自己的 node ID 作为 `--target`。** target 是 TrustMesh 节点（incoming `from`）。
 - **不要发送 `conversation.reply`、`task.create`。** 这些是 PM Agent 的消息类型，不是执行 Agent 的。你只能发送 `todo.progress`、`todo.complete`、`todo.fail`、`task.comment`、`task.context.query` 五种消息类型。
-- **Todo 终态不可逆。** 已经 `done` 或 `failed` 的 Todo 不能再更新，服务端会拒绝（`TODO_ALREADY_DONE` / `TODO_ALREADY_FAILED`）。
-- **`todo.remind` 不是新任务。** 收到超时提醒只能回报进度（todo.progress / task.comment），禁止重新开始执行、禁止绕过 todo.ask 确认、禁止因此直接 todo.complete。
+- **Todo 终态不可逆——但「重开」可以逆转它。** 已经 `done` 或 `failed` 的 Todo 不能再直接更新，服务端会拒绝（`TODO_ALREADY_DONE` / `TODO_ALREADY_FAILED`）。**唯一例外**：用户从平台点「重试/继续」后，Todo 会被平台重开为 `in_progress`，此时你又可以正常 `todo.complete` / `todo.fail` 了。⇒ 收到 `TODO_ALREADY_FAILED` 时不要硬重试，回报一句 `todo.progress` 说明情况，等用户决定是否点「重试/继续」。
+- **`todo.remind` 有两种分支，必须先看 payload 有没有 `resume: true`。**
+  - 无 `resume`（超时心跳）→ 只能回报进度（todo.progress / task.comment），**禁止**重新开始执行、**禁止**绕过 todo.ask 确认、**禁止**因此直接 todo.complete。
+  - 有 `resume: true`（用户点了「重试/继续」）→ 这是**执行指令**。必须读 `reason`、接着做、做完正常 `todo.complete`。**只回一句进度就停下是错的。**
 - **不要把 `task.comment` 当成可选项。** 对执行 Agent 来说，它是默认工作日志；长时间无 comment 视为过程缺失。
 - **不要等整理完再发 comment。** comment 可以是草稿、短句、阶段性判断；过度记录优于缺失记录。
 - **不要只发 `todo.progress` 不发 `task.comment`。** 里程碑更新前后，应至少有一条相关 comment 解释上下文。
@@ -724,5 +808,12 @@ clawsynapse --json publish \
 | `FORBIDDEN` | 无权执行该操作（可能不是该 Todo 的指派 Agent） |
 | `NOT_FOUND` | 目标 Task 或 Todo 不存在 |
 | `TODO_FINALIZED` | Todo 已结束，不再接受更新 |
-| `TODO_ALREADY_DONE` | Todo 已完成 |
-| `TODO_ALREADY_FAILED` | Todo 已失败 |
+| `TODO_ALREADY_DONE` | Todo 已完成。若用户需要追加工作，应由用户点「重试/继续」重开 |
+| `TODO_ALREADY_FAILED` | Todo 已失败。**不要硬重试** —— 等用户点「重试/继续」（平台会把它重开为 `in_progress`），之后即可正常回报 |
+| `ARTIFACT_FILENAME_REQUIRED` | 文件上传时 `fileName` 为空，平台 422 拒收，**不产生任何记录**。检查 `--file` 指向的路径是否有效 |
+| `OUTPUT_SLOT_NOT_DECLARED` | 手工绑定交付物时给的名字不在本步骤声明的输出位里 |
+| `DELIVERABLE_QUALITY_REJECTED` | 交付物未通过质量门禁（0 字节、无法识别等）。默认只警告，平台开启严格模式时才硬拒 |
+
+> ⚠️ 注意：**文件上传（`transfer send`）不会因为 Todo 已终态而被拒**——终态后传的文件仍会入库，
+> 只是被标记为 `orphan`（迟到交付物）。所以这个表里的 `TODO_*` 错误码针对的是
+> `todo.complete` / `todo.fail` / `todo.progress`，不是文件上传。
