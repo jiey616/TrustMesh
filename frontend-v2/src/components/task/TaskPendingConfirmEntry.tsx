@@ -1,4 +1,3 @@
-import { ExclamationCircleOutlined } from '@ant-design/icons'
 import { TodoAskCard, TodoReviewCard } from '@/components/task/PendingApprovalsDrawer'
 import type { PendingItem } from '@/lib/pendingItems'
 
@@ -18,6 +17,8 @@ import type { PendingItem } from '@/lib/pendingItems'
  * —— 塞进一条固定高度的输入条会诱导用户没看内容就点通过，比多一次点击危险得多。
  * 它们仍然走待确认抽屉（见 `TaskWorkspace` 的 `inlinePending` 判定）。
  *
+ * 不额外加提示文案：卡片自带标题与操作按钮，语义已自明；多一行说明只会挤占输入区。
+ *
  * 🔴 表单本体直接复用抽屉里的 `TodoAskCard` / `TodoReviewCard`，**不另写一份**：
  * 两处渲染同一条目是常态，各自实现必然漂移（重复提交的防护在 `pendingStore.submitting`）。
  *
@@ -25,32 +26,25 @@ import type { PendingItem } from '@/lib/pendingItems'
  * 本文件只导出组件，把谓词放这里会触发 `react-refresh/only-export-components`。
  */
 
-function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ maxWidth: 720, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--warning)' }}>
-        <ExclamationCircleOutlined />
-        <span>数字员工在等你确认 —— 评论无法代替这一步，请直接在此处理</span>
-      </div>
-      {children}
-    </div>
-  )
+/** 纯布局容器：与其它 composer 分支保持同样的居中宽度。 */
+function InlineSlot({ children }: { children: React.ReactNode }) {
+  return <div style={{ maxWidth: 720, margin: '0 auto' }}>{children}</div>
 }
 
 export function TaskPendingConfirmEntry({ item }: { item: PendingItem }) {
   // 直接按 kind 收窄（不借助辅助谓词，否则 TS 无法把联合类型窄化到具体卡片所需的类型）。
   if (item.kind === 'todo_ask') {
     return (
-      <Shell>
+      <InlineSlot>
         <TodoAskCard item={item} />
-      </Shell>
+      </InlineSlot>
     )
   }
   if (item.kind === 'todo_review') {
     return (
-      <Shell>
+      <InlineSlot>
         <TodoReviewCard item={item} />
-      </Shell>
+      </InlineSlot>
     )
   }
   // plan_review / plan_clarify 不内联。
