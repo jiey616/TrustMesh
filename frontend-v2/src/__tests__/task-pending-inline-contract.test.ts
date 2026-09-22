@@ -1,3 +1,5 @@
+/// <reference types="node" />
+// 契约测试要读源码做断言，因此显式引入 node 类型（原因同 manual-block-contract.test.ts）。
 import fs from 'node:fs'
 import path from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'

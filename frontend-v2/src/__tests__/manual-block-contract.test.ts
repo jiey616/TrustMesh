@@ -1,3 +1,7 @@
+/// <reference types="node" />
+// 契约测试要读源码做断言，因此显式引入 node 类型。
+// 不能靠 `types` 白名单：tsconfig.app.json 刻意只放 `vite/client`，把 node 全局
+// 变量挡在业务代码之外（否则 `process` / `Buffer` 会被误用而不报错）。
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
