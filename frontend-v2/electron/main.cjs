@@ -11,9 +11,14 @@ const isDev = !!process.env.VITE_DEV_SERVER_URL
 
 // ---------------------------------------------------------------------------
 // 桌面端持久化配置（独立于 localStorage，主进程/渲染进程都能读）
-//   trustInsecureTls: 信任自签名 / 私有 CA 证书（默认 false）
+//   trustInsecureTls: 信任自签名 / 私有 CA 证书
+//   🔴 默认 **true**（2026-09-22 改）：生产/内网后端的证书是自签的
+//      （CN=175.27.135.91），默认关掉的结果是**新装客户端连登录接口都打不通**
+//      （渲染进程只得到笼统的 "Failed to fetch"），而用户根本不知道要去
+//      「服务器设置」里勾选。默认信任 + 允许用户显式关闭 = 开箱可用且可收紧。
+//      只有**配置文件里显式写了 false**（用户主动取消勾选）才为 false。
 // ---------------------------------------------------------------------------
-let desktopConfig = { trustInsecureTls: false }
+let desktopConfig = { trustInsecureTls: true }
 
 function desktopConfigPath() {
   return path.join(app.getPath('userData'), 'trustmesh-desktop.json')
@@ -22,7 +27,8 @@ function desktopConfigPath() {
 function loadDesktopConfig() {
   try {
     const raw = fs.readFileSync(desktopConfigPath(), 'utf8')
-    desktopConfig = { trustInsecureTls: false, ...JSON.parse(raw) }
+    // 缺字段时沿用默认（true）；文件里显式写了 false 才关掉
+    desktopConfig = { trustInsecureTls: true, ...JSON.parse(raw) }
   } catch {
     // 首次运行或配置文件缺失：保持默认值
   }
@@ -40,8 +46,16 @@ function saveDesktopConfig(patch) {
 }
 
 /**
- * 证书校验：默认严格校验（Chromium 行为）。
- * 用户在设置页开启「信任自签名证书」后放行内网自签名 / 私有 CA。
+ * 证书校验：默认**信任**自签名 / 私有 CA（见 desktopConfig 注释）。
+ * 用户在设置页取消勾选后恢复 Chromium 的严格校验。
+ *
+ * 📌 覆盖范围（2026-09-22 真机矩阵实测，别再照抄旧结论）：
+ *    本事件**同时覆盖渲染进程 fetch 与主进程 net.request（defaultSession）**，
+ *    两者在开启时都返回 200。旧注释里「对 net.request 完全不触发」的结论只适用于
+ *    **electron-updater 的独立分区**（那里必须用 setCertificateVerifyProc，见下方
+ *    installUpdaterCertTrust），不能推广到 defaultSession。
+ * ⚠️ 证书校验结果在**进程内会被缓存**：运行中取消勾选不会立刻回到严格校验，
+ *    需重启 App 才严格生效（实测：同进程内先信任后取消，请求仍是 200）。
  */
 app.on('certificate-error', (event, _webContents, url, error, _certificate, callback) => {
   if (desktopConfig.trustInsecureTls) {
@@ -92,7 +106,10 @@ function probeServer(baseUrl, timeoutMs = 6000) {
     try {
       req = net.request({ method: 'GET', url: target })
     } catch (err) {
-      window_clear()
+      // 🔴 原本这里写的是 `window_clear()` —— 一个**不存在的标识符**（疑似重构残留）。
+      //    net.request 同步抛错时会再抛 ReferenceError，把 resolve 吞掉 ⇒ 设置页
+      //    「测试」按钮永久转圈、且报不出任何原因。正确动作是清掉超时定时器。
+      clearTimer()
       resolve({ ok: false, status: 0, error: String((err && err.message) || err) })
       return
     }

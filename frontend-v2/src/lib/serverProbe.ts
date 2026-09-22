@@ -22,7 +22,7 @@ function describeError(error: string | null): ProbeSummary {
   if (code.includes('CERT') || code.includes('SSL') || code.includes('TLS')) {
     return {
       level: 'error',
-      message: `证书不受信任（${error}）：证书为自签名、过期或域名不匹配。若是内网自签名，请勾选下方「信任自签名证书」后重试。`,
+      message: `证书不受信任（${error}）：证书为自签名、过期或域名不匹配。若该服务器用的是自签 / 私有 CA 证书，请确认下方「信任自签名 / 私有 CA 证书」已勾选（桌面版默认已开启），勾选后需重启 App 才完全生效。`,
     }
   }
   if (code.includes('ENOTFOUND') || code.includes('EAI_AGAIN') || code.includes('NAME_NOT_RESOLVED')) {

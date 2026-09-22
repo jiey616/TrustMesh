@@ -132,7 +132,8 @@ export function ServerConfigModal({ open, onClose }: ServerConfigModalProps) {
           </Checkbox>
           <div style={{ marginTop: 4 }}>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              仅在内网可信环境下开启：自签名 HTTPS 后端必须开启才能连接。
+              <b>默认已开启</b>：本平台的服务器证书是自签 / 私有 CA 签发，关闭后将无法连接后端
+              （登录也会失败）。仅在确认服务器用的是公网受信任证书时才可关闭。
             </Text>
           </div>
         </div>
