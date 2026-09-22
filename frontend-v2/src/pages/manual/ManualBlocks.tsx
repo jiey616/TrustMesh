@@ -1,6 +1,7 @@
 import { Collapse, Table, Tag, Typography } from 'antd'
 import { RightOutlined } from '@ant-design/icons'
 import type { ManualBlock, ManualBlockData } from '@/api/platformManual'
+import { resolveAssetUrl } from '@/lib/assetUrl'
 
 const { Paragraph, Title, Text } = Typography
 
@@ -168,7 +169,9 @@ function ImageBlock({ d }: { d: ManualBlockData }) {
   return (
     <figure style={{ margin: '16px 0' }}>
       <img
-        src={d.url}
+        // 🔴 必须过 resolveAssetUrl：库里的 url 是根相对路径 `/api/v1/manual/images/{id}`，
+        // 桌面端页面 origin 是 file:// ⇒ 不解析就成 file:///api/v1/... 必裂。
+        src={resolveAssetUrl(d.url)}
         alt={d.alt || d.caption || ''}
         loading="lazy"
         style={{

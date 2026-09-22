@@ -105,3 +105,25 @@ describe('平台操作手册 · 读接口按身份分流', () => {
     expect(gp[0]).toMatch(/\.get\('platform\/manual'\)/)
   })
 })
+
+// 平台操作手册 · 配图地址必须按运行环境解析（2026-09-22「桌面版看手册图片不显示」回归）
+//
+// 🔴 事故经过：后端入库的配图地址是**根相对路径** `/api/v1/manual/images/{id}`。
+//   · Web 端页面 origin 就是服务端 ⇒ `/<path>` 解析正确，看起来一切正常；
+//   · 桌面端页面由主进程 `win.loadFile(dist-v2/index.html)` 以 **file://** 打开
+//     ⇒ 根相对路径被解析成 `file:///api/v1/manual/images/{id}` ⇒ 图片**全部不显示**。
+// 修法：`ImageBlock` 的 src 必须过 `resolveAssetUrl()`（按 getApiBase() 的 origin 补全）。
+// 这里把「必须过解析器」钉死，任何回退成 `src={d.url}` 都会让本测试立刻红。
+describe('平台操作手册 · 配图地址按运行环境解析', () => {
+  it('ImageBlock 的 src 必须经 resolveAssetUrl（禁止直接喂 d.url）', () => {
+    const fn = fs.readFileSync(FE, 'utf8').match(/function ImageBlock\([\s\S]*?\n\}/)
+    if (!fn) throw new Error('ImageBlock not found in frontend source')
+    expect(fn[0]).toMatch(/src=\{resolveAssetUrl\(d\.url\)\}/)
+    expect(fn[0]).not.toMatch(/src=\{d\.url\}/)
+  })
+
+  it('后端存的确实是根相对路径（哪天改成绝对地址这条会红，提醒重新审视本修法）', () => {
+    const be = fs.readFileSync(BE, 'utf8')
+    expect(be).toMatch(/URL:\s*"\/api\/v1\/manual\/images\/"\s*\+\s*id/)
+  })
+})
