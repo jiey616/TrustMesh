@@ -22,7 +22,8 @@ contextBridge.exposeInMainWorld('desktop', {
   probeServer: (baseUrl, timeoutMs) => ipcRenderer.invoke('tm:probe-server', baseUrl, timeoutMs),
   showNotification: (options) => ipcRenderer.invoke('tm:show-notification', options),
   onNotificationClicked: (callback) => {
-    const handler = (_event, tag) => callback(tag)
+    // 第二个参数是渲染端当初给的 clickTarget（要跳转的路由），主进程原样回传。
+    const handler = (_event, clickTarget) => callback(clickTarget)
     ipcRenderer.on('tm:notification-clicked', handler)
     return () => ipcRenderer.removeListener('tm:notification-clicked', handler)
   },

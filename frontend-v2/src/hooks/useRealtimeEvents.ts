@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '@/stores/authStore'
 import { getApiBase } from '@/stores/serverConfigStore'
 import { emitRealtimeEvent } from '@/lib/realtimeBus'
+import { notificationTarget, type NotificationTargetSource } from '@/lib/notifications'
 import type { RealtimeEvent } from '@/types/office'
 
 const SSE_URL = `${getApiBase()}events/stream`
@@ -54,6 +55,28 @@ const EVENT_INVALIDATIONS: Record<string, ReadonlyArray<readonly unknown[]>> = {
   'join_request.created': [['join-requests']],
 }
 
+/**
+ * 桌面端：把站内通知弹成**系统通知**（Windows 通知中心横幅）。
+ * Web / 移动端没有 `window.desktop` 桥 ⇒ 静默 no-op（移动端的原生通知在
+ * `frontend-mobile` 里另有一套，走 Capacitor LocalNotifications）。
+ *
+ * 🔴 为什么信 `notification.created`、而不是像移动端那样自己判 `task.updated` /
+ * `task.event.created`：后端 `store_notification_internal.go` **已经**判定过「哪些事件
+ * 值得通知」并生成了通知实体（标题/正文/分类/优先级/来源 id 齐全），客户端再判一遍
+ * 就是把同一套规则实现两次，筛选口径与文案必然漂移。这里只做搬运。
+ *
+ * 窗口是否在前台由**主进程**判（`tm:show-notification` 里的 `BrowserWindow.isFocused()`）：
+ * 用户正看着界面时不该再叠一条系统横幅，且那个判断在渲染端做不准。
+ */
+function notifyViaDesktopShell(n: NotificationTargetSource): void {
+  const show = typeof window === 'undefined' ? undefined : window.desktop?.showNotification
+  if (typeof show !== 'function') return
+  if (!n.title) return
+  // clickTarget 由主进程原样回传（见 preload 的 onNotificationClicked）。
+  // 点击后落到哪一页与收件箱共用同一套规则，兜底为收件箱。
+  void show({ title: n.title, body: n.body ?? '', clickTarget: notificationTarget(n) ?? '/inbox' })
+}
+
 /** 后端 SSE 实时事件订阅：收到事件后失效对应 query，实现页面实时刷新 */
 export function useRealtimeEvents() {
   const qc = useQueryClient()
@@ -74,6 +97,14 @@ export function useRealtimeEvents() {
       // 若放在后面会漏掉这部分事件。
       emitRealtimeEvent(payload as RealtimeEvent)
       const type = typeof payload.type === 'string' ? payload.type : ''
+
+      // 桌面端系统通知。🔴 必须放在下面 `EVENT_INVALIDATIONS` 的提前 `return` **之前**：
+      // notification.created 在那张表里有条目，先走失效分支就会被 return 掉，通知永不触发。
+      if (type === 'notification.created') {
+        const n = (payload.payload as { notification?: NotificationTargetSource } | undefined)?.notification
+        if (n) notifyViaDesktopShell(n)
+      }
+
       const inv = EVENT_INVALIDATIONS[type]
       if (inv) {
         for (const key of inv) void qc.invalidateQueries({ queryKey: key })

@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useNotifications, useMarkAllRead, useMarkNotificationRead } from '@/hooks/useNotifications'
 import { PageHeader } from '@/components/shared/PageHeader'
-import { groupNotificationsByDate } from '@/lib/notifications'
+import { groupNotificationsByDate, notificationTarget } from '@/lib/notifications'
 import type { Notification } from '@/types'
 import dayjs from 'dayjs'
 
@@ -26,27 +26,18 @@ const typeLabel: Record<string, string> = {
   meeting: '会议',
 }
 
-/** 根据通知类型跳转到对应页面 */
+/**
+ * 根据通知类型跳转到对应页面。
+ *
+ * 🔴 规则本体在 `lib/notifications.ts` 的 `notificationTarget`：桌面端的**系统通知横幅**
+ * 点击也要落到同一个页面（见 `MainLayout` 对 `onNotificationClicked` 的订阅），
+ * 规则只能有一份实现，否则同一条通知点列表与点横幅会去不同地方。
+ */
 function useNotificationNavigate() {
   const navigate = useNavigate()
   return (item: Notification) => {
-    const isJoinRequest = item.category === 'agent' && (item.title.includes('入职') || item.body.includes('申请加入'))
-    if (isJoinRequest) {
-      navigate('/agent-invite')
-      return
-    }
-    if (item.category === 'agent' && item.actor_id) {
-      navigate(`/agents/${item.actor_id}`)
-      return
-    }
-    if (item.task_id) {
-      // 直达任务工作台（?task= 深链，ProjectBoardPage 已支持）
-      navigate(`/projects/${item.project_id ?? ''}?task=${item.task_id}`)
-      return
-    }
-    if (item.project_id) {
-      navigate(`/projects/${item.project_id}`)
-    }
+    const target = notificationTarget(item)
+    if (target) navigate(target)
   }
 }
 

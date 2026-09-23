@@ -373,11 +373,21 @@ if (!gotLock) {
       probeServer(baseUrl, typeof timeoutMs === 'number' ? timeoutMs : 6000),
     )
 
-    // 渲染进程请求显示系统通知
+    // 渲染进程请求显示系统通知。
+    //
+    // 🔴 窗口在前台时不弹：用户正看着这个应用，再叠一条系统横幅纯属打扰。
+    //    这个判定必须放在主进程 —— 渲染端只有 `document.hidden`，它区分不了
+    //    「窗口被别的应用盖住」（仍应弹）与「用户正在操作本应用」（不该弹），
+    //    而 `BrowserWindow.isFocused()` 恰好就是「用户此刻在不在这个应用里」的答案。
+    //    托盘隐藏 / 最小化时 isFocused() 为 false ⇒ 照常弹。
     ipcMain.handle('tm:show-notification', (_event, options) => {
-      const { title, body, tag } = options || {}
+      // clickTarget：点击横幅后要去的路由，由渲染端算好（与收件箱同一套规则），
+      // 主进程只做原样回传，不解释它的内容。
+      const { title, body, clickTarget } = options || {}
       if (!title) return false
       if (!Notification.isSupported()) return false
+      const [focusedCheck] = BrowserWindow.getAllWindows()
+      if (focusedCheck && focusedCheck.isFocused()) return false
       const n = new Notification({
         title: String(title),
         body: body ? String(body) : undefined,
@@ -391,8 +401,8 @@ if (!gotLock) {
           w.show()
           w.focus()
         }
-        // 通知渲染进程某条通知被点击
-        w?.webContents.send('tm:notification-clicked', tag)
+        // 通知渲染进程某条通知被点击，并带上要跳转的路由
+        w?.webContents.send('tm:notification-clicked', clickTarget)
       })
       n.show()
       return true

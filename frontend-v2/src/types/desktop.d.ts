@@ -22,12 +22,22 @@ declare global {
       getConfig: () => Promise<{ trustInsecureTls?: boolean }>
       setTrustInsecureTls: (enabled: boolean) => Promise<{ trustInsecureTls?: boolean }>
       probeServer: (baseUrl: string, timeoutMs?: number) => Promise<ProbeOutcome>
+      /**
+       * 弹一条系统通知（Windows 通知中心）。
+       *
+       * `clickTarget` 是点击后要跳转的路由，由**渲染端**按 `lib/notifications.ts` 的
+       * `notificationTarget` 算好（与收件箱同一套规则），主进程只原样回传。
+       *
+       * 🔴 窗口处于前台时主进程会直接返回 false、不弹（用户正在用本应用）。
+       *    声明为可选：线上仍有老版本壳，其 preload 不含这些通道。
+       */
       showNotification?: (options: {
         title: string
         body?: string
-        tag?: string
+        clickTarget?: string
       }) => Promise<boolean>
-      onNotificationClicked?: (callback: (tag?: string) => void) => () => void
+      /** 订阅系统通知的点击，回调参数即当初传入的 clickTarget；返回取消订阅函数 */
+      onNotificationClicked?: (callback: (clickTarget?: string) => void) => () => void
 
       // ── 自动更新（方案 docs/desktop-app-update-plan-2026-09-18.md §6）──
       //

@@ -128,6 +128,18 @@ export function MainLayout() {
   const { theme } = useTheme()
   useRealtimeEvents()
 
+  // 桌面端：点系统通知横幅 → 跳到该通知对应的页面。
+  // 跳转目标由主进程原样回传（渲染端在请求弹通知时就算好了），规则与收件箱同源
+  // （`lib/notifications.ts` 的 `notificationTarget`），所以「点列表」与「点横幅」不会分叉。
+  // ⚠️ 老版本壳（0.1.x）的 preload 不含此通道 ⇒ 用 typeof 判存在，绝不假设它一定在。
+  useEffect(() => {
+    const subscribe = window.desktop?.onNotificationClicked
+    if (typeof subscribe !== 'function') return
+    return subscribe((clickTarget) => {
+      navigate(clickTarget || '/inbox')
+    })
+  }, [navigate])
+
   // 声明了 sidebar 挂载点的启用中外部平台，追加在主菜单末尾。
   // 后端已按可见性过滤（公共 + 自己创建的），这里只做挂载点筛选。
   const mountedApps = useMemo(
