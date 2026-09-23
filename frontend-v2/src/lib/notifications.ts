@@ -52,6 +52,8 @@ export interface NotificationTargetSource {
   actor_id?: string
   task_id?: string
   project_id?: string
+  /** 后端 `model.Notification.SourceEvent`：机器可读来源键，见 `shouldNotifyDesktop` */
+  source_event?: string
 }
 
 export function notificationTarget(item: NotificationTargetSource): string | null {
@@ -70,4 +72,58 @@ export function notificationTarget(item: NotificationTargetSource): string | nul
     return `/projects/${item.project_id}`
   }
   return null
+}
+
+/**
+ * 桌面端**系统通知**（Windows 通知中心横幅）只弹这些来源 —— 其余通知照常进收件箱，
+ * 只是不打扰人。用户口径：只要「需要人工确认的」与「任务完成/失败」两类。
+ *
+ * 🔴 必须用后端的 `source_event` 判类，**绝不**用 `title` 文本匹配：
+ *    标题是写给人看的，后端改一次文案，这里就会**静默**失配 —— 不报错、不告警，
+ *    只是从此再也不弹，属于最难排查的那类故障（跨仓耦合也没有编译期能拦）。
+ *
+ * ⚠️ 与后端 `store_notification_test.go` 的 `TestNotificationSourceEvent` 是**配对契约**：
+ *    两侧任一改动都必须同时改，否则客户端筛出来的集合会与后端实际产生的键错位。
+ *
+ * 键的取值来自后端 `maybeCreateNotificationUnsafe`：
+ *  - `task_status_changed.done`    任务已完成
+ *  - `task_status_changed.failed`  任务执行失败（用户明确要求把失败一并纳入）
+ *  - `todo_hard_deadline_failed`   任务失败的另一条路径 —— 🔴 原因见下方"硬超时"说明
+ *  - `todo_awaiting_review`        产出已提交，等待人工确认
+ *  - `todo_ask_received`           数字员工向你提问
+ *  - `task_plan_ready`             规划完成，请确认后开始执行
+ *  - `todo_rework_exhausted`       产出多次重做仍未通过，请人工介入
+ *  - `todo_remind_escalated`       多次提醒无响应，疑似执行智能体卡死
+ *
+ * 🔴 为什么必须带上 `todo_hard_deadline_failed`（否则「任务失败」会静默漏报）：
+ *    绝大多数 todo 失败都走 `workflow.go` 的 `todo_failed`，紧随其后会调
+ *    `updateTaskStatusUnsafe` ⇒ 聚合出任务级 `task_status_changed.failed`，链路完整。
+ *    **唯独硬超时这条不同**：`timeout_monitor.go` 判超时后**直接** `task.Status = newStatus`
+ *    （约 336 行），**没有**走 `updateTaskStatusUnsafe` ⇒ 任务状态变了但
+ *    **不发 `task_status_changed` 事件**。此时唯一能代表"任务失败"的键就是
+ *    `todo_hard_deadline_failed`。少了它，硬超时失败的任务对用户完全静默。
+ *    （该处还顺带漏了 SSE 刷新 —— 前端要等轮询才发现任务已失败，属另一个待修问题。）
+ *
+ * 「请人工介入」那两条虽然标题措辞不是「确认」，但同属"卡住了在等人"，用户已确认纳入。
+ */
+export const DESKTOP_NOTIFY_SOURCES: readonly string[] = [
+  'task_status_changed.done',
+  'task_status_changed.failed',
+  'todo_hard_deadline_failed',
+  'todo_awaiting_review',
+  'todo_ask_received',
+  'task_plan_ready',
+  'todo_rework_exhausted',
+  'todo_remind_escalated',
+]
+
+/**
+ * 该条通知要不要弹桌面端系统横幅。
+ *
+ * 缺 `source_event` 时返回 false（**不弹**）：老后端 / 更早的桌面壳不带这个字段，
+ * 此时拿不到判据 —— 按「宁可不打扰」处理，而不是退回按标题猜。收件箱不受影响。
+ */
+export function shouldNotifyDesktop(item: NotificationTargetSource | null | undefined): boolean {
+  const src = item?.source_event
+  return typeof src === 'string' && src !== '' && DESKTOP_NOTIFY_SOURCES.includes(src)
 }

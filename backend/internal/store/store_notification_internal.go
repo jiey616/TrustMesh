@@ -4,27 +4,31 @@ import "trustmesh/backend/internal/model"
 
 func (s *Store) maybeCreateNotificationUnsafe(event *model.Event) {
 	var title, body, category, priority string
+	// terminalStatus 非空表示这是 task_status_changed 的某个终态（done/failed/canceled），
+	// 只用于拼 SourceEvent —— 客户端靠它区分「完成」与「失败/取消」。
+	var terminalStatus string
 	switch event.EventType {
 	case "task_status_changed":
 		// 只通知终态（done / failed / canceled），中间状态不通知
-		if to, ok := event.Metadata["to"].(string); ok {
-			switch to {
-			case "done":
-				title = "任务已完成"
-				body = stringOrDefault(event.Content, "任务完成")
-				priority = "medium"
-			case "failed":
-				title = "任务执行失败"
-				body = stringOrDefault(event.Content, "任务失败")
-				priority = "high"
-			case "canceled":
-				title = "任务已取消"
-				body = stringOrDefault(event.Content, "任务被取消")
-				priority = "medium"
-			default:
-				return
-			}
-		} else {
+		to, ok := event.Metadata["to"].(string)
+		if !ok {
+			return
+		}
+		terminalStatus = to
+		switch to {
+		case "done":
+			title = "任务已完成"
+			body = stringOrDefault(event.Content, "任务完成")
+			priority = "medium"
+		case "failed":
+			title = "任务执行失败"
+			body = stringOrDefault(event.Content, "任务失败")
+			priority = "high"
+		case "canceled":
+			title = "任务已取消"
+			body = stringOrDefault(event.Content, "任务被取消")
+			priority = "medium"
+		default:
 			return
 		}
 		category = "task"
@@ -208,24 +212,33 @@ func (s *Store) maybeCreateNotificationUnsafe(event *model.Event) {
 		return
 	}
 
+	// 机器可读来源键：客户端据此判类，不依赖中文标题。
+	// 上面 switch 里每个 case 都与事件类型一一对应，只有 task_status_changed 需要带上终态
+	//（它的三个终态共用一个事件类型，不带就分不出「完成」与「失败/取消」）。
+	sourceEvent := event.EventType
+	if terminalStatus != "" {
+		sourceEvent = event.EventType + "." + terminalStatus
+	}
+
 	now := event.CreatedAt
 	notification := &model.Notification{
-		ID:        newID(),
-		UserID:    event.UserID,
-		OrgID:     s.personalOrgOfUnsafe(event.UserID),
-		EventID:   event.ID,
-		ProjectID: event.ProjectID,
-		TaskID:    event.TaskID,
-		ActorType: event.ActorType,
-		ActorID:   event.ActorID,
-		ActorName: event.ActorName,
-		Title:     title,
-		Body:      body,
-		Category:  category,
-		Priority:  priority,
-		IsRead:    false,
-		ReadAt:    nil,
-		CreatedAt: now,
+		ID:          newID(),
+		UserID:      event.UserID,
+		OrgID:       s.personalOrgOfUnsafe(event.UserID),
+		EventID:     event.ID,
+		ProjectID:   event.ProjectID,
+		TaskID:      event.TaskID,
+		ActorType:   event.ActorType,
+		ActorID:     event.ActorID,
+		ActorName:   event.ActorName,
+		Title:       title,
+		Body:        body,
+		Category:    category,
+		Priority:    priority,
+		SourceEvent: sourceEvent,
+		IsRead:      false,
+		ReadAt:      nil,
+		CreatedAt:   now,
 	}
 	s.notifications[notification.ID] = notification
 	s.userNotifications[event.UserID] = append(s.userNotifications[event.UserID], notification.ID)

@@ -37,6 +37,7 @@ const PRELOAD = path.join(FE, 'electron/preload.cjs')
 const LAYOUT = path.join(FE, 'src/layouts/MainLayout.tsx')
 const INBOX = path.join(FE, 'src/pages/InboxPage.tsx')
 const DTYPES = path.join(FE, 'src/types/desktop.d.ts')
+const LIB = path.join(FE, 'src/lib/notifications.ts')
 
 describe('桌面端系统通知 · 渲染端触发', () => {
   it('🔴 notification.created 分支确实请求弹系统通知（曾经整块缺失的一环）', () => {
@@ -114,5 +115,68 @@ describe('桌面端系统通知 · 桥接声明', () => {
     expect(src).toMatch(/showNotification\?: \(options/)
     expect(src).toMatch(/onNotificationClicked\?: \(callback/)
     expect(src).toMatch(/clickTarget\?: string/)
+  })
+})
+
+describe('桌面端系统通知 · 只弹白名单两类（来源键判定，非标题）', () => {
+  // 用户口径：只要「需要人工确认的」与「任务完成/失败」两类弹系统横幅。
+  // 这条筛选也是静默失败型的：漏了筛选只是"多弹"，但**判据取错**（用标题文本）
+  // 会在后端改一次文案后整段失效，且不报错。
+  it('🔴 渲染端必须先过白名单，再请求弹通知', () => {
+    const code = stripComments(read(RT))
+    const iFilter = code.indexOf('shouldNotifyDesktop(n)')
+    const iShow = code.indexOf('show({ title:')
+    expect(iFilter).toBeGreaterThan(-1)
+    expect(iShow).toBeGreaterThan(-1)
+    expect(iFilter).toBeLessThan(iShow)
+  })
+
+  it('🔴 判据只有 source_event 一个：不许按 title / body 文本匹配', () => {
+    const code = stripComments(read(LIB))
+    expect(code).toMatch(/item\?\.source_event/)
+    expect(code).toMatch(/DESKTOP_NOTIFY_SOURCES\.includes/)
+    // 白名单函数体里不该出现 title / body（注释已剥掉，命中的就是真代码）
+    const fn = code.match(/export function shouldNotifyDesktop[\s\S]*?\n\}/)
+    if (!fn) throw new Error('shouldNotifyDesktop not found')
+    expect(fn[0]).not.toMatch(/title|body/)
+  })
+
+  it('白名单恰好是这 8 个来源键（与后端 TestNotificationSourceEvent 配对契约）', () => {
+    // 🔴 必须先剥注释再抽键：源码里那大段说明性注释本身引用了这些键名，
+    //    不剥的话正则会把注释里的键也当成数组项（顺序对不上则红得莫名其妙）。
+    const blk = stripComments(read(LIB)).match(/DESKTOP_NOTIFY_SOURCES[^=]*=\s*\[([\s\S]*?)\]/)
+    if (!blk) throw new Error('DESKTOP_NOTIFY_SOURCES not found')
+    const keys = [...blk[1].matchAll(/'([^']+)'/g)].map((m) => m[1])
+    expect(keys).toEqual([
+      'task_status_changed.done',
+      'task_status_changed.failed',
+      'todo_hard_deadline_failed',
+      'todo_awaiting_review',
+      'todo_ask_received',
+      'task_plan_ready',
+      'todo_rework_exhausted',
+      'todo_remind_escalated',
+    ])
+  })
+
+  it('类型声明补上了 source_event（否则渲染端拿不到判据）', () => {
+    expect(read(LIB)).toMatch(/source_event\?: string/)
+  })
+
+  it('🔴 白名单每个键的基类型都能在后端 switch 里找到（跨仓契约机械化）', () => {
+    // 前后端是两套语言、两个仓库，白名单写错一个字**不会**有任何编译期或运行期报错，
+    // 只会静默不弹。所以这里直接把后端 Go 源码当数据源对一遍：
+    // 白名单 `a.b` 的基类型 `a` 必须出现在 `case "a":` 中。
+    const go = read(path.join(ROOT, 'backend/internal/store/store_notification_internal.go'))
+    const goCases = new Set([...go.matchAll(/\n\t*case "([^"]+)":/g)].map((m) => m[1]))
+    expect(goCases.size).toBeGreaterThan(5) // 正则不匹配时不要静默通过
+    const keys = [...stripComments(read(LIB)).matchAll(/'([a-z_]+(?:\.[a-z]+)?)'/g)]
+      .map((m) => m[1])
+      .filter((k) => k.includes('_'))
+    expect(keys.length).toBeGreaterThan(0)
+    for (const k of keys) {
+      const base = k.split('.')[0]
+      expect(goCases.has(base), `${k} 的基类型 "${base}" 在后端 switch 里不存在`).toBe(true)
+    }
   })
 })

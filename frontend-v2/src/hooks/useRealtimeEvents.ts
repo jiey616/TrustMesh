@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '@/stores/authStore'
 import { getApiBase } from '@/stores/serverConfigStore'
 import { emitRealtimeEvent } from '@/lib/realtimeBus'
-import { notificationTarget, type NotificationTargetSource } from '@/lib/notifications'
+import { notificationTarget, shouldNotifyDesktop, type NotificationTargetSource } from '@/lib/notifications'
 import type { RealtimeEvent } from '@/types/office'
 
 const SSE_URL = `${getApiBase()}events/stream`
@@ -72,6 +72,9 @@ function notifyViaDesktopShell(n: NotificationTargetSource): void {
   const show = typeof window === 'undefined' ? undefined : window.desktop?.showNotification
   if (typeof show !== 'function') return
   if (!n.title) return
+  // 🔴 白名单筛选：用户只要「待人工确认」与「任务完成/失败」两类系统横幅，其余只进收件箱。
+  //    判据是后端的 `source_event`（机器可读），不是标题文本 —— 见 `shouldNotifyDesktop`。
+  if (!shouldNotifyDesktop(n)) return
   // clickTarget 由主进程原样回传（见 preload 的 onNotificationClicked）。
   // 点击后落到哪一页与收件箱共用同一套规则，兜底为收件箱。
   void show({ title: n.title, body: n.body ?? '', clickTarget: notificationTarget(n) ?? '/inbox' })

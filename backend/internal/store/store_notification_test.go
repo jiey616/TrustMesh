@@ -194,3 +194,79 @@ func TestNotificationTaskCommentFromSelf(t *testing.T) {
 		t.Errorf("self comment should not notify self, got %d notifications", len(s.userNotifications["user-1"]))
 	}
 }
+
+// TestNotificationSourceEvent 钉死「事件 → SourceEvent」的映射。
+//
+// 为什么要专门测它：桌面端系统通知**按 SourceEvent 白名单**决定弹不弹（不再按中文标题），
+// 所以这个字符串是**跨端的机器接口**：后端悄悄改名/改写法，客户端会静默失配（不报错、只是不弹），
+// 没有任何编译期能拦。这里把 7 个「会弹」的键 + 几个「不该弹」的场景固化成契约。
+// 注意它与 frontend-v2 的 `desktopNotifyFilter.test.ts` 是配对的：两边任何一侧改了都必须同时改。
+func TestNotificationSourceEvent(t *testing.T) {
+	now := time.Now().UTC()
+	done := "任务「写剧本」已完成"
+	failed := "任务「写剧本」失败"
+	canceled := "任务「写剧本」已取消"
+
+	cases := []struct {
+		name       string
+		eventType  string
+		metadata   map[string]any
+		content    *string
+		wantSource string
+		wantNotify bool
+	}{
+		// —— 桌面端白名单里的 8 个来源键 ——
+		{"任务完成", "task_status_changed", map[string]any{"to": "done"}, &done, "task_status_changed.done", true},
+		{"任务失败", "task_status_changed", map[string]any{"to": "failed"}, &failed, "task_status_changed.failed", true},
+		// 硬超时判失败：timeout_monitor 直接改 task.Status、**不**发 task_status_changed，
+		// 因此这条键是「任务失败」在该路径下的唯一信号，必须列进桌面端白名单。
+		{"硬超时失败", "todo_hard_deadline_failed", map[string]any{"todo_title": "剧本初稿"}, nil, "todo_hard_deadline_failed", true},
+		{"成果待确认", "todo_awaiting_review", map[string]any{"todo_title": "分镜拆解"}, nil, "todo_awaiting_review", true},
+		{"执行提问", "todo_ask_received", map[string]any{"question": "方向 A 还是 B？"}, nil, "todo_ask_received", true},
+		{"方案确认", "task_plan_ready", map[string]any{"task_title": "写剧本"}, nil, "task_plan_ready", true},
+		{"重做超限", "todo_rework_exhausted", map[string]any{"todo_title": "剧本初稿"}, nil, "todo_rework_exhausted", true},
+		{"疑似卡死", "todo_remind_escalated", map[string]any{"todo_title": "剧本初稿"}, nil, "todo_remind_escalated", true},
+
+		// —— 会生成通知但**不在**白名单：来源键同样必须可读，客户端才判得出「不弹」 ——
+		{"任务取消", "task_status_changed", map[string]any{"to": "canceled"}, &canceled, "task_status_changed.canceled", true},
+		{"Todo 失败", "todo_failed", map[string]any{"todo_title": "剧本初稿"}, nil, "todo_failed", true},
+		{"派发失败", "todo_dispatch_failed", map[string]any{"todo_title": "剧本初稿"}, nil, "todo_dispatch_failed", true},
+		{"预算耗尽", "todo_run_budget_exhausted", map[string]any{"todo_title": "剧本初稿"}, nil, "todo_run_budget_exhausted", true},
+		{"数字员工上线", "agent_status_changed", map[string]any{"new_status": "online"}, nil, "agent_status_changed", true},
+		{"入职申请", "join_request_received", map[string]any{"join_request_id": "jr-1"}, nil, "join_request_received", true},
+		{"PM 回复", "planning_reply", map[string]any{}, nil, "planning_reply", true},
+
+		// —— 压根不生成通知的情况 ——
+		{"中间态不通知", "task_status_changed", map[string]any{"to": "running"}, nil, "", false},
+		{"缺 to 不通知", "task_status_changed", map[string]any{}, nil, "", false},
+		{"未映射事件不通知", "totally_unknown_event", map[string]any{}, nil, "", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New()
+			s.maybeCreateNotificationUnsafe(&model.Event{
+				ID: "e-" + tc.name, UserID: "user-1", EventType: tc.eventType,
+				ActorType: "agent", ActorID: "a-1", ActorName: "数字员工",
+				Content: tc.content, Metadata: tc.metadata, CreatedAt: now,
+			})
+			ids := s.userNotifications["user-1"]
+			if !tc.wantNotify {
+				if len(ids) != 0 {
+					t.Fatalf("不该生成通知，实得 %d 条", len(ids))
+				}
+				return
+			}
+			if len(ids) != 1 {
+				t.Fatalf("expected 1 notification, got %d", len(ids))
+			}
+			n := s.notifications[ids[0]]
+			if n.SourceEvent != tc.wantSource {
+				t.Errorf("source_event = %q, want %q", n.SourceEvent, tc.wantSource)
+			}
+			if n.SourceEvent == "" {
+				t.Errorf("生成的通知必须带 SourceEvent（客户端靠它判类）")
+			}
+		})
+	}
+}
