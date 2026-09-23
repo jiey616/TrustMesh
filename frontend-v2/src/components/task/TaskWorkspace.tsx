@@ -1125,16 +1125,18 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
   const pendingItems = useMemo(() => collectPendingItems(task, events), [task, events])
 
   /**
-   * 恰好一项、且属于「一眼能决策」的类型时，把它内联到 composer 条（顶掉评论框）。
-   * 其余情况（≥2 项，或 plan_review / plan_clarify）返回 null —— 回退到评论框 + 待确认抽屉：
-   *   - ≥2 项：输入条只能容纳一项，硬塞会丢掉其余待办；
-   *   - plan_review / plan_clarify：需要先通读内容才能决策，内联会诱导「没看就点通过」。
-   * 判定与抽屉共用 collectPendingItems，避免两处漂移。
+   * composer 位的「待确认」入口条：只要**存在至少一项**属于「一眼能决策」的类型就出现
+   * （顶掉评论框），条上只报总数，点开走待确认抽屉看完整内容与选项。
+   *
+   * 🔴 这里刻意**不再做 `length === 1` 的限定**（2026-09-22 改）：入口条现在只有一行固定
+   * 高度，容纳不了内容，也就没有「输入条只能放一项」这个约束了。旧实现在 ≥2 项时会彻底
+   * 不显示入口，只剩右上角一个 Badge —— 用户对着评论框打字却推不动任务，正是要避免的误导。
+   *
+   * `otherCount` 把不可内联的 `plan_review` / `plan_clarify` 也计入条上的总数，避免
+   * 「条上说 1 项、抽屉里躺着 3 张卡」对不上账。判定与抽屉共用 collectPendingItems。
    */
-  const inlinePending = useMemo(
-    () => (pendingItems.length === 1 && isInlineConfirmable(pendingItems[0]) ? pendingItems[0] : null),
-    [pendingItems],
-  )
+  const inlinePendingItems = useMemo(() => pendingItems.filter(isInlineConfirmable), [pendingItems])
+  const otherPendingCount = pendingItems.length - inlinePendingItems.length
 
   const pendingOpen = usePendingStore((s) => s.open)
   const setPendingOpen = usePendingStore((s) => s.setOpen)
@@ -1407,10 +1409,10 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
               </Text>
             </div>
           )
-        ) : inlinePending ? (
-          /* 非终态但有一项待确认：评论框在此处「看着能用、实际推不动任务」（评论走 chat 通道，
-             既不回答问题也不批准审核），所以让可操作的确认控件顶掉它。 */
-          <TaskPendingConfirmEntry item={inlinePending} />
+        ) : inlinePendingItems.length > 0 ? (
+          /* 非终态但有待确认项：评论框在此处「看着能用、实际推不动任务」（评论走 chat 通道，
+             既不回答问题也不批准审核），所以让真正的确认入口顶掉它。 */
+          <TaskPendingConfirmEntry items={inlinePendingItems} otherCount={otherPendingCount} />
         ) : (
           <TaskCommentComposer
             candidates={mentionCandidates}

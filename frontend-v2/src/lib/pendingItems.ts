@@ -80,6 +80,26 @@ export const pendingKindLabel: Record<PendingKind, string> = {
 }
 
 /**
+ * composer 入口条上的一句话摘要（仅在「总项数恰好 1」时使用）。
+ *
+ * 刻意**只取标识性文字**（步骤名 / 问题原文），不复述成果内容：内容本体在抽屉的完整
+ * 卡片里，入口条的唯一职责是让用户知道「在等什么」。四个分支都必须返回非空串 ——
+ * 否则条上会渲染出「「undefined」待人工确认」这种最难排查的一类占位文案。
+ */
+export function pendingItemSummary(item: PendingItem): string {
+  switch (item.kind) {
+    case 'todo_review':
+      return item.todoTitle
+    case 'todo_ask':
+      return item.question
+    case 'plan_review':
+      return pendingKindLabel.plan_review
+    case 'plan_clarify':
+      return pendingKindLabel.plan_clarify
+  }
+}
+
+/**
  * 从任务消息里找「最近一条未被用户回复的」pm_agent ui_blocks 消息。
  * 一旦往回碰到用户消息就说明上一轮已应答，直接返回 null。
  */

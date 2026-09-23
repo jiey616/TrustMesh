@@ -197,7 +197,7 @@ export function TodoAskCard({ item }: { item: TodoAskPending }) {
 
   const submit = async (answer: string) => {
     if (!answer.trim() || busy) return
-    // 内联控件与抽屉可能同时渲染本条目 ⇒ 用共享在途标记防重复提交。
+    // 局部 isPending 拦不住双击 / 卡片重挂载 ⇒ 走跨实例的在途标记（见 pendingStore.submitting）。
     if (!beginSubmit(item.id)) return
     try {
       await answerTodo.mutateAsync({ taskId: item.taskId, todoId: item.todoId, questionId: item.questionId, answer: answer.trim() })
