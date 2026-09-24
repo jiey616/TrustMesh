@@ -40,6 +40,7 @@ import { downloadProjectFile } from '@/api/projectFiles'
 import { getTaskArtifactContent } from '@/api/tasks'
 import { Markdown } from '@/components/task/Markdown'
 import { stripReplyPrefix } from '@/lib/text'
+import { isExecutionNoise } from '@/lib/executionNoise'
 import { TaskDescription } from '@/components/task/TaskDescription'
 import { TaskResultView } from '@/components/task/TaskResultView'
 import { TaskTodoPanel } from '@/components/task/TaskTodoPanel'
@@ -1105,6 +1106,8 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
   const [showCancel, setShowCancel] = useState(false)
   const [resultOpen, setResultOpen] = useState(false)
   const [todoOpen, setTodoOpen] = useState(false)
+  // 「执行过程」的机械噪声（进度上报/状态机推进/派发重试…）默认折叠，见 lib/executionNoise
+  const [showExecutionLog, setShowExecutionLog] = useState(false)
   const feedRef = useRef<HTMLDivElement>(null)
 
   const isPlanningMode = task ? ['planning', 'review'].includes(task.status) : false
@@ -1114,6 +1117,12 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
   // 失败任务里所有 failed 的 todo —— 「重试/继续」的作用对象。
   const failedTodos = useMemo(() => (task?.todos ?? []).filter((t) => t.status === 'failed'), [task])
   const mentionCandidates = useMemo(() => buildTaskMentionCandidates(task), [task])
+  // 「执行过程」主视图 = 承载故事线（分配/开始/完成）、待处理、失败的事件；
+  // 机械噪声（EXECUTION_NOISE_EVENTS）默认折叠进「详细日志」，数据一条没少。
+  // 🔴 两段各自独立算 `shouldGroupWithPrev` 的 prev：折叠后相邻的两条可能在原数组里隔着噪声，
+  //    用原数组下标算会导致「同 actor 同类型」的合并判定错位。
+  const mainEvents = useMemo(() => (events ?? []).filter((ev) => !isExecutionNoise(ev.event_type)), [events])
+  const noiseEvents = useMemo(() => (events ?? []).filter((ev) => isExecutionNoise(ev.event_type)), [events])
   const todoStats = useMemo(() => {
     const todos = task?.todos ?? []
     return { done: todos.filter((t) => t.status === 'done').length, total: todos.length }
@@ -1361,12 +1370,39 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
                   <Text style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>执行过程</Text>
                 </div>
                 <div>
-                  {events.map((ev, i) => {
-                    const prev = i > 0 ? events[i - 1] : undefined
+                  {mainEvents.map((ev, i) => {
+                    const prev = i > 0 ? mainEvents[i - 1] : undefined
                     const showHeader = !shouldGroupWithPrev(ev, prev)
                     return <ExecutionEventItem key={ev.id} event={ev} showHeader={showHeader} />
                   })}
+                  {mainEvents.length === 0 && (
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      暂无关键节点，平台的机械动作已折叠到「详细日志」。
+                    </Text>
+                  )}
                 </div>
+                {/* 机械噪声：默认收起。唯一入口，保证审计轨迹不丢。 */}
+                {noiseEvents.length > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    <Button
+                      type="link"
+                      size="small"
+                      onClick={() => setShowExecutionLog((v) => !v)}
+                      style={{ padding: 0, fontSize: 12, height: 'auto' }}
+                    >
+                      {showExecutionLog ? '收起详细日志' : `展开详细日志（${noiseEvents.length} 条）`}
+                    </Button>
+                    {showExecutionLog && (
+                      <div style={{ marginTop: 8, opacity: 0.72 }}>
+                        {noiseEvents.map((ev, i) => {
+                          const prev = i > 0 ? noiseEvents[i - 1] : undefined
+                          const showHeader = !shouldGroupWithPrev(ev, prev)
+                          return <ExecutionEventItem key={ev.id} event={ev} showHeader={showHeader} />
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

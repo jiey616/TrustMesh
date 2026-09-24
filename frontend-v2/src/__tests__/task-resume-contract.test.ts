@@ -171,8 +171,12 @@ describe('重试/继续 · 事件类型', () => {
     expect(decl[0]).toMatch(/'todo_reopened'/)
   })
 
-  it('后端为 todo_resumed 配了通知文案（否则事件不进通知流）', () => {
+  it('🔴 后端已收窄 todo_resumed / todo_reopened 的通知（通知只留给「要人做决定」的事件）', () => {
+    // 2026-09-24 用户口径「不要什么都通知」：用户自己点的重开 / 重试属于平台的机械动作，
+    // 不改变「用户需要做什么」，因此不再进通知流。事件本身仍在任务事件流里（上面那条测试已断言）。
+    // 这条测试以前是**反向**的（断言必须有 case），收紧后翻转为「必须没有 case」。
     const src = read(path.join(ROOT, 'backend/internal/store/store_notification_internal.go'))
-    expect(src).toMatch(/case "todo_resumed":/)
+    expect(src).not.toMatch(/case "todo_resumed":/)
+    expect(src).not.toMatch(/case "todo_reopened":/)
   })
 })

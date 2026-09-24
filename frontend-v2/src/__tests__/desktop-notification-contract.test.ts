@@ -141,7 +141,7 @@ describe('桌面端系统通知 · 只弹白名单两类（来源键判定，非
     expect(fn[0]).not.toMatch(/title|body/)
   })
 
-  it('白名单恰好是这 8 个来源键（与后端 TestNotificationSourceEvent 配对契约）', () => {
+  it('白名单恰好是这 9 个来源键（与后端 TestNotificationSourceEvent 配对契约）', () => {
     // 🔴 必须先剥注释再抽键：源码里那大段说明性注释本身引用了这些键名，
     //    不剥的话正则会把注释里的键也当成数组项（顺序对不上则红得莫名其妙）。
     const blk = stripComments(read(LIB)).match(/DESKTOP_NOTIFY_SOURCES[^=]*=\s*\[([\s\S]*?)\]/)
@@ -156,6 +156,7 @@ describe('桌面端系统通知 · 只弹白名单两类（来源键判定，非
       'task_plan_ready',
       'todo_rework_exhausted',
       'todo_remind_escalated',
+      'planning_reply.needs_input',
     ])
   })
 

@@ -7,6 +7,35 @@ func (s *Store) maybeCreateNotificationUnsafe(event *model.Event) {
 	// terminalStatus 非空表示这是 task_status_changed 的某个终态（done/failed/canceled），
 	// 只用于拼 SourceEvent —— 客户端靠它区分「完成」与「失败/取消」。
 	var terminalStatus string
+	// sourceEventSuffix 非空表示要给 SourceEvent 加后缀，用于区分**同一事件类型下的不同场景**
+	// （目前只有 planning_reply：纯文字回复不通知，挂了澄清卡的才通知）。
+	var sourceEventSuffix string
+	// 🔴 收窄原则（2026-09-24 用户口径）：通知的**唯一职责是"要人做决定"**。
+	//    平台的机械动作（执行侧进度、总控反复派发、自动重试、agent 上下线、状态的中间态）
+	//    不改变"用户需要做什么"，只会淹掉真正待处理的那几条 ⇒ **一律不生成通知**。
+	//
+	//    因此刻意**不处理**下面这些事件（它们仍会进任务事件流，只是不再变成通知）：
+	//      todo_progress / todo_failed / todo_dispatch_failed / todo_run_budget_exhausted
+	//      todo_reopened / todo_resumed / todo_rework_requested / todo_review_approved
+	//      task_comment / agent_status_changed
+	//    ⚠️ 其中 todo_dispatch_failed 曾被刻意"可见"（P-01：静默派发失败会卡住整条流水线），
+	//       现在由后台对账每 2min 自动补派 + 任务级 task_status_changed.failed 兜底，故收窄。
+	//
+	//    ⚠️ planning_reply 是**条件通知**（唯一的例外）：PM 的纯文字回复（"收到，我来分析"）
+	//       内容已在任务对话里，不打扰；但**挂了 ui_blocks 澄清卡**时属于"等你填表"，
+	//       必须通知，否则用户离开页面后就不知道 PM 在等自己。判据是事件 metadata 的
+	//       `needs_user_input`（机器可读标量，别拿 `ui_blocks` 判 —— 它的类型在
+	//       内存态与 Mongo 回读态之间会退化），来源键用 `planning_reply.needs_input`。
+	//
+	// 🔴 红线：**绝不能砍"需要人介入"的失败信号**。硬超时那条路径（timeout_monitor）
+	//    跳过 updateTaskStatusUnsafe、不发 task_status_changed，所以 todo_hard_deadline_failed
+	//    是「任务失败」在该路径下的**唯一**信号，必须保留。
+	//
+	//    保留清单（同时是桌面端弹横幅的白名单来源）：
+	//      task_status_changed(done/failed/canceled)、todo_hard_deadline_failed、
+	//      todo_remind_escalated、todo_rework_exhausted、todo_awaiting_review、
+	//      todo_ask_received、task_plan_ready、join_request_received、
+	//      planning_reply.needs_input（规划待澄清）
 	switch event.EventType {
 	case "task_status_changed":
 		// 只通知终态（done / failed / canceled），中间状态不通知
@@ -32,11 +61,6 @@ func (s *Store) maybeCreateNotificationUnsafe(event *model.Event) {
 			return
 		}
 		category = "task"
-	case "todo_failed":
-		title = "Todo 执行失败"
-		body = stringOrDefault(event.Content, "Todo 失败")
-		category = "todo"
-		priority = "high"
 	case "todo_hard_deadline_failed":
 		// P-03: todo ran past the wall-clock hard deadline with no productive
 		// progress. Distinct from todo_failed so the UI can tell "died" from
@@ -61,82 +85,12 @@ func (s *Store) maybeCreateNotificationUnsafe(event *model.Event) {
 		}
 		category = "todo"
 		priority = "high"
-	case "todo_run_budget_exhausted":
-		// P-08: the run was truncated by its tool-call budget before it could
-		// report completion. Distinct from a plain failure so the user knows to
-		// split the step rather than wait.
-		title = "执行预算耗尽"
-		body = stringOrDefault(event.Content, "执行侧 run 预算耗尽，执行被静默截断")
-		category = "todo"
-		priority = "high"
-	case "todo_reopened":
-		// P-05: a terminal todo was brought back so late work could land.
-		// Medium priority - it is a recovery, not a failure, but the user
-		// should know the state changed underneath them.
-		title = "Todo 已重新开启"
-		if t, ok := event.Metadata["todo_title"].(string); ok && t != "" {
-			body = "「" + t + "」已重新开启（原为终态），等待执行结果"
-		} else {
-			body = stringOrDefault(event.Content, "Todo 已重新开启")
-		}
-		category = "todo"
-		priority = "medium"
-	case "todo_resumed":
-		// 用户主动点了「重试/继续」：与 todo_reopened 的区别在于这是**人为的
-		// 重跑决定**（会消耗执行额度），所以带上理由，方便回看是谁为什么让它重跑的。
-		title = "任务已按用户要求重试"
-		if t, ok := event.Metadata["todo_title"].(string); ok && t != "" {
-			body = "「" + t + "」已重新开始执行"
-			if r, ok := event.Metadata["reason"].(string); ok && r != "" {
-				body += "（理由：" + r + "）"
-			}
-		} else {
-			body = stringOrDefault(event.Content, "任务已按用户要求重试")
-		}
-		category = "todo"
-		priority = "medium"
-	case "todo_dispatch_failed":
-		// P-01: automatic sequential dispatch failed (all retries exhausted).
-		// Surfaced because a silent dispatch failure used to stall the whole
-		// pipeline invisibly.
-		title = "任务派发失败"
-		if t, ok := event.Metadata["todo_title"].(string); ok && t != "" {
-			body = "「" + t + "」自动派发失败，系统将自动重试；若持续失败请手动派发"
-		} else {
-			body = stringOrDefault(event.Content, "任务派发失败")
-		}
-		category = "todo"
-		priority = "high"
-	case "planning_reply":
-		title = "PM 回复"
-		body = stringOrDefault(event.Content, "新的回复")
-		category = "task"
-		priority = "medium"
 	case "join_request_received":
 		// 数字员工入职申请：提示用户前往审批
 		title = "数字员工入职申请"
 		body = stringOrDefault(event.Content, "新的数字员工申请加入平台")
 		category = "agent"
 		priority = "high"
-	case "agent_status_changed":
-		// 数字员工上线 / 离线 / 状态变化
-		newStatus, _ := event.Metadata["new_status"].(string)
-		switch newStatus {
-		case "offline":
-			title = "数字员工离线"
-			body = stringOrDefault(event.Content, "数字员工已离线")
-		case "online":
-			title = "数字员工上线"
-			body = stringOrDefault(event.Content, "数字员工已上线")
-		case "busy":
-			title = "数字员工忙碌"
-			body = stringOrDefault(event.Content, "数字员工正在执行任务")
-		default:
-			title = "数字员工状态变化"
-			body = stringOrDefault(event.Content, "数字员工状态已变更")
-		}
-		category = "agent"
-		priority = "low"
 	case "task_plan_ready":
 		// 任务规划完成，等待用户确认
 		title = "任务规划完成"
@@ -167,16 +121,6 @@ func (s *Store) maybeCreateNotificationUnsafe(event *model.Event) {
 		}
 		category = "task"
 		priority = "high"
-	case "todo_rework_requested":
-		// 产出被退回重做
-		title = "产出被退回重做"
-		if t, ok := event.Metadata["todo_title"].(string); ok && t != "" {
-			body = "「" + t + "」产出未通过，已退回重做"
-		} else {
-			body = stringOrDefault(event.Content, "有产出被退回重做")
-		}
-		category = "task"
-		priority = "medium"
 	case "todo_rework_exhausted":
 		// 重做次数耗尽，需要人工介入
 		title = "产出重做超限"
@@ -187,22 +131,23 @@ func (s *Store) maybeCreateNotificationUnsafe(event *model.Event) {
 		}
 		category = "task"
 		priority = "high"
-	case "todo_review_approved":
-		// 产出通过人工审核
-		title = "产出已通过审核"
-		if t, ok := event.Metadata["todo_title"].(string); ok && t != "" {
-			body = "「" + t + "」已通过人工确认"
+	case "planning_reply":
+		// 规划阶段的 PM 回复：**只在挂了澄清卡（ui_blocks）时才通知**。
+		// 纯文字回复（"收到，我来分析"）内容已在任务对话里，通知只会是噪声 —— 正是
+		// 2026-09-24 收窄时砍掉的那批。但「PM 抛卡等你填」是"要人做决定"，必须通知。
+		// 判据用 metadata 的 needs_user_input（见 store_planning.go 同名字段的说明）。
+		if needsInput, _ := event.Metadata["needs_user_input"].(bool); !needsInput {
+			return
+		}
+		title = "规划待澄清"
+		if t, ok := event.Metadata["task_title"].(string); ok && t != "" {
+			body = "「" + t + "」PM 在规划阶段有问题等你回答"
 		} else {
-			body = stringOrDefault(event.Content, "产出已通过人工确认")
+			body = stringOrDefault(event.Content, "PM 在规划阶段有问题等你回答")
 		}
 		category = "task"
-		priority = "low"
-	case "task_comment":
-		// 任务新评论（agent 评论时通知用户；用户自己评论不通知）
-		title = "任务评论"
-		body = stringOrDefault(event.Content, "任务有新评论")
-		category = "task"
-		priority = "low"
+		priority = "high"
+		sourceEventSuffix = "needs_input"
 	default:
 		return
 	}
@@ -213,11 +158,17 @@ func (s *Store) maybeCreateNotificationUnsafe(event *model.Event) {
 	}
 
 	// 机器可读来源键：客户端据此判类，不依赖中文标题。
-	// 上面 switch 里每个 case 都与事件类型一一对应，只有 task_status_changed 需要带上终态
-	//（它的三个终态共用一个事件类型，不带就分不出「完成」与「失败/取消」）。
+	// 上面 switch 里每个 case 都与事件类型一一对应，只有两处需要加后缀：
+	//   - task_status_changed 需要带上终态（它的三个终态共用一个事件类型，不带就分不出
+	//     「完成」与「失败/取消」）；
+	//   - planning_reply 需要带上 needs_input（同一事件类型下"纯闲聊"不通知、"等你填"才通知，
+	//     后端 switch 的基类型对不上具体场景，客户端靠后缀区分）。
 	sourceEvent := event.EventType
-	if terminalStatus != "" {
+	switch {
+	case terminalStatus != "":
 		sourceEvent = event.EventType + "." + terminalStatus
+	case sourceEventSuffix != "":
+		sourceEvent = event.EventType + "." + sourceEventSuffix
 	}
 
 	now := event.CreatedAt

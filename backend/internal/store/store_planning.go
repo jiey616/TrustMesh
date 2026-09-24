@@ -230,8 +230,14 @@ func (s *Store) AppendPMTaskReply(nodeID, taskID, content string, uiBlocks []mod
 		task.UpdatedAt = now
 
 		s.addEventUnsafe(task.UserID, task.ProjectID, task.ID, "", "agent", pmAgent.ID, pmAgent.Name, "planning_reply", &content, map[string]any{
-			"task_id":   task.ID,
-			"ui_blocks": uiBlocks,
+			"task_id":    task.ID,
+			"task_title": task.Title,
+			"ui_blocks":  uiBlocks,
+			// 🔴 机器可读判据：这条回复是不是「挂了澄清卡、等人回答」。
+			// 不要用 `ui_blocks` 本身去判 —— 事件从 Mongo 读回时它会退化成
+			// `[]any{map[string]any{...}}`，与内存态 `[]model.UIBlock` 类型不同，
+			// 断言必然失配。标量布尔值两边一致。
+			"needs_user_input": len(uiBlocks) > 0,
 		}, now)
 		return nil
 	}); appErr != nil {

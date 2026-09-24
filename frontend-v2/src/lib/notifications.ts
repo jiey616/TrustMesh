@@ -94,6 +94,14 @@ export function notificationTarget(item: NotificationTargetSource): string | nul
  *  - `task_plan_ready`             规划完成，请确认后开始执行
  *  - `todo_rework_exhausted`       产出多次重做仍未通过，请人工介入
  *  - `todo_remind_escalated`       多次提醒无响应，疑似执行智能体卡死
+ *  - `planning_reply.needs_input`  规划阶段 PM 抛了澄清卡，等你填
+ *
+ * 🔴 为什么 `planning_reply.needs_input` 是**带后缀**的键：
+ *    后端 switch 是按**事件类型**分支的，而 `planning_reply` 是**条件通知**
+ *    （纯文字回复"收到，我来分析"不通知，挂了澄清卡才通知）。所以后端在同一 case 内
+ *    用 metadata 的 `needs_user_input` 分流，并给来源键加后缀区分场景。
+ *    这样本白名单的基类型 `planning_reply` 仍然对得上后端 switch 的既有 case ——
+ *    下面那条跨仓契约测试（断言"白名单键的基类型必须能挂到 Go case 上"）才能继续生效。
  *
  * 🔴 为什么必须带上 `todo_hard_deadline_failed`（否则「任务失败」会静默漏报）：
  *    绝大多数 todo 失败都走 `workflow.go` 的 `todo_failed`，紧随其后会调
@@ -115,6 +123,7 @@ export const DESKTOP_NOTIFY_SOURCES: readonly string[] = [
   'task_plan_ready',
   'todo_rework_exhausted',
   'todo_remind_escalated',
+  'planning_reply.needs_input',
 ]
 
 /**

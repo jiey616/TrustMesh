@@ -7,7 +7,7 @@ import { DESKTOP_NOTIFY_SOURCES, shouldNotifyDesktop } from './notifications'
 // 只是不打扰人。判据必须是后端的 `source_event`（机器可读），**不能**用标题文本 ——
 // 标题改文案就静默失配，不报错、只是从此不弹。
 describe('shouldNotifyDesktop', () => {
-  it('白名单内的 8 个来源键都弹', () => {
+  it('白名单内的 9 个来源键都弹', () => {
     const sources = [
       'task_status_changed.done', // 任务已完成
       'task_status_changed.failed', // 任务执行失败
@@ -17,6 +17,7 @@ describe('shouldNotifyDesktop', () => {
       'task_plan_ready', // 规划完成，请确认后开始执行
       'todo_rework_exhausted', // 产出多次重做仍未通过，请人工介入
       'todo_remind_escalated', // 多次提醒无响应，疑似执行智能体卡死
+      'planning_reply.needs_input', // 规划阶段 PM 抛了澄清卡，等你填
     ]
     for (const source_event of sources) {
       expect(shouldNotifyDesktop({ source_event, title: '随便什么标题' }), source_event).toBe(true)
@@ -30,7 +31,7 @@ describe('shouldNotifyDesktop', () => {
       'task_status_changed.canceled',
       'agent_status_changed',
       'join_request_received',
-      'planning_reply',
+      'planning_reply', // 🔴 裸键不弹：只有带 .needs_input 后缀的「挂了澄清卡」那种才弹
       'task_comment',
       'todo_failed', // 普通 todo 失败：紧随其后会发 task_status_changed.failed，无需重复弹
       'todo_dispatch_failed', // 派发失败会自动重试，不需要打扰人
@@ -60,14 +61,17 @@ describe('shouldNotifyDesktop', () => {
     expect(shouldNotifyDesktop({})).toBe(false)
   })
 
-  it('白名单恰好 8 项且无重复（与后端 TestNotificationSourceEvent 配对）', () => {
-    expect(DESKTOP_NOTIFY_SOURCES).toHaveLength(8)
-    expect(new Set(DESKTOP_NOTIFY_SOURCES).size).toBe(8)
+  it('白名单恰好 9 项且无重复（与后端 TestNotificationSourceEvent 配对）', () => {
+    expect(DESKTOP_NOTIFY_SOURCES).toHaveLength(9)
+    expect(new Set(DESKTOP_NOTIFY_SOURCES).size).toBe(9)
     // 「任务完成」类只认 done / failed —— canceled 不该混进来
     expect(DESKTOP_NOTIFY_SOURCES).toContain('task_status_changed.done')
     expect(DESKTOP_NOTIFY_SOURCES).toContain('task_status_changed.failed')
     expect(DESKTOP_NOTIFY_SOURCES).not.toContain('task_status_changed.canceled')
     // 硬超时那条是"任务失败"的唯一信号，必须在内
     expect(DESKTOP_NOTIFY_SOURCES).toContain('todo_hard_deadline_failed')
+    // 规划待澄清必须带后缀 —— 裸 `planning_reply` 会把 PM 的闲聊也放进来
+    expect(DESKTOP_NOTIFY_SOURCES).toContain('planning_reply.needs_input')
+    expect(DESKTOP_NOTIFY_SOURCES).not.toContain('planning_reply')
   })
 })

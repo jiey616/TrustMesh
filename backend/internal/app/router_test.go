@@ -1226,11 +1226,10 @@ func TestUserRealtimeStreamPushesDomainEvents(t *testing.T) {
 		t.Fatalf("append pm task reply: %v", appErr)
 	}
 
-	notificationCreated := readUserStreamEventOfType(t, reader, "notification.created")
-	if nestedString(notificationCreated, "payload", "notification", "category") != "task" {
-		t.Fatalf("unexpected notification.created payload: %#v", notificationCreated)
-	}
-
+	// 🔴 这里**不再**断言 notification.created：`planning_reply` 自 2026-09-24 起被收窄
+	//（通知只留给「要人做决定」的事件，PM 的规划闲聊已在任务对话里可见，不再打扰），
+	// 所以 AppendPMTaskReply 现在只推任务域事件、不产通知。
+	// 通知断言挪到下面的 FinalizePlanByPMNode（它发 `task_plan_ready`，仍在保留清单里）。
 	taskUpdated := readUserStreamEventMatching(t, reader, func(payload map[string]any) bool {
 		return nestedString(payload, "type") == "task.updated" &&
 			nestedString(payload, "payload", "task", "id") == planTask.ID &&
@@ -1256,6 +1255,12 @@ func TestUserRealtimeStreamPushesDomainEvents(t *testing.T) {
 	})
 	if appErr != nil {
 		t.Fatalf("finalize plan: %v", appErr)
+	}
+
+	// `task_plan_ready`（FinalizePlanByPMNode，actor = PM agent）仍会生成通知，category == "task"。
+	notificationCreated := readUserStreamEventOfType(t, reader, "notification.created")
+	if nestedString(notificationCreated, "payload", "notification", "category") != "task" {
+		t.Fatalf("unexpected notification.created payload: %#v", notificationCreated)
 	}
 
 	if _, appErr := application.Store.UpdateTodoProgressByNode(dev.NodeID, store.TodoProgressInput{
@@ -1347,8 +1352,13 @@ func TestUserRealtimeStreamPushesNotificationReadLifecycle(t *testing.T) {
 	if appErr != nil {
 		t.Fatalf("create pm: %v", appErr)
 	}
+	dev, appErr := application.Store.CreateAgent(store.Scope{UserID: userID}, "node-dev-001", "Developer", "developer", "Dev", []string{"backend"})
+	if appErr != nil {
+		t.Fatalf("create dev: %v", appErr)
+	}
 	application.Store.SyncAgentPresence([]store.AgentPresence{
 		{NodeID: pm.NodeID, LastSeenAt: time.Now().UTC()},
+		{NodeID: dev.NodeID, LastSeenAt: time.Now().UTC()},
 	}, time.Now().UTC())
 
 	project, appErr := application.Store.CreateProject(store.Scope{UserID: userID}, "Notification Project", "demo", pm.ID)
@@ -1364,13 +1374,31 @@ func TestUserRealtimeStreamPushesNotificationReadLifecycle(t *testing.T) {
 	defer streamResp.Body.Close()
 	reader := bufio.NewReader(streamResp.Body)
 
-	if _, appErr := application.Store.AppendPMTaskReply(pm.NodeID, planTask.ID, "收到，我来分析", nil); appErr != nil {
-		t.Fatalf("append pm task reply: %v", appErr)
+	// 🔴 通知的造法变了（2026-09-24 收窄）：`AppendPMTaskReply` 产出的 `planning_reply` 不再生成通知，
+	// 所以这里改用 `task_plan_ready`（FinalizePlanByPMNode，actor = PM agent，不在「不通知自己」范围内）。
+	// 要拿**第二条**通知：先用 `RejectPlan` 把任务退回 planning（用户操作，本身不产通知），再提交一次。
+	finalizePlan := func(messageID, title string) {
+		t.Helper()
+		if _, err := application.Store.FinalizePlanByPMNode(pm.NodeID, messageID, store.TaskPlanReadyInput{
+			TaskID:      planTask.ID,
+			Title:       title,
+			Description: "Support plan-ready notifications",
+			Todos: []store.TaskCreateTodoInput{
+				{ID: "todo-1", Title: "Build backend API", Description: "Implement endpoints", AssigneeNodeID: dev.NodeID},
+			},
+		}); err != nil {
+			t.Fatalf("finalize plan %s: %v", messageID, err)
+		}
 	}
+
+	finalizePlan("msg-notify-1", "Notification coverage v1")
 	created := readUserStreamEventOfType(t, reader, "notification.created")
 	notificationID := nestedString(created, "payload", "notification", "id")
 	if notificationID == "" {
 		t.Fatalf("missing notification id in created payload: %#v", created)
+	}
+	if nestedString(created, "payload", "notification", "category") != "task" {
+		t.Fatalf("unexpected notification category: %#v", created)
 	}
 
 	readResp := doJSON(t, testServer.Client(), http.MethodPatch, testServer.URL+"/api/v1/notifications/"+notificationID+"/read", token, nil)
@@ -1382,9 +1410,10 @@ func TestUserRealtimeStreamPushesNotificationReadLifecycle(t *testing.T) {
 		t.Fatalf("unexpected notification.read payload: %#v", readEvent)
 	}
 
-	if _, appErr := application.Store.AppendPMTaskReply(pm.NodeID, planTask.ID, "补充一个细节", nil); appErr != nil {
-		t.Fatalf("append second pm task reply: %v", appErr)
+	if _, appErr := application.Store.RejectPlan(store.Scope{UserID: userID}, planTask.ID, "再细化一下步骤"); appErr != nil {
+		t.Fatalf("reject plan: %v", appErr)
 	}
+	finalizePlan("msg-notify-2", "Notification coverage v2")
 	secondCreated := readUserStreamEventOfType(t, reader, "notification.created")
 	secondID := nestedString(secondCreated, "payload", "notification", "id")
 	if secondID == "" {
