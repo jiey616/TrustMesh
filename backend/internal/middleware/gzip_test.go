@@ -190,6 +190,54 @@ func TestGzipBypassesEventStreamByPathOnly(t *testing.T) {
 	}
 }
 
+// 🔴 兜底契约：即使请求**没命中**入口旁路（路径后缀不匹配、Accept 也不是
+// text/event-stream），只要响应 Content-Type 是 text/event-stream，包装器就必须
+// ①保住 http.Flusher（否则流式调用方直接失效）②不压缩 ③逐帧立即写出。
+//
+// 为什么必须单独测：上面那条 SSE 用例打在 /api/v1/events/stream，**命中了入口旁路**，
+// 根本没进包装分支 —— 也就是「包装器包住流式响应」这条真实存在的路径此前零覆盖。
+// `/api/v1/assistant/chat` 就是这种形态（它目前带 Accept: text/event-stream 会走旁路，
+// 但旁路判定是约定、不是类型保证；新增流式端点时很容易漏）。
+func TestGzipKeepsStreamingIntactWhenNotBypassed(t *testing.T) {
+	var flusherOK bool
+	r := newGzipTestEngine("/api/v1/assistant/chat", func(c *gin.Context) {
+		f, ok := c.Writer.(http.Flusher)
+		if !ok {
+			t.Error("c.Writer 不再是 http.Flusher：ginSSEWriter.WriteEvent 的 Flush 会失效")
+			return
+		}
+		flusherOK = true
+		// 复刻 handler/ginSSEWriter.WriteEvent 的调用形态：小帧 -> Flush -> 大帧 -> Flush
+		c.SSEvent("navigate", gin.H{"path": "/x"})
+		f.Flush()
+		c.SSEvent("token", gin.H{"text": strings.Repeat("z", 2048)})
+		f.Flush()
+	})
+
+	res := doGzipRequest(t, r, http.MethodPost, "/api/v1/assistant/chat", map[string]string{
+		"Accept-Encoding": "gzip",
+		"Accept":          "*/*",
+	})
+
+	if !flusherOK {
+		t.Fatal("包装后丢了 http.Flusher")
+	}
+	if got := res.Header.Get("Content-Encoding"); got != "" {
+		t.Fatalf("Content-Encoding = %q, want empty（text/event-stream 必须原样）", got)
+	}
+	if got := res.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/event-stream") {
+		t.Fatalf("Content-Type = %q, want text/event-stream", got)
+	}
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	got := string(body)
+	if !strings.Contains(got, "event:navigate") || !strings.Contains(got, "event:token") {
+		t.Fatalf("SSE 帧不完整（两帧都必须在，且未被缓冲吞掉）: %q", got)
+	}
+}
+
 // 🔴 下载契约：http.ServeContent 的 Content-Length / Accept-Ranges 必须原样保留。
 func TestGzipLeavesBinaryDownloadIntact(t *testing.T) {
 	payload := bytes.Repeat([]byte{0x00, 0x01, 0x02, 0x03}, 4096) // 16 KB
