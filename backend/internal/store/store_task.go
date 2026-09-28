@@ -3,6 +3,7 @@ package store
 import (
 	"sort"
 	"strings"
+	"time"
 
 	"go.uber.org/zap"
 	"trustmesh/backend/internal/model"
@@ -87,7 +88,15 @@ func (s *Store) GetTaskByNodeID(nodeID, taskID string) (*model.TaskDetail, *tran
 	return nil, transport.Forbidden("agent is not a participant of this task")
 }
 
-func (s *Store) ListTaskEvents(sc Scope, taskID string) ([]model.Event, *transport.AppError) {
+// ListTaskEvents 返回某任务的事件流，按 CreatedAt 升序。
+//
+// since 为零值时返回**全量**，与改造前的行为完全一致（移动端与旧桌面端不受影响）；
+// 非零时只返回 CreatedAt >= since 的事件，供前端轮询取增量 —— 首次全量之后，
+// 每 4 秒的轮询只传新增的那几条，而不是重传整条 542 KB 的历史。
+//
+// 🔴 用 >= 而不是 > 是刻意的：相邻事件可能落在同一毫秒，用 > 会把边界那条吞掉，
+// 表现为「执行过程」偶发少一条。多回一条由调用方按 id 去重，代价远小于漏条。
+func (s *Store) ListTaskEvents(sc Scope, taskID string, since time.Time) ([]model.Event, *transport.AppError) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	task, ok := s.tasks[taskID]
@@ -95,8 +104,13 @@ func (s *Store) ListTaskEvents(sc Scope, taskID string) ([]model.Event, *transpo
 		return nil, transport.NotFound("task not found")
 	}
 	events := s.taskEvents[taskID]
-	cloned := make([]model.Event, len(events))
-	copy(cloned, events)
+	cloned := make([]model.Event, 0, len(events))
+	for _, e := range events {
+		if !since.IsZero() && e.CreatedAt.Before(since) {
+			continue
+		}
+		cloned = append(cloned, e)
+	}
 	sort.Slice(cloned, func(i, j int) bool { return cloned[i].CreatedAt.Before(cloned[j].CreatedAt) })
 	return cloned, nil
 }

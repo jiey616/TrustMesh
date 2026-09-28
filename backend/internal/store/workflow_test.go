@@ -233,7 +233,7 @@ func TestTodoCompleteIdempotencyByMessageID(t *testing.T) {
 	if task2.Status != "done" || task1.ID != task2.ID {
 		t.Fatalf("unexpected duplicate todo.complete result: task1=%s task2=%s status=%s", task1.ID, task2.ID, task2.Status)
 	}
-	events, appErr := s.ListTaskEvents(Scope{UserID: task1.UserID}, task.ID)
+	events, appErr := s.ListTaskEvents(Scope{UserID: task1.UserID}, task.ID, time.Time{})
 	if appErr != nil {
 		t.Fatalf("list task events: %v", appErr)
 	}

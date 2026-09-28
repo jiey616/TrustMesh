@@ -256,7 +256,17 @@ func (h *TaskHandler) ListEvents(c *gin.Context) {
 	if !ok {
 		return
 	}
-	events, appErr := h.store.ListTaskEvents(sc, c.Param("id"))
+	// since（RFC3339）：只回该时刻之后的事件，供前端轮询取增量。
+	// 缺省 = 全量，保持既有契约（移动端与旧桌面端照旧）。
+	// 🔴 解析失败**按缺省处理，不报错**：这只是个优化参数，不该让一个格式错误
+	// 把「看执行过程」整条路搞挂（那时用户看到的是空列表，比慢更糟）。
+	var since time.Time
+	if raw := strings.TrimSpace(c.Query("since")); raw != "" {
+		if ts, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+			since = ts
+		}
+	}
+	events, appErr := h.store.ListTaskEvents(sc, c.Param("id"), since)
 	if appErr != nil {
 		transport.WriteError(c, appErr)
 		return

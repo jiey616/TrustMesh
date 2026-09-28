@@ -41,8 +41,16 @@ export async function appendTaskMessage(taskId: string, input: AppendTaskMessage
   return apiClient.post(`tasks/${taskId}/messages`, { json: input }).json<ApiResponse<TaskDetail>>()
 }
 
-export async function listTaskEvents(id: string) {
-  return apiClient.get(`tasks/${id}/events`).json<ApiListResponse<Event>>()
+/**
+ * 拉取任务事件流。
+ *
+ * `since`（RFC3339）非空时只回该时刻之后的事件，供轮询取增量 —— 首次全量之后，
+ * 每 4 秒的轮询不再重传整条历史（生产实测单任务 336 条 / 542 KB）。
+ * 缺省 = 全量，契约与改造前一致（后端也保证缺省全量，移动端与旧桌面端不受影响）。
+ */
+export async function listTaskEvents(id: string, since?: string) {
+  const searchParams = since ? { since } : {}
+  return apiClient.get(`tasks/${id}/events`, { searchParams }).json<ApiListResponse<Event>>()
 }
 
 export async function listTaskComments(taskId: string) {

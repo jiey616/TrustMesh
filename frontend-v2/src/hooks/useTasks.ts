@@ -40,11 +40,22 @@ const LIVE_TASK_STATUSES = ['planning', 'review', 'pending', 'in_progress', 'awa
 
 export function useTaskEvents(id: string | undefined) {
   const qc = useQueryClient()
+  const queryKey = ['tasks', 'detail', id, 'events'] as const
   return useQuery({
-    queryKey: ['tasks', 'detail', id, 'events'],
+    queryKey,
     queryFn: async () => {
-      const res = await tasksApi.listTaskEvents(id!)
-      return res.data.items
+      // 增量轮询：已有历史时只带上次最后一条的 created_at，后端只回之后的。
+      //
+      // 🔴 刻意**不截断**历史（不做「只回最近 N 条」那种分页）：`collectPendingItems`
+      // 靠遍历完整事件流找未答复的 `todo_ask_received`，一旦截断就会漏判
+      // 「数字员工在等你回答」—— 那是用户最不能漏的一类待办。所以缓存里始终保存
+      // 完整历史，增量只省掉重传（生产实测单任务 336 条 / 542 KB）。
+      const prev = qc.getQueryData<Event[]>(queryKey)
+      const since = prev?.length ? prev[prev.length - 1]?.created_at : undefined
+      const res = await tasksApi.listTaskEvents(id!, since)
+      const incoming = res.data.items
+      if (!since || !prev?.length) return incoming
+      return mergeEventsById(prev, incoming)
     },
     enabled: !!id,
     staleTime: 3_000,
@@ -368,6 +379,23 @@ function restoreTaskEvents(
 ) {
   if (snapshot === undefined) return
   qc.setQueryData(['tasks', 'detail', taskId, 'events'], snapshot)
+}
+
+/**
+ * 把增量事件按 id 并入既有事件流（保持 created_at 升序）。
+ *
+ * 后端游标语义是 `created_at >= since`，所以与游标同毫秒的旧事件会重复回来 ——
+ * 靠 id 去重吃掉。这样**既不漏也不重**：换成 `>` 会吞掉边界那条（表现为执行过程
+ * 偶发缺一条），不做去重则会渲染出重复条目。
+ *
+ * 无新增时返回原引用，让 React Query 的 `Object.is` 判断生效、跳过无谓重渲染。
+ */
+function mergeEventsById(prev: Event[], incoming: Event[]): Event[] {
+  if (!incoming.length) return prev
+  const seen = new Set(prev.map((e) => e.id))
+  const added = incoming.filter((e) => !seen.has(e.id))
+  if (!added.length) return prev
+  return [...prev, ...added].sort((a, b) => a.created_at.localeCompare(b.created_at))
 }
 
 export function useDistillTaskWorkflowTemplate() {

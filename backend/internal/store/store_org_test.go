@@ -390,10 +390,10 @@ func TestTaskScopedVisibility(t *testing.T) {
 	}
 
 	// ListTaskEvents —— 与 GetTask 同源裁决
-	if _, err := s.ListTaskEvents(Scope{UserID: "u2"}, "t1"); err == nil {
+	if _, err := s.ListTaskEvents(Scope{UserID: "u2"}, "t1", time.Time{}); err == nil {
 		t.Fatal("u2 without org ctx must not read t1 events")
 	}
-	if _, err := s.ListTaskEvents(Scope{UserID: "u2", OrgID: orgA.ID}, "t1"); err != nil {
+	if _, err := s.ListTaskEvents(Scope{UserID: "u2", OrgID: orgA.ID}, "t1", time.Time{}); err != nil {
 		t.Fatalf("u2 in orgA should read t1 events: %v", err)
 	}
 }
