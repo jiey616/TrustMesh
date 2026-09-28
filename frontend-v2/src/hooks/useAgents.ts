@@ -92,11 +92,31 @@ export function useAgentCapabilities(id: string | undefined, enabled = true) {
     queryKey: ['agents', id, 'capabilities'],
     queryFn: async () => {
       const res = await agentsApi.getAgentCapabilities(id!)
+      /**
+       * 🔴 后端在读失败时**仍返回 HTTP 200**，真实状态写在 body 的 available/reason 里
+       * （契约见 backend/internal/handler/agent.go 的 GetCapabilities）。
+       * 若照原样把 available:false 当「成功数据」交给 RQ，会同时踩两个坑：
+       *   ① `retry` 只对**抛出的错误**生效 ⇒ 不会重试，只能靠用户手动刷新；
+       *   ② 它会覆盖掉缓存里的上一次成功数据 ⇒ 整个 Tab 退化成错误占位，
+       *      而实际只是节点重启刚结束、这一两秒读不到而已。
+       * 所以在这一层把「业务失败」翻译成「查询失败」，retry / 保留旧 data / isError
+       * 三件事就全部免费拿到了。
+       */
+      if (!res.data?.available) {
+        throw new Error(res.data?.reason || '节点未响应能力查询')
+      }
       return res.data
     },
     enabled: !!id && enabled,
     staleTime: 30_000,
-    retry: false,
+    /**
+     * 写回会重启节点 gateway（生产实测 25.5s），重启收尾的那几秒读路径也还没恢复；
+     * daemon 自己给读 8s 的预算（capability_handlers.go 的 capabilityQueryTimeout），
+     * 而这里的 httpClient 只有 3s（CLAWSYNAPSE_TIMEOUT 默认值）⇒ 单次几乎必然失败。
+     * 指数退避重试约 30s（1+2+4+8+8），让界面自己收敛，用户不必手动刷新。
+     */
+    retry: 5,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8_000),
   })
 }
 
@@ -112,20 +132,20 @@ export function useSetAgentCapabilities(id: string | undefined) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (input: SetCapabilityRequest) => agentsApi.setAgentCapabilities(id!, input),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['agents', id, 'capabilities'] })
-    },
     /**
-     * 🔴 失败也要拉一次最新能力，且**延迟**拉。
+     * 写回结束后**立刻**重拉一次能力。
      *
-     * 写回是「超时后节点侧很可能已生效」的操作（见 api/agents.ts 的超时说明）：
-     * 请求超时那一刻节点还在写回，立刻 invalidate 只会拿到旧值、看起来像「真的失败了」；
-     * 等几秒让 gateway 重启完再拉，界面才能自己收敛到真实状态，用户不必手动刷新。
+     * 这一步大概率会失败（gateway 刚重启完，读路径还要几秒才恢复），但这正是我们要的：
+     * 它把「节点正在同步」这个中间态**显式暴露**给界面 —— 配合 useAgentCapabilities 的
+     * 指数退避重试，用户看到的是「同步中…然后自动恢复」，而不是一个假死的列表。
+     *
+     * 🔴 用 onSettled 而不是 onSuccess：写回失败也照样重拉。
+     * 契约里 daemon 失败时返回 **200 + ok=false**（handler/agent.go 的 SetCapabilities），
+     * 只看 HTTP 状态会把「节点侧其实已经改完」判成失败 —— 上一版就是这么错的：
+     * 5s 延迟的 onError 从来没执行过，因为请求压根没抛错。
      */
-    onError: () => {
-      window.setTimeout(() => {
-        void qc.invalidateQueries({ queryKey: ['agents', id, 'capabilities'] })
-      }, 5_000)
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['agents', id, 'capabilities'] })
     },
   })
 }

@@ -15,6 +15,8 @@ import {
   WarningOutlined,
   UnorderedListOutlined,
   WifiOutlined,
+  SyncOutlined,
+  LoadingOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { isTimeoutError } from 'ky'
@@ -52,10 +54,99 @@ type AppMessage = ReturnType<typeof App.useApp>['message']
  */
 function notifyWritebackError(err: unknown, message: AppMessage, fallback: string) {
   if (isTimeoutError(err)) {
-    message.warning('写回已下发，节点正在同步（需重启 gateway，约数秒）；结果稍后自动刷新')
+    message.warning('写回已下发，节点正在重启 gateway（实测约 25 秒）；结果稍后自动刷新')
     return
   }
   message.error(err instanceof Error ? err.message : fallback)
+}
+
+/**
+ * 原始错误串的折叠展示：默认收起，排查时再展开。
+ *
+ * 后端把 Go 的原始错误直接塞进了 reason（handler/agent.go 的 GetCapabilities），
+ * 形如 `Get "http://clawsynapse:18080/v1/peers/n1-.../capabilities": ... Client.Timeout`
+ * —— 含内部地址与实现细节，摊给用户既看不懂又像故障，但排查时又确实需要它。
+ */
+function CapabilityErrorDetail({ reason }: { reason: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="max-w-[520px]">
+      <button
+        type="button"
+        className="cursor-pointer text-xs text-[color:var(--text-quaternary)] hover:underline underline-offset-2"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? '收起技术详情' : '技术详情'}
+      </button>
+      {open && (
+        <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded border border-[color:var(--line)] bg-[color:var(--surface-inset)] p-2 text-left text-[11px] text-[color:var(--text-quaternary)]">
+          {reason}
+        </pre>
+      )}
+    </div>
+  )
+}
+
+/**
+ * 「连旧数据都没有」时的兜底页：首次加载就失败，无可降级内容。
+ *
+ * 🔴 正文只说人话 —— 用户关心的是「等一会儿就好」，不是 clawsynapse 的地址。
+ * 真正需要原文的场景（排查）走折叠区。
+ */
+function CapabilityUnavailable({ reason, onRetry, retrying }: { reason?: string; onRetry: () => void; retrying: boolean }) {
+  return (
+    <Empty
+      image={<WifiOutlined style={{ fontSize: 32, color: 'var(--text-quaternary)' }} />}
+      description={
+        <div className="flex flex-col items-center gap-2">
+          <span className="text-sm text-[color:var(--text-secondary)]">
+            节点正在重启 gateway，能力信息暂时读不到，稍后会自动重试
+          </span>
+          <Button size="small" icon={<RedoOutlined />} loading={retrying} onClick={onRetry}>
+            立即重试
+          </Button>
+          {reason && <CapabilityErrorDetail reason={reason} />}
+        </div>
+      }
+    />
+  )
+}
+
+/**
+ * 「有旧数据、但当前读失败」时的顶部细提示。
+ *
+ * 与 CapabilityUnavailable 的分工：那个用于手里**什么都没有**的场景；
+ * 这个用于「上一次的数据还在，只是这一两秒同步不上」—— 此时**保留列表**、
+ * 只在顶部挂一条提示。一次 3 秒的网络抖动不该以「整页消失」为代价。
+ */
+function CapabilityStaleBanner({ onRetry, retrying }: { onRetry: () => void; retrying: boolean }) {
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-[color:var(--line)] bg-[color:var(--surface)] px-3 py-2 text-xs text-[color:var(--text-tertiary)]">
+      <SyncOutlined spin={retrying} className="text-[color:var(--info)]" />
+      <span>节点正在同步，下方为最近一次成功读取的数据</span>
+      <Button size="small" type="link" loading={retrying} onClick={onRetry}>
+        重试
+      </Button>
+    </div>
+  )
+}
+
+/**
+ * 写回进行中的横幅。
+ *
+ * 🔴 写回是「同步穿透到远端节点 + 重启该节点 gateway」的重操作，**生产实测 25.5s**
+ * （clawsynapse 的 restartGateway：等端口释放 15s + 等 health 30s 两段预算）。
+ * 上一版只把按钮置灰，25.5 秒里界面毫无变化 —— 用户正是因此以为「点了没反应」
+ * 而反复点击（生产日志里同一操作 3 分钟内出现 3 次）。这条横幅就是为了让
+ * 「已被接受、正在处理」变得可见。
+ */
+function WritebackProgressBanner({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-[color:var(--info)] bg-[color:var(--surface)] px-3 py-2 text-xs text-[color:var(--text-secondary)]">
+      <LoadingOutlined />
+      <span>{label}：正在写回节点并重启 gateway，实测约 25 秒，请勿重复操作</span>
+    </div>
+  )
 }
 
 const executionStatusStyle: Record<CapabilityExecution['status'], { label: string; color: string }> = {
@@ -162,24 +253,20 @@ function SkillAddModal({ agentId, open, onClose }: { agentId: string; open: bool
 }
 
 function HermesSkillsTab({ agentId }: Props) {
-  const { data, isLoading } = useAgentCapabilities(agentId)
+  const { data, isLoading, isError, error, refetch, isFetching } = useAgentCapabilities(agentId)
   const [addOpen, setAddOpen] = useState(false)
   // 技能部署 = POST /agents/:id/capabilities + 技能上传（agent.manage），无权限隐藏入口。
   const canManageAgent = usePermStore((s) => s.hasPerm(PERM.AGENT_MANAGE))
 
-  if (isLoading) return <Spin />
-  if (!data?.available)
-    return (
-      <Empty
-        image={<WifiOutlined style={{ fontSize: 32, color: 'var(--text-quaternary)' }} />}
-        description={`能力信息暂不可用${data?.reason ? `：${data.reason}` : '，节点未响应能力查询'}`}
-      />
-    )
+  if (isLoading && !data) return <Spin />
+  // 只有「连旧数据都没有」才整页兜底；有旧数据的降级见下方横幅分支。
+  if (!data) return <CapabilityUnavailable reason={error?.message} onRetry={() => refetch()} retrying={isFetching} />
 
   const skills = data.skills ?? []
 
   return (
     <div className="flex flex-col gap-4">
+      {isError && <CapabilityStaleBanner onRetry={() => refetch()} retrying={isFetching} />}
       <Card bordered={false} className="!bg-[color:var(--surface)]">
         <div className="flex items-center gap-2 border-b border-[color:var(--line)] px-4 py-3 -mx-4 -mt-4 mb-2">
           <BookOutlined className="text-[color:var(--text-tertiary)]" />
@@ -416,25 +503,27 @@ function ModelAddModal({ agentId, open, onClose }: { agentId: string; open: bool
 }
 
 function HermesModelsTab({ agentId }: Props) {
-  const { data, isLoading } = useAgentCapabilities(agentId)
+  const { data, isLoading, isError, error, refetch, isFetching } = useAgentCapabilities(agentId)
   const { message } = App.useApp()
   const [addOpen, setAddOpen] = useState(false)
+  // 乐观标记：写回期间先把目标模型显示成「默认（同步中）」，失败时由重拉还原。
+  const [pendingModelId, setPendingModelId] = useState<string | null>(null)
   const setCapabilities = useSetAgentCapabilities(agentId)
   // 模型新增/设为默认/删除 = POST /agents/:id/capabilities（agent.manage），无权限隐藏入口。
   const canManageAgent = usePermStore((s) => s.hasPerm(PERM.AGENT_MANAGE))
 
-  if (isLoading) return <Spin />
-  if (!data?.available)
-    return (
-      <Empty
-        image={<WifiOutlined style={{ fontSize: 32, color: 'var(--text-quaternary)' }} />}
-        description={`能力信息暂不可用${data?.reason ? `：${data.reason}` : '，节点未响应能力查询'}`}
-      />
-    )
+  if (isLoading && !data) return <Spin />
+  // 只有「连旧数据都没有」才整页兜底；有旧数据的降级见下方横幅分支。
+  if (!data) return <CapabilityUnavailable reason={error?.message} onRetry={() => refetch()} retrying={isFetching} />
 
   const models = data.models ?? []
 
   const switchDefault = async (modelId: string) => {
+    // 🔴 乐观反馈：写回要 25 秒、期间界面本无任何变化，用户会以为没点上而反复点击
+    //（生产日志里同一操作 3 分钟内出现 3 次，就是这么来的）。
+    // 先把这一项标成「默认（同步中）」，点完立刻有回应；随后 invalidate + 重拉
+    // 会把它替换成服务端的真实状态（成功变「默认」，失败则回滚成原样）。
+    setPendingModelId(modelId)
     try {
       const res = await setCapabilities.mutateAsync({ target: 'model', action: 'switch', model: modelId })
       const r = applyWritebackResult(res.data, '默认模型已切换')
@@ -443,6 +532,8 @@ function HermesModelsTab({ agentId }: Props) {
       else message.error(r.text)
     } catch (err) {
       notifyWritebackError(err, message, '切换默认模型失败')
+    } finally {
+      setPendingModelId(null)
     }
   }
 
@@ -468,6 +559,13 @@ function HermesModelsTab({ agentId }: Props) {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* 写回进行中优先显示进度横幅；否则若「有旧数据但当前读失败」，挂一条同步中提示。
+          两者互斥：写回期间用户最需要知道的是「正在跑、别重复点」。 */}
+      {setCapabilities.isPending ? (
+        <WritebackProgressBanner label={pendingModelId ? '切换默认模型' : '写回模型配置'} />
+      ) : (
+        isError && <CapabilityStaleBanner onRetry={() => refetch()} retrying={isFetching} />
+      )}
       <Card bordered={false} className="!bg-[color:var(--surface)]">
         <div className="flex items-center gap-2 border-b border-[color:var(--line)] px-4 py-3 -mx-4 -mt-4 mb-2">
           <ExperimentOutlined className="text-[color:var(--text-tertiary)]" />
@@ -488,7 +586,12 @@ function HermesModelsTab({ agentId }: Props) {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-[color:var(--text-primary)] truncate">{m.model}</span>
-                    {m.isDefault && <Tag className="!text-[10px]" color="green">默认</Tag>}
+                    {/* 写回期间把「默认」从旧模型上摘下来、只在目标项上显示「同步中」，
+                        避免同时出现两个「默认」标签让用户更困惑。 */}
+                    {m.isDefault && !pendingModelId && <Tag className="!text-[10px]" color="green">默认</Tag>}
+                    {m.id === pendingModelId && (
+                      <Tag className="!text-[10px]" color="processing">默认（同步中）</Tag>
+                    )}
                   </div>
                   <p className="mt-0.5 text-xs text-[color:var(--text-tertiary)] truncate font-mono">{m.provider}</p>
                 </div>
@@ -618,7 +721,9 @@ function JobRow({ job, agentId }: { job: CapabilityJob; agentId: string }) {
       else if (r.type === 'warning') message.warning(r.text)
       else message.error(r.text)
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '操作失败')
+      // 与另外三个写回入口统一：定时任务同样会经 daemon 穿透到节点，
+      // 超时不代表失败（节点侧可能已完成），不能直接报错。
+      notifyWritebackError(err, message, '定时任务操作失败')
     }
   }
 
@@ -690,7 +795,7 @@ function JobAddModal({ agentId, open, onClose }: { agentId: string; open: boolea
       setPrompt('')
       onClose()
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '创建定时任务失败')
+      notifyWritebackError(err, message, '创建定时任务失败')
     }
   }
 
@@ -724,24 +829,20 @@ function JobAddModal({ agentId, open, onClose }: { agentId: string; open: boolea
 }
 
 function HermesJobsTab({ agentId }: Props) {
-  const { data, isLoading } = useAgentCapabilities(agentId)
+  const { data, isLoading, isError, error, refetch, isFetching } = useAgentCapabilities(agentId)
   const [addOpen, setAddOpen] = useState(false)
   // 新建定时任务 = POST /agents/:id/capabilities（agent.manage），无权限隐藏入口。
   const canManageAgent = usePermStore((s) => s.hasPerm(PERM.AGENT_MANAGE))
 
-  if (isLoading) return <Spin />
-  if (!data?.available)
-    return (
-      <Empty
-        image={<WifiOutlined style={{ fontSize: 32, color: 'var(--text-quaternary)' }} />}
-        description={`能力信息暂不可用${data?.reason ? `：${data.reason}` : '，节点未响应能力查询'}`}
-      />
-    )
+  if (isLoading && !data) return <Spin />
+  // 只有「连旧数据都没有」才整页兜底；有旧数据的降级见下方横幅分支。
+  if (!data) return <CapabilityUnavailable reason={error?.message} onRetry={() => refetch()} retrying={isFetching} />
 
   const jobs = data.jobs ?? []
 
   return (
     <div className="flex flex-col gap-4">
+      {isError && <CapabilityStaleBanner onRetry={() => refetch()} retrying={isFetching} />}
       <Card bordered={false} className="!bg-[color:var(--surface)]">
         <div className="flex items-center gap-2 border-b border-[color:var(--line)] px-4 py-3 -mx-4 -mt-4 mb-2">
           <ScheduleOutlined className="text-[color:var(--text-tertiary)]" />

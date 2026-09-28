@@ -135,18 +135,101 @@ describe('节点能力写回 · 超时预算必须配对（超时 ≠ 失败）'
     expect(blk).toMatch(/message\.warning\(/)
   })
 
-  it('🔴 三个写回入口（新增/切换/删除模型 + 部署技能）都要走同一个超时提示', () => {
+  it('🔴 六个写回入口（增/切/删模型、部署技能、cron 操作/新建）都要走同一个超时提示', () => {
     const src = stripComments(read(CAP_TAB))
-    for (const label of ['添加模型失败', '切换默认模型失败', '删除模型失败', '部署技能失败']) {
+    for (const label of [
+      '添加模型失败',
+      '切换默认模型失败',
+      '删除模型失败',
+      '部署技能失败',
+      // 这两个此前漏了，用的是裸 message.error ⇒ 超时会被误报成失败
+      '定时任务操作失败',
+      '创建定时任务失败',
+    ]) {
       expect(src).toMatch(new RegExp(`notifyWritebackError\\(err, message, '${label}'\\)`))
     }
   })
 
-  it('🔴 写回失败后要延迟重拉能力（超时那刻节点还在写回，立刻拉只会拿到旧值）', () => {
+  it('🔴 写回结束后必须重拉能力，且用 onSettled 而非 onSuccess', () => {
     const src = stripComments(read(path.join(FE, 'src/hooks/useAgents.ts')))
     const blk = src.match(/export function useSetAgentCapabilities\([\s\S]*?\n\}/)![0]
-    expect(blk).toMatch(/onError/)
-    expect(blk).toMatch(/setTimeout/)
+    expect(blk).toMatch(/onSettled/)
     expect(blk).toMatch(/invalidateQueries\(\{ queryKey: \['agents', id, 'capabilities'\] \}\)/)
+    // 契约里写回**失败也返 HTTP 200**（handler/agent.go 的 SetCapabilities），
+    // 所以 onSuccess/onError 的划分本身就是错的判据 —— 上一版正是因此，
+    // 那个「延迟 5s 重拉」的 onError 从未执行过一次。
+    expect(blk).not.toMatch(/onSuccess/)
+    expect(blk).not.toMatch(/setTimeout/)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────
+// 第四轮（2026-09-28 下午）：写回成功了，界面却渲染成错误页。
+//
+// 生产实证链路：POST 写回 25.5s → 返回 200 + ok=true + restartStatus=restarted
+//（绿色「默认模型已切换，已同步最新状态」）→ 前端 onSuccess **立即**重读能力
+// → 撞上 gateway 刚重启完的恢复窗口 → 读 3s 超时（CLAWSYNAPSE_TIMEOUT 默认值）
+// → 后端按契约返 200 + available:false → 旧代码直接 `if (!data?.available) return <Empty>`
+// ⇒ **整页模型列表被清空成一段 Go 原始报错**。而且 retry:false，不会自愈。
+//
+// 所以这一轮钉的不是「某个数字」，而是三个判据：
+//   ① 业务失败必须翻译成查询失败（否则 retry / 保留旧数据 / isError 全都拿不到）；
+//   ② 有旧数据时只挂横幅、绝不清空；
+//   ③ 25.5s 的写回期间界面必须有可见进度，且切换动作要有乐观反馈。
+// ─────────────────────────────────────────────────────────────────────
+describe('节点能力读失败 · 降级而非清空（写回会重启 gateway）', () => {
+  const hook = stripComments(read(path.join(FE, 'src/hooks/useAgents.ts')))
+  const tab = stripComments(read(CAP_TAB))
+
+  it('🔴 必须把「HTTP 200 + available:false」翻译成查询失败，否则 retry 永远不触发', () => {
+    expect(hook).toMatch(/if \(!res\.data\?\.available\)/)
+    expect(hook).toMatch(/throw new Error\(res\.data\?\.reason/)
+  })
+
+  it('🔴 读失败要有指数退避重试，覆盖 gateway 重启后的恢复窗口', () => {
+    expect(hook).toMatch(/retry: 5/)
+    expect(hook).toMatch(/retryDelay: \(attempt\) => Math\.min\(1000 \* 2 \*\* attempt, 8_000\)/)
+  })
+
+  it('🔴 三个 Tab 都不得再「读失败即整页清空」，只能在没有旧数据时兜底', () => {
+    const fallbacks = tab.match(/if \(!data\) return <CapabilityUnavailable/g) ?? []
+    expect(fallbacks.length).toBe(3)
+    // 反向断言：旧的「清空成错误页」写法必须彻底消失
+    expect(tab).not.toMatch(/data\?\.available/)
+    expect(tab).not.toMatch(/能力信息暂不可用/)
+  })
+
+  it('🔴 有旧数据时只能挂顶部横幅（一次 3 秒抖动不该以整页消失为代价）', () => {
+    // 注意：ModelsTab 里横幅落在三元表达式的 else 分支，前缀是 `(` 而不是 `{`，
+    // 所以正则不能带花括号 —— 带了只会数到 2 处，把正确的代码判成漏改。
+    const banners = tab.match(/isError && <CapabilityStaleBanner/g) ?? []
+    expect(banners.length).toBe(3)
+    const blk = tab.match(/function CapabilityStaleBanner\([\s\S]*?\n\}/)![0]
+    expect(blk).toMatch(/最近一次成功读取的数据/)
+  })
+
+  it('🔴 原始错误串必须收进折叠区，不得直接铺给用户', () => {
+    const detail = tab.match(/function CapabilityErrorDetail\([\s\S]*?\n\}/)![0]
+    expect(detail).toMatch(/技术详情/)
+    expect(detail).toMatch(/useState\(false\)/) // 默认收起
+    const unavail = tab.match(/function CapabilityUnavailable\([\s\S]*?\n\}/)![0]
+    expect(unavail).toMatch(/节点正在重启 gateway/) // 正文是人话
+    expect(unavail).toMatch(/<CapabilityErrorDetail reason=\{reason\} \/>/) // 原文只经折叠区
+  })
+
+  it('🔴 写回期间必须有可见进度（25.5s 里界面不能毫无变化）', () => {
+    expect(tab).toMatch(/function WritebackProgressBanner/)
+    expect(tab).toMatch(/实测约 25 秒/)
+    // 「切换默认模型」是内联操作、没有 Modal 的 confirmLoading，必须挂横幅
+    expect(tab).toMatch(
+      /<WritebackProgressBanner label=\{pendingModelId \? '切换默认模型' : '写回模型配置'\} \/>/,
+    )
+  })
+
+  it('🔴 切换默认模型要给乐观反馈，且写回期间旧的「默认」标签要被摘掉', () => {
+    expect(tab).toMatch(/const \[pendingModelId, setPendingModelId\] = useState<string \| null>\(null\)/)
+    expect(tab).toMatch(/setPendingModelId\(modelId\)/)
+    expect(tab).toMatch(/m\.isDefault && !pendingModelId/)
+    expect(tab).toMatch(/m\.id === pendingModelId/)
   })
 })
