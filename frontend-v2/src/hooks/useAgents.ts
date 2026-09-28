@@ -115,6 +115,18 @@ export function useSetAgentCapabilities(id: string | undefined) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['agents', id, 'capabilities'] })
     },
+    /**
+     * 🔴 失败也要拉一次最新能力，且**延迟**拉。
+     *
+     * 写回是「超时后节点侧很可能已生效」的操作（见 api/agents.ts 的超时说明）：
+     * 请求超时那一刻节点还在写回，立刻 invalidate 只会拿到旧值、看起来像「真的失败了」；
+     * 等几秒让 gateway 重启完再拉，界面才能自己收敛到真实状态，用户不必手动刷新。
+     */
+    onError: () => {
+      window.setTimeout(() => {
+        void qc.invalidateQueries({ queryKey: ['agents', id, 'capabilities'] })
+      }, 5_000)
+    },
   })
 }
 

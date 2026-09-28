@@ -327,7 +327,12 @@ func (h *AgentHandler) SetCapabilities(c *gin.Context) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	// 写回是「同步穿透到远端节点」的重操作：daemon 经 NATS 的 capability.set 下发后
+	// 要等目标节点 set_response，并且会重启该节点 gateway。生产实测单次 9.97s
+	//（见 logging 中间件的 http_request 记录），10s 的 ctx 紧贴边界、随时可能提前放弃。
+	// daemon 侧自带 set_response 等待超时并按契约返回 200 + ok=false，
+	// 所以放宽这里只是「不抢在 daemon 前面放弃」，并不会让真正的失败长时间挂住。
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
 	defer cancel()
 	result, err := h.clawClient.SetCapabilities(ctx, agent.NodeID, &req)
 	if err != nil {

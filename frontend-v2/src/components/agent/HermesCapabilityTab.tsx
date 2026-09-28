@@ -17,6 +17,7 @@ import {
   WifiOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
+import { isTimeoutError } from 'ky'
 import {
   useAgentCapabilities,
   useSetAgentCapabilities,
@@ -37,6 +38,24 @@ function applyWritebackResult(result: SetCapabilityResult, okLabel: string) {
   if (result.restartStatus === 'restart_failed')
     return { type: 'warning' as const, text: '写回已生效，但 gateway 重启失败，请检查节点状态' }
   return { type: 'success' as const, text: `${okLabel}，已同步最新状态` }
+}
+
+type AppMessage = ReturnType<typeof App.useApp>['message']
+
+/**
+ * 写回类操作的统一失败提示。
+ *
+ * 🔴 **超时 ≠ 失败**：写回要经 daemon → NATS 穿透到远端节点、同步等回执，并重启该节点
+ * gateway，生产实测单次 9.97s（贴近旧的 10s 上限，现已放宽到 70s）。真的超时发生时，
+ * 节点侧很可能**已经写成功**；此时若照常弹「失败」，用户会去点第二次、第三次。
+ * 因此超时单独走中性提示；真正的失败由 `applyWritebackResult`（`ok=false`）或这里报错。
+ */
+function notifyWritebackError(err: unknown, message: AppMessage, fallback: string) {
+  if (isTimeoutError(err)) {
+    message.warning('写回已下发，节点正在同步（需重启 gateway，约数秒）；结果稍后自动刷新')
+    return
+  }
+  message.error(err instanceof Error ? err.message : fallback)
 }
 
 const executionStatusStyle: Record<CapabilityExecution['status'], { label: string; color: string }> = {
@@ -95,7 +114,7 @@ function SkillAddModal({ agentId, open, onClose }: { agentId: string; open: bool
       reset()
       onClose()
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '部署技能失败')
+      notifyWritebackError(err, message, '部署技能失败')
     }
   }
 
@@ -305,7 +324,7 @@ function ModelAddModal({ agentId, open, onClose }: { agentId: string; open: bool
       setTestResult(null)
       onClose()
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '添加模型失败')
+      notifyWritebackError(err, message, '添加模型失败')
     }
   }
 
@@ -423,7 +442,7 @@ function HermesModelsTab({ agentId }: Props) {
       else if (r.type === 'warning') message.warning(r.text)
       else message.error(r.text)
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '切换默认模型失败')
+      notifyWritebackError(err, message, '切换默认模型失败')
     }
   }
 
@@ -441,7 +460,7 @@ function HermesModelsTab({ agentId }: Props) {
           else if (r.type === 'warning') message.warning(r.text)
           else message.error(r.text)
         } catch (err) {
-          message.error(err instanceof Error ? err.message : '删除模型失败')
+          notifyWritebackError(err, message, '删除模型失败')
         }
       },
     })

@@ -58,8 +58,23 @@ export async function getAgentCapabilities(id: string) {
   return apiClient.get(`agents/${id}/capabilities`).json<ApiResponse<CapabilityInfo>>()
 }
 
+/**
+ * 写回节点能力（技能 / 模型 / cron）。
+ *
+ * 🔴 这个端点必须单独放宽超时：ky 的默认 `timeout` 是 10s，而写回要经
+ * daemon → NATS `capability.set` 穿透到远端节点、同步等待回执，并重启该节点 gateway，
+ * **生产实测单次 9.97s**（logging 中间件的 http_request latency）—— 紧贴 10s。
+ * 结果就是前端必然先超时报错，而后端其实已经改完 ⇒ 用户看到「超时」、刷新却发现已成功。
+ *
+ * 取值刻意大于后端 ctx 的 60s，保证「后端先拿到节点的真实结果」而不是两边同时放弃；
+ * 真正失败时由 daemon 按契约返回 200 + ok=false，前端走 applyWritebackResult 提示。
+ */
+const CAPABILITY_WRITE_TIMEOUT_MS = 70_000
+
 export async function setAgentCapabilities(id: string, input: SetCapabilityRequest) {
-  return apiClient.post(`agents/${id}/capabilities`, { json: input }).json<ApiResponse<SetCapabilityResult>>()
+  return apiClient
+    .post(`agents/${id}/capabilities`, { json: input, timeout: CAPABILITY_WRITE_TIMEOUT_MS })
+    .json<ApiResponse<SetCapabilityResult>>()
 }
 
 export async function getCronExecutions(id: string, jobId?: string, limit = 20) {

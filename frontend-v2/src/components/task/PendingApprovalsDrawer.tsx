@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { App, Button, Drawer, Input, Tag, Typography } from 'antd'
 import { CheckCircleOutlined, EditOutlined, SendOutlined } from '@ant-design/icons'
 import {
@@ -388,6 +388,30 @@ export function PendingApprovalsDrawer({
   const [dismissed, setDismissed] = useState<string[]>([])
 
   const visible = items.filter((i) => !dismissed.includes(i.id))
+
+  /**
+   * 「全部确认完 → 自动关闭」。
+   *
+   * 确认类 mutation 已做乐观更新，所以点完「确认执行」/「通过」/「提交」后
+   * `collectPendingItems(task, events)` 会立刻少一项 ⇒ `visible` 缩短。
+   * 若只剩空态还把抽屉留着，用户看到的是「我点了确认，但框还在」——
+   * 与「操作没生效、还得再点一次」无法区分，于是会重复提交。
+   *
+   * 🔴 只在「从有到无」（had > 0）那一刻关，两种边界都是刻意的：
+   *   - 多项待确认时确认其中一项 → `visible` 仍 > 0 → 不关，不打断连续处理；
+   *   - 用户主动打开时本就为空（had === 0）→ 不关，让他看到空态而不是闪一下消失。
+   * `open` 变 false 时把计数归零，保证每次重新打开都从本次会话的项数重新计数。
+   */
+  const hadVisibleRef = useRef(0)
+  useEffect(() => {
+    if (!open) {
+      hadVisibleRef.current = 0
+      return
+    }
+    const had = hadVisibleRef.current
+    hadVisibleRef.current = visible.length
+    if (visible.length === 0 && had > 0) onClose()
+  }, [open, visible.length, onClose])
 
   return (
     <Drawer

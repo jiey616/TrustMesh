@@ -1240,8 +1240,8 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Header */}
-      <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, flexShrink: 0 }}>
-        <div style={{ minWidth: 0 }}>
+      <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--line)', display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, flexShrink: 0 }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span
               style={{
@@ -1266,10 +1266,6 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
               <Text type="secondary" style={{ fontSize: 12 }}>终止: {task.cancel_reason}</Text>
             )}
           </Space>
-
-          {/* Task info */}
-          {task.description && <TaskDescription description={task.description} />}
-          <AttachedFilesSection files={task.attached_files ?? []} projectId={task.project_id} />
         </div>
         <Space style={{ flexShrink: 0 }}>
           {activeStatus && !showCancel && (
@@ -1311,6 +1307,16 @@ export function TaskWorkspace({ taskId, projectId, onClose, onTaskCreated, closa
           )}
           <Button type="text" icon={<CloseOutlined />} onClick={onClose} />
         </Space>
+
+        {/* 任务描述与附件：`width:100%` 配合外层 `flexWrap:'wrap'` 让它换行独占整行，
+            左右边界与下方「执行过程」区（padding:16 的整宽容器）完全一致。
+            🔴 必须放在外层 flex 行之外：留在左侧 flex 列里会被右侧按钮组
+            （终止任务/执行清单/待确认/交付成果/沉淀为模板/关闭）挤窄，
+            这正是「用户需求展示宽度比执行过程窄」的成因。 */}
+        <div style={{ width: '100%', minWidth: 0 }}>
+          {task.description && <TaskDescription description={task.description} />}
+          <AttachedFilesSection files={task.attached_files ?? []} projectId={task.project_id} />
+        </div>
       </div>
 
       {/* 任务完成且总流程还有后续未编排步骤时，提示进入下一流程（可收起） */}
