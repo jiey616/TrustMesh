@@ -202,7 +202,10 @@ describe('节点能力读失败 · 降级而非清空（写回会重启 gateway�
   it('🔴 有旧数据时只能挂顶部横幅（一次 3 秒抖动不该以整页消失为代价）', () => {
     // 注意：ModelsTab 里横幅落在三元表达式的 else 分支，前缀是 `(` 而不是 `{`，
     // 所以正则不能带花括号 —— 带了只会数到 2 处，把正确的代码判成漏改。
-    const banners = tab.match(/isError && <CapabilityStaleBanner/g) ?? []
+    expect(tab).toMatch(/isError && <CapabilityStaleBanner/)
+    // ModelsTab 的条件额外带上「乐观标记未撤」（见第五轮 describe），Skills / Jobs 保持原样。
+    expect(tab).toMatch(/\(isError \|\| !!pendingModelId\) && <CapabilityStaleBanner/)
+    const banners = tab.match(/<CapabilityStaleBanner/g) ?? []
     expect(banners.length).toBe(3)
     const blk = tab.match(/function CapabilityStaleBanner\([\s\S]*?\n\}/)![0]
     expect(blk).toMatch(/最近一次成功读取的数据/)
@@ -227,9 +230,63 @@ describe('节点能力读失败 · 降级而非清空（写回会重启 gateway�
   })
 
   it('🔴 切换默认模型要给乐观反馈，且写回期间旧的「默认」标签要被摘掉', () => {
-    expect(tab).toMatch(/const \[pendingModelId, setPendingModelId\] = useState<string \| null>\(null\)/)
-    expect(tab).toMatch(/setPendingModelId\(modelId\)/)
+    expect(tab).toMatch(/const \[requestedModelId, setRequestedModelId\] = useState<string \| null>\(null\)/)
+    expect(tab).toMatch(/setRequestedModelId\(modelId\)/)
     expect(tab).toMatch(/m\.isDefault && !pendingModelId/)
-    expect(tab).toMatch(/m\.id === pendingModelId/)
+    expect(tab).toMatch(/\(m\.id \?\? m\.model\) === pendingModelId/)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────
+// 第五轮（2026-09-28 傍晚）：切换成功了，界面却先把「默认」弹回旧模型。
+//
+// 生产实证（最近 70 分钟内同一 agent 的 9 次切换，逐条对齐日志）：
+//   POST 25.5s 返回 → 0.07s 后触发 GET#1，**必被后端 3s 客户端超时打掉**（239B 失败体）
+//   → +4.1s 后 GET#2 才发出、+4.4~6.5s 才拿到数据
+//   （其中 6 次是 0.31~0.61s 的节点缓存命中、3 次是 2.1~2.5s 的真重算）。
+// 旧代码却在 `finally` 里清 pendingModelId —— 那正是 **POST 返回的瞬间**，
+// 此时 RQ 缓存里仍是**写回前**的那份 payload ⇒「默认」标签啪地弹回旧模型，
+// 4~7 秒后才自己跳到新模型；一旦那几次重试全部失败，它会**永久**停在旧值
+// ⇒ 用户看到的「切换完成之后页面上默认模型显示的还是老的，只有刷新页面才更新为新的」。
+//
+// 所以这一轮钉的不是某个数字，而是**乐观标记的生命周期**：
+//   ① 不能「先置一份 state、再事后清理」（`finally` 或 effect 都一样 —— 前者太早、
+//      后者会触犯 react-hooks/set-state-in-effect），必须由服务端数据**纯推导**；
+//   ② 必须有兜底，否则既读不到确认也不报错时会永久卡在「同步中」；
+//   ③ 同步窗口内要禁止重复提交。
+// ─────────────────────────────────────────────────────────────────────
+describe('切换默认模型 · 乐观标记必须活到服务端确认', () => {
+  const tab = stripComments(read(CAP_TAB))
+  const modelsTab = tab.match(/function HermesModelsTab\([\s\S]*?\n\}\n/)![0]
+
+  it('🔴 不得在 finally 里撤标记（那等于在 POST 返回那一刻撤回，比新数据早 4~7 秒）', () => {
+    expect(modelsTab).not.toMatch(/finally/)
+  })
+
+  it('🔴 标记必须是「服务端是否已确认」的纯推导，而不是一份事后清理的 state', () => {
+    // 推导表达式：点过的模型在服务端数据里还不是默认 ⇒ 仍在同步中
+    expect(modelsTab).toMatch(
+      /requestedModelId && !models\.some\(\(m\) => \(m\.id \?\? m\.model\) === requestedModelId && m\.isDefault\)/,
+    )
+    // 反向断言：旧的「一份 state + 事后清理」写法必须彻底消失
+    expect(modelsTab).toMatch(/const \[requestedModelId, setRequestedModelId\] = useState<string \| null>\(null\)/)
+    expect(modelsTab).not.toMatch(/setPendingModelId/)
+    expect(modelsTab).not.toMatch(/pendingConfirmed/)
+  })
+
+  it('🔴 必须有兜底，避免既读不到新状态也不报错时永久卡在「同步中」', () => {
+    expect(modelsTab).toMatch(/window\.setTimeout/)
+    expect(modelsTab).toMatch(/setRequestedModelId\(null\)/)
+    expect(modelsTab).toMatch(/void refetch\(\)/)
+    expect(modelsTab).toMatch(/window\.clearTimeout/)
+  })
+
+  it('🔴 同步窗口内必须禁用其它行的「设为默认 / 删除」，否则可以重复提交', () => {
+    const dis = modelsTab.match(/disabled=\{setCapabilities\.isPending \|\| !!pendingModelId\}/g) ?? []
+    expect(dis.length).toBe(2)
+  })
+
+  it('🔴 同步窗口内要挂同步中横幅（POST 已返回但服务端还没确认）', () => {
+    expect(modelsTab).toMatch(/\(isError \|\| !!pendingModelId\) && <CapabilityStaleBanner/)
   })
 })

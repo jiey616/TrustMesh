@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Modal, Button, Card, Tag, Input, AutoComplete, Space, App, Empty, Spin, Upload } from 'antd'
 import type { UploadFile } from 'antd'
 import {
@@ -506,24 +506,54 @@ function HermesModelsTab({ agentId }: Props) {
   const { data, isLoading, isError, error, refetch, isFetching } = useAgentCapabilities(agentId)
   const { message } = App.useApp()
   const [addOpen, setAddOpen] = useState(false)
-  // 乐观标记：写回期间先把目标模型显示成「默认（同步中）」，失败时由重拉还原。
-  const [pendingModelId, setPendingModelId] = useState<string | null>(null)
+  /**
+   * 用户点过的目标模型。注意它只是「意图」，**不是**「是否还在同步中」——
+   * 后者由服务端返回的数据**推导**出来（见下方 pendingModelId）。
+   *
+   * 🔴 为什么乐观标记不能做成一份 state 再「事后清理」：
+   * 生产实证（同一天 9 次切换）里，写回 25.5s 返回后 0.07s 触发的那次重读
+   * **必被后端 3s 客户端超时打掉**（239B 失败体），第二读要 +4.1s 才发出、
+   * +4.4~6.5s 才拿到数据（6 次是 0.31~0.61s 的节点缓存命中，3 次是 2.1~2.5s 的真重算）。
+   * 若在 POST 返回那一刻清标记，界面会先把「默认」弹回旧模型、几秒后才跳到新模型；
+   * 一旦那几次重试全部失败，它会**永久**停在旧值 —— 用户看到的正是
+   * 「切换完成之后页面上默认模型显示的还是老的，只有刷新页面才更新为新的」。
+   */
+  const [requestedModelId, setRequestedModelId] = useState<string | null>(null)
   const setCapabilities = useSetAgentCapabilities(agentId)
   // 模型新增/设为默认/删除 = POST /agents/:id/capabilities（agent.manage），无权限隐藏入口。
   const canManageAgent = usePermStore((s) => s.hasPerm(PERM.AGENT_MANAGE))
+
+  const models = data?.models ?? []
+  /**
+   * 「还在同步中」= 用户点过某个模型，但服务端还没把它回报成默认。
+   * 纯推导 ⇒ 数据一确认就自动变 null，不需要任何 effect 去清理；反过来，读失败时
+   * 它会如实停在「同步中」+ 错误横幅，而不是谎报旧模型是默认。
+   */
+  const pendingModelId =
+    requestedModelId && !models.some((m) => (m.id ?? m.model) === requestedModelId && m.isDefault)
+      ? requestedModelId
+      : null
+
+  // 兜底：既读不到确认、也不报错（理论上不该发生）⇒ 60s 后放弃标记并再拉一次，
+  // 避免界面永久卡在「同步中」（那比误报旧值更难排查）。
+  useEffect(() => {
+    if (!pendingModelId) return
+    const timer = window.setTimeout(() => {
+      setRequestedModelId(null)
+      void refetch()
+    }, 60_000)
+    return () => window.clearTimeout(timer)
+  }, [pendingModelId, refetch])
 
   if (isLoading && !data) return <Spin />
   // 只有「连旧数据都没有」才整页兜底；有旧数据的降级见下方横幅分支。
   if (!data) return <CapabilityUnavailable reason={error?.message} onRetry={() => refetch()} retrying={isFetching} />
 
-  const models = data.models ?? []
-
   const switchDefault = async (modelId: string) => {
     // 🔴 乐观反馈：写回要 25 秒、期间界面本无任何变化，用户会以为没点上而反复点击
     //（生产日志里同一操作 3 分钟内出现 3 次，就是这么来的）。
-    // 先把这一项标成「默认（同步中）」，点完立刻有回应；随后 invalidate + 重拉
-    // 会把它替换成服务端的真实状态（成功变「默认」，失败则回滚成原样）。
-    setPendingModelId(modelId)
+    // 点完立刻标记为「默认（同步中）」，撤销条件见上方 pendingModelId 的推导。
+    setRequestedModelId(modelId)
     try {
       const res = await setCapabilities.mutateAsync({ target: 'model', action: 'switch', model: modelId })
       const r = applyWritebackResult(res.data, '默认模型已切换')
@@ -531,9 +561,9 @@ function HermesModelsTab({ agentId }: Props) {
       else if (r.type === 'warning') message.warning(r.text)
       else message.error(r.text)
     } catch (err) {
+      // 请求本身失败（网络 / 超时）：立刻回滚，别让界面停在假的「同步中」。
+      setRequestedModelId(null)
       notifyWritebackError(err, message, '切换默认模型失败')
-    } finally {
-      setPendingModelId(null)
     }
   }
 
@@ -559,12 +589,12 @@ function HermesModelsTab({ agentId }: Props) {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* 写回进行中优先显示进度横幅；否则若「有旧数据但当前读失败」，挂一条同步中提示。
-          两者互斥：写回期间用户最需要知道的是「正在跑、别重复点」。 */}
+      {/* 写回进行中优先显示进度横幅；否则在「读失败」或「乐观标记还没被服务端确认」
+          时挂同步中提示。两者互斥：写回期间用户最需要知道的是「正在跑、别重复点」。 */}
       {setCapabilities.isPending ? (
         <WritebackProgressBanner label={pendingModelId ? '切换默认模型' : '写回模型配置'} />
       ) : (
-        isError && <CapabilityStaleBanner onRetry={() => refetch()} retrying={isFetching} />
+        (isError || !!pendingModelId) && <CapabilityStaleBanner onRetry={() => refetch()} retrying={isFetching} />
       )}
       <Card bordered={false} className="!bg-[color:var(--surface)]">
         <div className="flex items-center gap-2 border-b border-[color:var(--line)] px-4 py-3 -mx-4 -mt-4 mb-2">
@@ -589,7 +619,7 @@ function HermesModelsTab({ agentId }: Props) {
                     {/* 写回期间把「默认」从旧模型上摘下来、只在目标项上显示「同步中」，
                         避免同时出现两个「默认」标签让用户更困惑。 */}
                     {m.isDefault && !pendingModelId && <Tag className="!text-[10px]" color="green">默认</Tag>}
-                    {m.id === pendingModelId && (
+                    {(m.id ?? m.model) === pendingModelId && (
                       <Tag className="!text-[10px]" color="processing">默认（同步中）</Tag>
                     )}
                   </div>
@@ -597,10 +627,10 @@ function HermesModelsTab({ agentId }: Props) {
                 </div>
                 {canManageAgent && !m.isDefault && (
                   <div className="flex items-center gap-1 shrink-0">
-                    <Button size="small" type="link" onClick={() => switchDefault(m.id ?? m.model)} disabled={setCapabilities.isPending}>
+                    <Button size="small" type="link" onClick={() => switchDefault(m.id ?? m.model)} disabled={setCapabilities.isPending || !!pendingModelId}>
                       设为默认
                     </Button>
-                    <Button size="small" type="link" danger onClick={() => removeModel(m.id ?? m.model)} disabled={setCapabilities.isPending}>
+                    <Button size="small" type="link" danger onClick={() => removeModel(m.id ?? m.model)} disabled={setCapabilities.isPending || !!pendingModelId}>
                       删除
                     </Button>
                   </div>
