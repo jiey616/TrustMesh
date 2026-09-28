@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as tasksApi from '@/api/tasks'
 import type { CreateTaskInput, AddTodoInput, UpdateTodoInput } from '@/api/tasks'
-import type { UIResponse, Workflow, ChatAttachment } from '@/types'
+import type { ChatAttachment, Event, TaskDetail, TaskStatus, UIResponse, Workflow } from '@/types'
 
 export function useTasks(projectId: string | undefined, status?: string) {
   return useQuery({
@@ -141,7 +141,18 @@ export function useApprovePlan() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ taskId }: { taskId: string }) => tasksApi.approvePlan(taskId),
-    onSuccess: (_res, { taskId }) => invalidateTask(qc, taskId),
+    // 乐观更新：`plan_review` 待确认项由 `task.status === 'review'` 驱动
+    // （见 lib/pendingItems.ts），先就地改掉，方案确认卡立刻从待确认列表消失，
+    // 不让用户盯着已点过的按钮等一个公网往返（实测 1.4–2.3 s）。
+    onMutate: ({ taskId }) => ({
+      snapshot: patchTaskDetail(qc, taskId, (task) => ({ ...task, status: 'in_progress' as TaskStatus })),
+    }),
+    onError: (_err, { taskId }, ctx) => restoreTaskDetail(qc, taskId, ctx?.snapshot),
+    onSuccess: (res, { taskId }) => {
+      // 后端返回权威 TaskDetail（handler/task.go:815），直接写缓存，省掉一次往返。
+      if (res?.data) qc.setQueryData(['tasks', 'detail', taskId], res.data)
+    },
+    onSettled: (_res, _err, { taskId }) => invalidateTask(qc, taskId, { skipDetail: true }),
   })
 }
 
@@ -158,7 +169,25 @@ export function useReviewTodo() {
   return useMutation({
     mutationFn: ({ taskId, todoId, action, reason }: { taskId: string; todoId: string; action: 'approve' | 'reject'; reason?: string }) =>
       tasksApi.reviewTodo(taskId, todoId, action, reason),
-    onSuccess: (_res, { taskId }) => invalidateTask(qc, taskId),
+    // 乐观更新：`todo_review` 待确认项由 `todo.review_status === 'pending_approval'`
+    // 驱动（见 lib/pendingItems.ts），先就地改掉，卡片立刻消失。
+    onMutate: ({ taskId, todoId, action }) => ({
+      snapshot: patchTaskDetail(qc, taskId, (task) => ({
+        ...task,
+        todos: (task.todos ?? []).map((t) =>
+          t.id === todoId
+            ? { ...t, review_status: action === 'approve' ? ('approved' as const) : ('rejected' as const) }
+            : t,
+        ),
+      })),
+    }),
+    onError: (_err, { taskId }, ctx) => restoreTaskDetail(qc, taskId, ctx?.snapshot),
+    onSuccess: (res, { taskId }) => {
+      // 后端返回权威 TaskDetail（handler/task.go:379）；注意它已含 approve 后
+      // 重新派发的下一个 todo，比前端猜的准。
+      if (res?.data) qc.setQueryData(['tasks', 'detail', taskId], res.data)
+    },
+    onSettled: (_res, _err, { taskId }) => invalidateTask(qc, taskId, { skipDetail: true }),
   })
 }
 
@@ -175,7 +204,24 @@ export function useAnswerTodo() {
   return useMutation({
     mutationFn: ({ taskId, todoId, questionId, answer }: { taskId: string; todoId: string; questionId: string; answer: string }) =>
       tasksApi.answerTodo(taskId, todoId, { question_id: questionId, answer }),
-    onSuccess: (_res, { taskId }) => invalidateTask(qc, taskId),
+    // 乐观更新：`todo_ask` 待确认项靠遍历事件流找「未答复的 todo_ask_received」
+    // （metadata.answer == null，见 lib/pendingItems.ts），所以把该事件的 answer
+    // 就地填上，条目立刻消失。
+    onMutate: ({ taskId, questionId, answer }) => ({
+      snapshot: patchTaskEvents(qc, taskId, (events) =>
+        events.map((ev) =>
+          ev.event_type === 'todo_ask_received' && ev.metadata?.question_id === questionId
+            ? { ...ev, metadata: { ...ev.metadata, answer } }
+            : ev,
+        ),
+      ),
+    }),
+    onError: (_err, { taskId }, ctx) => restoreTaskEvents(qc, taskId, ctx?.snapshot),
+    // 🔴 刻意不在 onSuccess 里写详情缓存：该端点后端返回的是
+    // `{"status":"ok","question_id":...}`（handler/task.go:507），不是 TaskDetail。
+    // 之前 api/tasks.ts 把它错误地声明成 ApiResponse<TaskDetail>，照类型写缓存会把
+    // {status:'ok'} 当成任务对象塞进去，页面直接炸。类型已修正，这里只失效。
+    onSettled: (_res, _err, { taskId }) => invalidateTask(qc, taskId),
   })
 }
 
@@ -244,12 +290,84 @@ export function useBindArtifactOutput() {
   })
 }
 
-function invalidateTask(qc: ReturnType<typeof useQueryClient>, taskId: string) {
-  qc.invalidateQueries({ queryKey: ['tasks'] })
-  qc.invalidateQueries({ queryKey: ['tasks', 'detail', taskId] })
-  qc.invalidateQueries({ queryKey: ['tasks', 'detail', taskId, 'events'] })
-  qc.invalidateQueries({ queryKey: ['tasks', 'detail', taskId, 'comments'] })
+/**
+ * 失效「本次操作真正影响到」的查询。
+ *
+ * 🔴 绝不用 `['tasks']` 这个宽前缀：React Query 的失效是**前缀匹配**，
+ * `['tasks']` 会命中缓存里**每一个**任务的 detail / events / comments，以及所有
+ * 项目的任务列表。生产实测：单次人工确认后日志里 53 ms 内并发 5 个请求、
+ * 350 ms 后又重复同样 5 个 —— 而任务事件流单次就有 542 KB，这就是「待确认弹框
+ * 出不来、确认完了框还在」的直接原因之一（请求排队 + 视图反复过期）。
+ *
+ * 改成 predicate 精确区分两类：
+ *   - `['tasks','detail',<taskId>,...]` → 只动**当前这个任务**的详情/事件/评论
+ *   - `['tasks',<projectId>,<status>]`  → 任务列表（第二段不是 'detail'，仍要刷）
+ *
+ * @param opts.skipDetail 调用方已用后端返回的权威 TaskDetail 直接写过缓存时置 true，
+ *   避免紧接着再拉一次同样的详情（events / comments / 列表仍会失效）。
+ */
+function invalidateTask(
+  qc: ReturnType<typeof useQueryClient>,
+  taskId: string,
+  opts?: { skipDetail?: boolean },
+) {
+  qc.invalidateQueries({
+    predicate: (q) => {
+      const k = q.queryKey
+      if (k[0] !== 'tasks') return false
+      if (k[1] === 'detail') {
+        if (k[2] !== taskId) return false
+        // 长度 3 = 详情本身；长度 4 = 该任务的事件流 / 评论。
+        return !(opts?.skipDetail && k.length === 3)
+      }
+      return true
+    },
+  })
   qc.invalidateQueries({ queryKey: ['projects'] })
+}
+
+/** 就地修改某任务的详情缓存，返回改动前的快照（供 onError 回滚）。无缓存时返回 undefined。 */
+function patchTaskDetail(
+  qc: ReturnType<typeof useQueryClient>,
+  taskId: string,
+  patch: (task: TaskDetail) => TaskDetail,
+): TaskDetail | undefined {
+  const key = ['tasks', 'detail', taskId]
+  const prev = qc.getQueryData<TaskDetail>(key)
+  if (!prev) return undefined
+  qc.setQueryData(key, patch(prev))
+  return prev
+}
+
+function restoreTaskDetail(
+  qc: ReturnType<typeof useQueryClient>,
+  taskId: string,
+  snapshot: TaskDetail | undefined,
+) {
+  if (snapshot === undefined) return
+  qc.setQueryData(['tasks', 'detail', taskId], snapshot)
+}
+
+/** 就地修改某任务的事件流缓存，返回改动前的快照。无缓存时返回 undefined。 */
+function patchTaskEvents(
+  qc: ReturnType<typeof useQueryClient>,
+  taskId: string,
+  patch: (events: Event[]) => Event[],
+): Event[] | undefined {
+  const key = ['tasks', 'detail', taskId, 'events']
+  const prev = qc.getQueryData<Event[]>(key)
+  if (!prev) return undefined
+  qc.setQueryData(key, patch(prev))
+  return prev
+}
+
+function restoreTaskEvents(
+  qc: ReturnType<typeof useQueryClient>,
+  taskId: string,
+  snapshot: Event[] | undefined,
+) {
+  if (snapshot === undefined) return
+  qc.setQueryData(['tasks', 'detail', taskId, 'events'], snapshot)
 }
 
 export function useDistillTaskWorkflowTemplate() {

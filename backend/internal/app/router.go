@@ -36,6 +36,10 @@ func New(cfg config.Config, log *zap.Logger) (*App, error) {
 	engine.Use(middleware.Logging(log))
 	engine.Use(middleware.CORS(cfg.AllowAllCORS))
 	engine.Use(middleware.RateLimit(log))
+	// 响应体 gzip 压缩（2026-09-24）：任务事件流单次 542 KB，公网 1.4–2.3 s，
+	// 服务端本机只要 8–10 ms ⇒ 瓶颈全在传输。挂在最内层（RateLimit 之后），
+	// 这样 429 等提前 abort 的响应不进入压缩分支。
+	engine.Use(middleware.Gzip())
 
 	s, err := store.NewWithConfig(cfg, log)
 	if err != nil {

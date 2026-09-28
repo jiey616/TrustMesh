@@ -123,8 +123,18 @@ export async function reviewTodo(taskId: string, todoId: string, action: 'approv
   return apiClient.post(`tasks/${taskId}/todos/${todoId}/review`, { json: { action, reason: reason ?? '' } }).json<ApiResponse<TaskDetail>>()
 }
 
+/**
+ * 提交「执行提问」的回答。
+ *
+ * 🔴 后端此端点返回的是 `{"status":"ok","question_id":...}`（handler/task.go:507 传的是
+ * gin.H），**不是** TaskDetail。此前把它声明成 ApiResponse<TaskDetail> 属于声明与实现
+ * 漂移：一旦有人照类型把 `res.data` 当任务对象写进详情缓存，页面就会炸。这里把类型
+ * 改回事实（纯 typing 修正，无行为变化）。
+ */
 export async function answerTodo(taskId: string, todoId: string, input: { question_id: string; answer: string }) {
-  return apiClient.post(`tasks/${taskId}/todos/${todoId}/answer`, { json: input }).json<ApiResponse<TaskDetail>>()
+  return apiClient
+    .post(`tasks/${taskId}/todos/${todoId}/answer`, { json: input })
+    .json<ApiResponse<{ status: string; question_id: string }>>()
 }
 
 // ─── 交付物 ───
