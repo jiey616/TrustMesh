@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -1092,6 +1093,180 @@ func TestFindTaskForWorkflowStepSkipsCanceled(t *testing.T) {
 	}
 	if len(todos) != 1 || todos[0].ID != "ta" {
 		t.Fatalf("expected todo %q, got %v", "ta", todoIDs(todos))
+	}
+}
+
+// ─── 跨任务输入解析：取消任务回退（2026-09-29 AI总动员/TD_02 事故） ───
+//
+// 事故：一个「产线续跑」任务只拥有工作流的第 4–6 步（WorkflowRef.StepFrom>0），
+// 其第 5 步「分镜视频生成」声明的输入位来源步骤是第 4 步「分镜分组」——本任务内
+// 不存在，必须跨任务解析；而唯一产出该步骤的 7 步任务已被取消，旧实现在
+// FindTaskForWorkflowStep 里硬跳过 canceled ⇒ 候选集为空 ⇒ 所有输入位
+// Resolved:false，派工单没有 download_url，执行侧无路取件。
+//
+// 新政策与 taskForPrimaryStepUnsafe（项目流程视图 / 手工 BindStepOutput 走的同一个
+// 归属判定）对齐：活跃任务优先；没有活跃任务时，**取消任务只要仍持有该步骤的交付物
+// 就可以供料**（history must survive a cancel）。
+const canceledFallbackWorkflowName = "画宗AIGC无人工厂产线工作流"
+
+// crossStepWorkflow 是本次事故的最小复刻：步骤 0 产出「分组视频生成提示词」，
+// 步骤 1 消费它。
+func crossStepWorkflow() []model.WorkflowStep {
+	return []model.WorkflowStep{
+		{Name: "分镜分组", Role: "developer"},
+		{Name: "分镜视频生成", Role: "developer"},
+	}
+}
+
+// seedStepRangeTask 造一个只拥有 [from,to] 区间的任务（Workflow.Steps 被切成
+// 子集，与 CreateTaskPlanningWithFiles 的 in.StepFrom/StepTo 行为一致），
+// 每个拥有的步骤挂一个 done 的 todo（按 Order 与步骤对齐）。
+func seedStepRangeTask(userID string, steps []model.WorkflowStep, from, to int, id, status string, updatedAt time.Time, developer stringAgent) *model.TaskDetail {
+	task := &model.TaskDetail{
+		ID:     id,
+		UserID: userID,
+		Status: status,
+		Workflow: &model.Workflow{
+			Name:  canceledFallbackWorkflowName,
+			Steps: append([]model.WorkflowStep(nil), steps[from:to+1]...),
+		},
+		WorkflowRef: &model.WorkflowRef{
+			WorkflowIndex: 0,
+			WorkflowName:  canceledFallbackWorkflowName,
+			StepFrom:      from,
+			StepTo:        to,
+		},
+		UpdatedAt: updatedAt,
+	}
+	for i := range task.Workflow.Steps {
+		task.Todos = append(task.Todos, model.Todo{
+			ID:       fmt.Sprintf("%s-TD_%02d", id, i+1),
+			Order:    i + 1,
+			Title:    task.Workflow.Steps[i].Name,
+			Status:   "done",
+			Assignee: model.TodoAssignee{AgentID: developer.ID, Name: "developer", NodeID: developer.NodeID},
+		})
+	}
+	return task
+}
+
+// bindStepDeliverable 给 todo 绑一个已声明的交付物输出位，并在
+// s.taskArtifacts 里放好对应 artifact（s.tasks 本身不带 artifacts）。
+func bindStepDeliverable(s *Store, task *model.TaskDetail, todoID, outputName string) {
+	transferID := task.ID + "-" + outputName
+	for i := range task.Todos {
+		if task.Todos[i].ID != todoID {
+			continue
+		}
+		task.Todos[i].Outputs = append(task.Todos[i].Outputs, model.TodoOutput{
+			OutputName: outputName,
+			ArtifactID: transferID,
+			FileRef:    "pf-" + transferID,
+		})
+	}
+	s.taskArtifacts[task.ID] = append(s.taskArtifacts[task.ID], model.TaskArtifact{
+		TransferID:    transferID,
+		TaskID:        task.ID,
+		TodoID:        todoID,
+		FileName:      outputName + ".md",
+		MimeType:      "text/markdown",
+		Kind:          model.ArtifactKindDeliverable,
+		OutputName:    outputName,
+		ProjectFileID: "pf-" + transferID,
+		CreatedAt:     time.Now().UTC(),
+	})
+}
+
+func registerTask(s *Store, projectID string, task *model.TaskDetail) {
+	s.tasks[task.ID] = task
+	s.projectTasks[projectID] = append(s.projectTasks[projectID], task.ID)
+}
+
+// TestFindTaskForWorkflowStepFallsBackToCanceled pins the fix for the 2026-09-29
+// incident: with no active task covering the step, a canceled task that still
+// holds the step's deliverable must supply the downstream input.
+func TestFindTaskForWorkflowStepFallsBackToCanceled(t *testing.T) {
+	s, userID, _, developer, project := seedWorkflowState(t)
+	steps := crossStepWorkflow()
+	task := seedStepRangeTask(userID, steps, 0, 0, "task-canceled", "canceled", time.Now().UTC().Add(-time.Hour), developer)
+	bindStepDeliverable(s, task, "task-canceled-TD_01", "分组视频生成提示词")
+	registerTask(s, project.ID, task)
+
+	got, todos, ok := s.FindTaskForWorkflowStep(Scope{UserID: userID}, project.ID, canceledFallbackWorkflowName, "分镜分组")
+	if !ok {
+		t.Fatal("expected the canceled task holding the deliverable to supply the step")
+	}
+	if got.ID != task.ID {
+		t.Fatalf("expected task %q, got %q", task.ID, got.ID)
+	}
+	if len(todos) != 1 || todos[0].ID != "task-canceled-TD_01" {
+		t.Fatalf("expected the step's todo, got %v", todoIDs(todos))
+	}
+	if len(got.Artifacts) == 0 {
+		t.Fatal("expected the returned task to carry its artifacts (download URL resolution depends on it)")
+	}
+}
+
+// TestFindTaskForWorkflowStepIgnoresCanceledWithoutDeliverable pins the guard:
+// a canceled task whose deliverable for the step is gone can contribute nothing
+// to a downstream input, so it must not become a candidate (behaviour identical
+// to the pre-2026-09-29 hard skip).
+func TestFindTaskForWorkflowStepIgnoresCanceledWithoutDeliverable(t *testing.T) {
+	s, userID, _, developer, project := seedWorkflowState(t)
+	steps := crossStepWorkflow()
+	task := seedStepRangeTask(userID, steps, 0, 0, "task-empty-canceled", "canceled", time.Now().UTC(), developer)
+	registerTask(s, project.ID, task)
+
+	if _, _, ok := s.FindTaskForWorkflowStep(Scope{UserID: userID}, project.ID, canceledFallbackWorkflowName, "分镜分组"); ok {
+		t.Fatal("did not expect a canceled task with no deliverable to be a supplier")
+	}
+}
+
+// TestFindTaskForWorkflowStepCanceledPrefersServable covers the real-world
+// shape of the incident: several canceled runs cover the step, the newest one
+// died before producing anything, an older one holds the deliverable. Picking
+// purely by recency would hand the downstream step nothing.
+func TestFindTaskForWorkflowStepCanceledPrefersServable(t *testing.T) {
+	s, userID, _, developer, project := seedWorkflowState(t)
+	steps := crossStepWorkflow()
+
+	older := seedStepRangeTask(userID, steps, 0, 0, "task-older", "canceled", time.Now().UTC().Add(-2*time.Hour), developer)
+	bindStepDeliverable(s, older, "task-older-TD_01", "分组视频生成提示词")
+	newer := seedStepRangeTask(userID, steps, 0, 0, "task-newer", "canceled", time.Now().UTC(), developer)
+
+	registerTask(s, project.ID, older)
+	registerTask(s, project.ID, newer)
+
+	got, _, ok := s.FindTaskForWorkflowStep(Scope{UserID: userID}, project.ID, canceledFallbackWorkflowName, "分镜分组")
+	if !ok {
+		t.Fatal("expected the older canceled task (the one holding the deliverable) to supply the step")
+	}
+	if got.ID != older.ID {
+		t.Fatalf("expected %q, got %q", older.ID, got.ID)
+	}
+}
+
+// TestFindTaskForWorkflowStepCanceledTieBreakNewest: between two canceled tasks
+// that both hold the deliverable, the most recently updated one wins (mirrors
+// the active tier's recency rule).
+func TestFindTaskForWorkflowStepCanceledTieBreakNewest(t *testing.T) {
+	s, userID, _, developer, project := seedWorkflowState(t)
+	steps := crossStepWorkflow()
+
+	older := seedStepRangeTask(userID, steps, 0, 0, "task-older", "canceled", time.Now().UTC().Add(-2*time.Hour), developer)
+	bindStepDeliverable(s, older, "task-older-TD_01", "分组视频生成提示词")
+	newer := seedStepRangeTask(userID, steps, 0, 0, "task-newer", "canceled", time.Now().UTC(), developer)
+	bindStepDeliverable(s, newer, "task-newer-TD_01", "分组视频生成提示词")
+
+	registerTask(s, project.ID, older)
+	registerTask(s, project.ID, newer)
+
+	got, _, ok := s.FindTaskForWorkflowStep(Scope{UserID: userID}, project.ID, canceledFallbackWorkflowName, "分镜分组")
+	if !ok {
+		t.Fatal("expected a canceled supplier")
+	}
+	if got.ID != newer.ID {
+		t.Fatalf("expected the most recently updated canceled task %q, got %q", newer.ID, got.ID)
 	}
 }
 

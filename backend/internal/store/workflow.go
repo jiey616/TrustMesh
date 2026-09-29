@@ -2943,17 +2943,35 @@ func dedupInts(xs []int) []int {
 	return out
 }
 
-// FindTaskForWorkflowStep returns the task in the same project whose owned
-// slice of the primary workflow covers the named step, together with the task
-// (artifacts filled) and the todo matched to that step. Used for cross-task
-// step-input resolution so a downstream task can fetch the predecessor task's
-// final produced output. Returns ok=false when no owning task/todo is found.
-// FindTaskForWorkflowStep returns the most recently updated non-canceled task
-// covering the requested workflow step, together with ALL todos matched to that
-// step (a single pipeline step is frequently split into several same-agent
-// todos, and the produced artifact may be linked to any of them — returning
-// only the first matched todo would silently drop the step's real output).
-// Ordered alignment mirrors applyWorkflowReviewFlags.
+// FindTaskForWorkflowStep returns a task in the same project that can SUPPLY the
+// named workflow step's output to a downstream step, together with ALL todos
+// matched to that step (a single pipeline step is frequently split into several
+// same-agent todos, and the produced artifact may be linked to any of them —
+// returning only the first matched todo would silently drop the step's real
+// output). Used for cross-task step-input resolution so a downstream task can
+// fetch the predecessor task's final produced output. Ordered alignment mirrors
+// applyWorkflowReviewFlags.
+//
+// Ownership priority for supplying inputs, highest first:
+//
+//  1. an active (non-canceled) task owning the step — its live progress is the
+//     truth, and it always outranks a canceled one, so a terminated test run can
+//     never shadow a live task. Prefer the most recently updated one when
+//     several active tasks cover the same step.
+//  2. a canceled task that still holds the step's deliverable — history must
+//     survive a cancel, the exact policy taskForPrimaryStepUnsafe already
+//     applies to the project progress view and to manual BindStepOutput.
+//
+// Tier 2 is new (2026-09-29). The previous hard skip of canceled tasks made a
+// legitimate continuation unservable: a step-range task (step_from > 0) whose
+// source step lives in a canceled predecessor resolved EVERY declared input to
+// Resolved:false, so the dispatch carried no download URL at all and the
+// executing agent had no way to fetch its upstream file (the 2026-09-29
+// AI总动员 / TD_02 incident). A canceled task whose deliverable for the step is
+// gone can contribute nothing to a downstream input, so it is not a candidate —
+// returning it would only rename "unresolved" to "unresolved".
+//
+// Returns ok=false when no candidate holds the step.
 func (s *Store) FindTaskForWorkflowStep(sc Scope, projectID, workflowName, stepName string) (*model.TaskDetail, []*model.Todo, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -2961,17 +2979,21 @@ func (s *Store) FindTaskForWorkflowStep(sc Scope, projectID, workflowName, stepN
 	if wantStep == "" || workflowName == "" {
 		return nil, nil, false
 	}
+	// The raw task (artifacts live in a side map) plus the tier it won.
 	var best *model.TaskDetail
 	var bestTodos []*model.Todo
+	bestTier := -1
+	consider := func(task *model.TaskDetail, todos []*model.Todo, tier int) {
+		if best != nil && (tier > bestTier || (tier == bestTier && !task.UpdatedAt.After(best.UpdatedAt))) {
+			return
+		}
+		best = task
+		bestTodos = todos
+		bestTier = tier
+	}
 	for _, taskID := range s.projectTasks[projectID] {
 		task, ok := s.tasks[taskID]
 		if !ok || !visibleToScope(sc, task.OrgID, task.UserID) {
-			continue
-		}
-		// Skip canceled tasks so a terminated test run never supplies a step's
-		// inputs, and prefer the most recently updated active task when several
-		// tasks cover the same step.
-		if task.Status == "canceled" {
 			continue
 		}
 		ref := task.WorkflowRef
@@ -2993,6 +3015,7 @@ func (s *Store) FindTaskForWorkflowStep(sc Scope, projectID, workflowName, stepN
 		sorted := make([]model.Todo, len(task.Todos))
 		copy(sorted, task.Todos)
 		sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Order < sorted[j].Order })
+		var matched []*model.Todo
 		cur := 0
 		for ti := 0; ti < len(sorted) && cur < len(task.Workflow.Steps); ti++ {
 			step := task.Workflow.Steps[cur]
@@ -3000,23 +3023,33 @@ func (s *Store) FindTaskForWorkflowStep(sc Scope, projectID, workflowName, stepN
 				continue
 			}
 			if cur == stepIdx {
-				if best == nil || task.UpdatedAt.After(best.UpdatedAt) {
-					best = s.copyTaskWithArtifactsUnsafe(task)
-					bestTodos = nil
-				}
-				if task.ID == best.ID {
-					todoCopy := sorted[ti]
-					bestTodos = append(bestTodos, &todoCopy)
-				}
+				todoCopy := sorted[ti]
+				matched = append(matched, &todoCopy)
 				continue
 			}
 			cur++
 		}
+		if len(matched) == 0 {
+			continue
+		}
+		if task.Status != "canceled" {
+			consider(task, matched, 0)
+			continue
+		}
+		// Canceled tier: only a task that still holds this step's deliverable
+		// can feed a downstream input. aggregateStepOutputs is the store-side
+		// twin of clawsynapse.effectiveTodoOutputs (same preference for
+		// todo.Outputs, same tolerance for legacy rows); it needs the
+		// artifact-filled copy because s.tasks holds no artifacts.
+		if len(s.aggregateStepOutputs(s.copyTaskWithArtifactsUnsafe(task), matched)) == 0 {
+			continue
+		}
+		consider(task, matched, 1)
 	}
 	if best == nil || len(bestTodos) == 0 {
 		return nil, nil, false
 	}
-	return best, bestTodos, true
+	return s.copyTaskWithArtifactsUnsafe(best), bestTodos, true
 }
 
 func (s *Store) assigneeRoleUnsafe(todo model.Todo) string {

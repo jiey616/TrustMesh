@@ -1933,6 +1933,15 @@ func (h *WebhookHandler) remindTodo(ctx context.Context, taskID, todoID, reason,
 			"【用户要求继续执行】用户判定此前失败可修复，并已把该 Todo 重新打开（状态回到 in_progress），现要求你接着把《%s》做完。用户的理由：%s\n请以该理由为最高优先级输入，复用你已有的上下文继续推进，不要从头重跑已完成的部分；完成后按常规用 todo.complete 交付，若这次仍无法完成则用 todo.fail 说明原因。这不是超时催办，请不要只回报一句进度就停下。",
 			todo.Title, reason,
 		)
+		// Re-resolve the step inputs: a failed todo frequently failed BECAUSE
+		// it could not fetch a declared upstream file (2026-09-29 — the source
+		// step lived in a canceled predecessor, so every input was
+		// Resolved:false at dispatch). todo.remind is not a dispatch path, so
+		// without this the resumed agent would hit the exact same wall and fail
+		// again, and the user's "continue" would be a no-op.
+		if inputs := h.BuildTodoInputs(task, todo); len(inputs) > 0 {
+			payload["inputs"] = inputs
+		}
 		meta["source"] = "user_resume"
 	} else {
 		// 催办文案必须显式声明「不是新任务」：上下文压缩失败/失忆的执行者会把
@@ -2464,6 +2473,21 @@ func (h *WebhookHandler) BuildTodoInputs(task *model.TaskDetail, todo *model.Tod
 		ref := h.resolveStepInput(task, todo, in)
 		if ref == nil {
 			// Declared but not yet resolvable: surface the expectation.
+			//
+			// This is the only observable signal for a broken upstream link:
+			// the API never returns `inputs`, so an unresolved ref is invisible
+			// to the user — they only learn about it when the executing agent
+			// asks. Log it so a dispatch-time break is greppable (and so a fix
+			// can be verified: the line must disappear once the source step
+			// resolves again). Frequency = one line per todo.assigned dispatch.
+			if h.log != nil {
+				h.log.Warn("todo input unresolved",
+					zap.String("task_id", task.ID),
+					zap.String("todo_id", todo.ID),
+					zap.String("input", in.Name),
+					zap.String("source_step", in.Source.Step),
+					zap.String("source_output", in.Source.Output))
+			}
 			inputs = append(inputs, protocol.TodoInputRef{
 				Name:        in.Name,
 				Description: in.Description,

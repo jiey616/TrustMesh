@@ -547,6 +547,18 @@ func (h *TaskHandler) PublishTodoAnswer(ctx context.Context, task *model.TaskDet
 		AnsweredAt: answeredAt,
 		TimedOut:   question.TimedOut,
 	}
+	// Re-resolve the todo's step inputs now that the user has answered.
+	//
+	// The parked session may have asked precisely because a declared input was
+	// unresolvable when the todo was dispatched (2026-09-29: the source step
+	// lived in a canceled predecessor task). Answering is the user's chance to
+	// unblock it, and todo.answer is the only channel that reaches that session
+	// without re-dispatching the todo — so it must carry the fresh refs,
+	// otherwise the file can never arrive no matter how many times the user
+	// answers.
+	if h.webhookHandler != nil {
+		payload.Inputs = h.webhookHandler.BuildTodoInputs(task, todo)
+	}
 	if _, err := h.publisher.Publish(ctx, todo.Assignee.NodeID, "todo.answer", payload, task.ID, nil); err != nil && h.log != nil {
 		h.log.Warn("todo.answer publish failed", zap.String("task_id", task.ID), zap.String("todo_id", todo.ID), zap.String("target_node", todo.Assignee.NodeID), zap.Error(err))
 	}
