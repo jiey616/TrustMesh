@@ -2468,40 +2468,77 @@ func (h *WebhookHandler) BuildTodoInputs(task *model.TaskDetail, todo *model.Tod
 	if len(step.Inputs) == 0 {
 		return nil
 	}
+	checkedAt := time.Now().UTC()
 	var inputs []protocol.TodoInputRef
+	observed := make([]model.TodoInput, 0, len(step.Inputs))
 	for _, in := range step.Inputs {
-		ref := h.resolveStepInput(task, todo, in)
+		ref, state := h.resolveStepInput(task, todo, in)
 		if ref == nil {
 			// Declared but not yet resolvable: surface the expectation.
 			//
-			// This is the only observable signal for a broken upstream link:
-			// the API never returns `inputs`, so an unresolved ref is invisible
-			// to the user — they only learn about it when the executing agent
-			// asks. Log it so a dispatch-time break is greppable (and so a fix
-			// can be verified: the line must disappear once the source step
-			// resolves again). Frequency = one line per todo.assigned dispatch.
+			// A dispatch-time break used to be greppable only here, because the
+			// API never returned `inputs` — the user learned about it when the
+			// executing agent asked. The refs are now persisted on the todo
+			// (below), so this line is the log-side half of a pair: the warning
+			// must disappear once the source step resolves again.
+			// Frequency = one line per todo.assigned dispatch.
 			if h.log != nil {
 				h.log.Warn("todo input unresolved",
 					zap.String("task_id", task.ID),
 					zap.String("todo_id", todo.ID),
 					zap.String("input", in.Name),
 					zap.String("source_step", in.Source.Step),
-					zap.String("source_output", in.Source.Output))
+					zap.String("source_output", in.Source.Output),
+					zap.String("state", state))
 			}
-			inputs = append(inputs, protocol.TodoInputRef{
+			ref = &protocol.TodoInputRef{
 				Name:        in.Name,
 				Description: in.Description,
 				MimeType:    in.MimeType,
 				SourceStep:  in.Source.Step,
 				OutputName:  in.Source.Output,
 				Resolved:    false,
-			})
-			continue
+			}
 		}
 		inputs = append(inputs, *ref)
+
+		// The browser-visible record. Built inline rather than via a converter
+		// so the two shapes cannot drift apart: model.TodoInput simply has no
+		// field for DownloadUrl (a signed JWT) or FileRef, which is what keeps
+		// the task detail endpoint — it serialises the model directly — from
+		// leaking them. See model.TodoInput.
+		observed = append(observed, model.TodoInput{
+			Name:       ref.Name,
+			SourceStep: ref.SourceStep,
+			OutputName: ref.OutputName,
+			FileName:   ref.FileName,
+			FileSize:   ref.FileSize,
+			State:      state,
+			CheckedAt:  &checkedAt,
+		})
 	}
 	if len(inputs) == 0 {
 		return nil
+	}
+	// Persist the observed state so a broken upstream link is visible on the
+	// task page instead of only to the assignee agent (2026-09-29).
+	//
+	// Deliberately at the one choke point every dispatch / answer path funnels
+	// through: there are 7 call sites across two packages, and the first draft
+	// of this change missed two of them — remindTodo (the very path the
+	// incident used) and buildTodoAssignedPayload (which itself serves four
+	// more dispatches). A single hook cannot be missed.
+	//
+	// Guarded on h.store exactly like the warn above: this package's tests
+	// build zero-value handlers, and resolving inputs must never fail just
+	// because a handler was not wired to a store.
+	if h.store != nil {
+		if appErr := h.store.RecordTodoInputRefs(task.ID, todo.ID, observed); appErr != nil && h.log != nil {
+			h.log.Warn("record todo input refs failed",
+				zap.String("task_id", task.ID),
+				zap.String("todo_id", todo.ID),
+				zap.Error(appErr))
+		}
 	}
 	return inputs
 }
@@ -2549,14 +2586,27 @@ func (h *WebhookHandler) stepOutputsForTodo(task *model.TaskDetail, todo *model.
 }
 
 // resolveStepInput resolves a single StepInput's link (StepIOLink) to the
-// concrete upstream output file. Returns nil when the source step / output
-// cannot be found among completed predecessor todos.
+// concrete upstream output file. Returns (nil, state) when the source step /
+// output cannot be found among completed predecessor todos.
+//
+// The second return value is the machine-readable reason, which comes from the
+// two ways this function already failed:
+//
+//   - no holder of the source step that the resolver accepts, or holders that
+//     are ALL terminal without the requested output → InputStateMissing
+//   - a live holder exists but has not produced that output yet →
+//     InputStatePending
+//
+// Telling those apart is the whole point of TodoInput.State: the first needs a
+// human, the second needs patience. "Terminal" is what makes the distinction
+// usable — a predecessor that already ended will never upload the file, so
+// waiting on it is indistinguishable from waiting forever.
 //
 // When the task belongs to the project's primary workflow and the source step
 // is owned by a different task (cross-task pipeline), the source todo is
 // resolved against the predecessor task via Store.FindTaskForWorkflowStep and
 // the artifact metadata is read from that task's artifacts.
-func (h *WebhookHandler) resolveStepInput(task *model.TaskDetail, current *model.Todo, in model.StepInput) *protocol.TodoInputRef {
+func (h *WebhookHandler) resolveStepInput(task *model.TaskDetail, current *model.Todo, in model.StepInput) (*protocol.TodoInputRef, string) {
 	// Candidate source todos: the in-task predecessor todo, or (when the task is
 	// workflow-bound and the source lives in a predecessor task) every todo of
 	// the source step in that task.
@@ -2572,7 +2622,10 @@ func (h *WebhookHandler) resolveStepInput(task *model.TaskDetail, current *model
 			// 前一个 step（如「剧本解析」的 prev = 「分镜拆解」），再查前序任务产出。
 			step = h.resolvePrevStepName(task)
 			if step == "" {
-				return nil
+				// The declaration says "prev" but there is no previous step to map
+				// it onto. That is a broken declaration, not a timing problem, so
+				// waiting will not help: report missing.
+				return nil, model.InputStateMissing
 			}
 		}
 		if st, tds, ok := h.store.FindTaskForWorkflowStep(store.SystemScope(), task.ProjectID, task.WorkflowRef.WorkflowName, step); ok {
@@ -2581,7 +2634,10 @@ func (h *WebhookHandler) resolveStepInput(task *model.TaskDetail, current *model
 		}
 	}
 	if len(candidates) == 0 {
-		return nil
+		// No task the resolver accepts holds this source step at all: nobody
+		// ever ran it, and no predecessor task carries it either. Waiting
+		// cannot change that — a human has to intervene.
+		return nil, model.InputStateMissing
 	}
 	artifactTask := task
 	if srcTask != nil {
@@ -2628,10 +2684,37 @@ func (h *WebhookHandler) resolveStepInput(task *model.TaskDetail, current *model
 					ref.MimeType = a.MimeType
 				}
 			}
-			return ref
+			return ref, model.InputStateResolved
 		}
 	}
-	return nil
+	// Holders existed but none carried the requested output. Whether waiting can
+	// still help depends on whether any of them is alive: a running todo may yet
+	// upload the file, a terminal one never will. Reporting `pending` for a dead
+	// predecessor would tell the user to wait for something that cannot happen —
+	// which is exactly the confusion this field exists to remove. That is not
+	// hypothetical: on 2026-09-29 a canceled predecessor task held the step, the
+	// downstream todo was dispatched anyway, and the agent burned a todo.ask
+	// asking for a file that nobody was ever going to produce.
+	for _, srcTodo := range candidates {
+		if srcTodo == nil {
+			continue
+		}
+		if !todoStatusTerminal(srcTodo.Status) {
+			return nil, model.InputStatePending
+		}
+	}
+	return nil, model.InputStateMissing
+}
+
+// todoStatusTerminal reports whether a todo has reached a state from which it
+// cannot upload new output on its own. Mirrors the terminal set the
+// artifact-filing paths use, so "terminal" means the same thing everywhere.
+func todoStatusTerminal(status string) bool {
+	switch status {
+	case "done", "failed", "canceled":
+		return true
+	}
+	return false
 }
 
 // effectiveTodoOutputs returns the deliverables of a todo to be fed into a

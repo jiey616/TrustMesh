@@ -723,6 +723,32 @@ export interface TodoQuestion {
   timed_out?: boolean
 }
 
+/**
+ * 平台**观测**到的输入位解析快照（输入方向的 TodoOutput 对称物）。字段对齐后端 model.TodoInput。
+ *
+ * 🔴 刻意**没有** `download_url` / `file_ref`：前者是带签名的取件凭证、后者是内部文件 id。
+ *    后端把这两个字段挡在 model 之外（`handler.TaskHandler.Get` 直接序列化 model，
+ *    所以排除只能靠类型本身），前端也不该假设它们存在。
+ */
+export interface TodoInput {
+  /** 该步骤声明的输入位名字 */
+  name: string
+  /** 来源步骤名；"prev" 表示「上一步」，跨任务时会解析成真实步骤名 */
+  source_step?: string
+  /** 上游需要满足的输出位名字 */
+  output_name?: string
+  /** 已就绪时命中的文件名 */
+  file_name?: string
+  file_size?: number
+  /**
+   * 三态：resolved=已拿到 / pending=上游仍活跃，等就行 / missing=上游已终态或无 holder，
+   * **必须人工介入**。🔴 文案与色调映射见 lib/todoInputs.ts，组件里禁止另写一份。
+   */
+  state: 'resolved' | 'pending' | 'missing' | string
+  /** 平台做这次观测的时间 */
+  checked_at?: string
+}
+
 /** Todo 实际产出、并已绑定到工作流步骤输出位的文件。字段对齐后端 model.TodoOutput */
 export interface TodoOutput {
   /** 匹配该步骤 StepOutput.name */
@@ -759,6 +785,11 @@ export interface Todo {
   questions?: TodoQuestion[]
   /** agent 上传并认领了输出位的文件，下游步骤据此取「上一个流程的输出文件」 */
   outputs?: TodoOutput[]
+  /**
+   * 平台观测到的**输入位**解析结果。空/缺省 = 该 todo 还没被派发过，或它所属步骤
+   * 没声明输入位 ⇒ 详情页不渲染该区块（老数据零影响，无需迁移）。
+   */
+  inputs?: TodoInput[]
   created_at: string
   updated_at: string
 }

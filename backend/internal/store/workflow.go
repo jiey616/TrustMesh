@@ -170,6 +170,55 @@ func (s *Store) RecordTodoDispatch(sc Scope, taskID, todoID string) (*model.Task
 	return s.copyTaskWithArtifactsUnsafe(task), nil
 }
 
+// RecordTodoInputRefs stores the platform-observed input-resolution state on a
+// todo, replacing any previous snapshot.
+//
+// Called from the payload build path (clawsynapse.BuildTodoInputs) on every
+// dispatch / answer, so the stored state always reflects the most recent
+// resolution attempt. An empty slice is a no-op: "nothing was resolved this
+// time" must NOT erase a failure the user still needs to see.
+//
+// Deliberately takes no Scope: callers are internal message paths operating on
+// a task they already fetched under their own authority (the assignee node was
+// resolved and authorised earlier in the same flow). This widens no
+// visibility — it only writes a field onto a todo the caller already holds.
+//
+// Deliberately skips the terminal-state guards RecordTodoDispatch applies: a
+// failed or canceled todo is precisely the one whose unresolved inputs the
+// user needs to inspect before deciding to re-dispatch.
+func (s *Store) RecordTodoInputRefs(taskID, todoID string, inputs []model.TodoInput) *transport.AppError {
+	taskID = strings.TrimSpace(taskID)
+	todoID = strings.TrimSpace(todoID)
+	if taskID == "" || todoID == "" || len(inputs) == 0 {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.tasks[taskID]; !ok {
+		return transport.NotFound("task not found")
+	}
+	if findTodoIndex(s.tasks[taskID], todoID) < 0 {
+		return transport.NotFound("todo not found")
+	}
+
+	// mutateTaskUnsafe does not lock (see RecordTodoDispatch, which calls it
+	// with s.mu already held) and persists the task internally.
+	if appErr := s.mutateTaskUnsafe(taskID, func(task *model.TaskDetail) *transport.AppError {
+		idx := findTodoIndex(task, todoID)
+		if idx < 0 {
+			return transport.NotFound("todo not found")
+		}
+		task.Todos[idx].Inputs = inputs
+		return nil
+	}); appErr != nil {
+		return appErr
+	}
+	s.publishTaskUnsafe(taskID)
+	return nil
+}
+
 func (s *Store) RecordSequentialTodoDispatch(taskID, todoID string) (*model.TaskDetail, *transport.AppError) {
 	taskID = strings.TrimSpace(taskID)
 	todoID = strings.TrimSpace(todoID)

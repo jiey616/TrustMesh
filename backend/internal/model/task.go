@@ -160,6 +160,17 @@ type Todo struct {
 	// steps resolve their StepInput.Source against these entries to fetch the
 	// "上一个流程的输出文件".
 	Outputs []TodoOutput `json:"outputs,omitempty" bson:"outputs,omitempty"`
+
+	// Inputs records how this todo's declared StepInputs resolved the last
+	// time the platform built a dispatch / answer payload. Unlike Outputs
+	// (declared by the agent on upload), Inputs is platform-observed.
+	//
+	// It exists so a declared-but-unresolvable upstream file is visible on the
+	// task page. Before this the only signals were a field on the outbound
+	// payload (which the browser never sees) and a warn log line — so the user
+	// learned about a broken link only when the executing agent spent a
+	// todo.ask on it (2026-09-29).
+	Inputs []TodoInput `json:"inputs,omitempty" bson:"inputs,omitempty"`
 }
 
 // TodoOutput binds a produced artifact to a workflow step's declared output.
@@ -168,6 +179,42 @@ type TodoOutput struct {
 	ArtifactID string `json:"artifact_id,omitempty" bson:"artifact_id,omitempty"`
 	FileRef    string `json:"file_ref,omitempty" bson:"file_ref,omitempty"` // ProjectFile ID
 }
+
+// TodoInput is the read-side mirror of TodoOutput for the *input* direction:
+// how one declared StepInput resolved when the payload was built.
+//
+// Deliberately narrower than protocol.TodoInputRef. That struct carries
+// DownloadUrl (a signed JWT) and FileRef (an internal id); neither may reach
+// the browser — and the task detail endpoint serialises the model directly,
+// so the exclusion has to live in this type rather than in a view layer.
+type TodoInput struct {
+	Name       string     `json:"name" bson:"name"`
+	SourceStep string     `json:"source_step,omitempty" bson:"source_step,omitempty"`
+	OutputName string     `json:"output_name,omitempty" bson:"output_name,omitempty"`
+	FileName   string     `json:"file_name,omitempty" bson:"file_name,omitempty"`
+	FileSize   int64      `json:"file_size,omitempty" bson:"file_size,omitempty"`
+	State      string     `json:"state" bson:"state"`
+	CheckedAt  *time.Time `json:"checked_at,omitempty" bson:"checked_at,omitempty"`
+}
+
+// Input resolution states (TodoInput.State).
+//
+// Three-valued on purpose: "the file is missing" and "the file is not ready
+// YET" call for opposite user actions — intervene vs. wait — and a bare
+// resolved/unresolved bool cannot tell them apart. Without the distinction the
+// user still has to ask a human, which is the very thing this field exists to
+// prevent.
+const (
+	// InputStateResolved: the upstream file was found; download_url issued.
+	InputStateResolved = "resolved"
+	// InputStatePending: the source step exists in a live upstream task that
+	// simply has not produced that output yet. Waiting is the right response.
+	InputStatePending = "pending"
+	// InputStateMissing: no task the resolver accepts holds the source step,
+	// or its holder is terminal without that output. Waiting will not help —
+	// a human has to intervene (re-bind the file or authorise a downgrade).
+	InputStateMissing = "missing"
+)
 
 // TodoQuestion is a single human-input request recorded on a todo.
 type TodoQuestion struct {

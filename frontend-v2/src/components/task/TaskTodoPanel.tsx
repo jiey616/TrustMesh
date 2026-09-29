@@ -3,7 +3,18 @@ import { Button, Input, Select, Tag, App } from 'antd'
 import { CheckOutlined, CloseOutlined, EditOutlined, DeleteOutlined, PlusOutlined, DownOutlined, RightOutlined, RedoOutlined } from '@ant-design/icons'
 import { useAddTaskTodo, useUpdateTaskTodo, useRemoveTaskTodo, useReopenTaskTodo } from '@/hooks/useTasks'
 import { useAgents } from '@/hooks/useAgents'
-import type { Todo, TaskDetail } from '@/types'
+import {
+  describeTodoInput,
+  sortTodoInputsForDisplay,
+  todoInputActionHint,
+  todoInputReadiness,
+  todoInputStateLabel,
+  todoInputStateTone,
+  todoInputSummaryText,
+  todoInputSummaryTone,
+  type TodoInputTone,
+} from '@/lib/todoInputs'
+import type { Todo, TaskDetail, TodoInput } from '@/types'
 
 const statusIndicatorColors: Record<string, string> = {
   planning: 'var(--cyan)',
@@ -25,6 +36,52 @@ const statusLabels: Record<string, string> = {
   failed: '失败',
   canceled: '已取消',
   waiting_user: '等待用户',
+}
+
+/** lib/todoInputs 的语义色调 → 主题变量。🔴 文案与色调都来自 lib，这里只做变量映射。 */
+const inputToneColors: Record<TodoInputTone, string> = {
+  success: 'var(--success)',
+  warning: 'var(--warning)',
+  error: 'var(--error)',
+  neutral: 'var(--text-quaternary)',
+}
+
+/**
+ * 展开区里的输入位清单。
+ *
+ * 未就绪的排在最前（`missing` 又排在 `pending` 之前）：用户展开这一块就是为了看
+ * **卡在哪**，已就绪的项只是佐证。顺序由 lib 的 sortTodoInputsForDisplay 统一决定，
+ * 组件不自己再排一遍。
+ */
+function TodoInputList({ inputs }: { inputs: TodoInput[] }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {sortTodoInputsForDisplay(inputs).map((input, index) => {
+        const color = inputToneColors[todoInputStateTone(input.state)]
+        const detail = describeTodoInput(input)
+        return (
+          <div
+            key={`${input.name}-${index}`}
+            style={{ fontSize: 13, borderRadius: 'var(--radius-control)', background: 'var(--surface-raised)', padding: '4px 8px' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ width: 6, height: 6, borderRadius: 'var(--radius-avatar)', background: color, flexShrink: 0 }} />
+              <span
+                style={{ flex: 1, minWidth: 0, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                title={input.name}
+              >
+                {input.name}
+              </span>
+              <span style={{ flexShrink: 0, color }}>{todoInputStateLabel(input.state)}</span>
+            </div>
+            {detail && (
+              <div style={{ marginTop: 2, paddingLeft: 12, color: 'var(--text-quaternary)' }}>{detail}</div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
 }
 
 function extractResultText(result: Todo['result']): string | null {
@@ -295,7 +352,11 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
       )}
 
       {task.todos.map((todo) => {
-        const hasDetails = todo.description || todo.error || (todo.questions?.length ?? 0) > 0
+        // 输入位就绪度：后端每次派发/回答时观测并落库的快照。空数组 = 这个 todo
+        // 从没被派发过（或它所属步骤没声明输入位）⇒ 整块不渲染，老数据零影响。
+        const inputReadiness = todoInputReadiness(todo.inputs)
+        const inputSummary = todoInputSummaryText(inputReadiness)
+        const hasDetails = todo.description || todo.error || (todo.questions?.length ?? 0) > 0 || !!inputSummary
         const isExpanded = expandedIds.has(todo.id)
         const isEditing = editingId === todo.id
         const isDeleting = deletingId === todo.id
@@ -353,6 +414,33 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
                   <span style={{ fontSize: 12, color: statusIndicatorColors[todo.status] ?? 'var(--text-quaternary)' }}>
                     {statusLabels[todo.status] ?? todo.status}
                   </span>
+                  {/* 输入位就绪度：折叠态下也能看出「该等还是该动手」—— 只有计数的话，
+                      「1 项缺失」与「1 项还没产出」长得一模一样，用户仍得展开才知道要不要叫人。
+                      点它展开明细；全部就绪时针为默认光标（没东西要看，但仍可展开确认取了哪个文件）。 */}
+                  {inputSummary && (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => toggleExpand(todo.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          toggleExpand(todo.id)
+                        }
+                      }}
+                      title={`${inputSummary}${todoInputActionHint(inputReadiness) ? ` · ${todoInputActionHint(inputReadiness)}` : ''}`}
+                      style={{
+                        fontSize: 12,
+                        flexShrink: 0,
+                        cursor: 'pointer',
+                        userSelect: 'none',
+                        color: inputToneColors[todoInputSummaryTone(inputReadiness)],
+                      }}
+                    >
+                      {inputSummary}
+                      {todoInputActionHint(inputReadiness) ? ` · ${todoInputActionHint(inputReadiness)}` : ''}
+                    </span>
+                  )}
                   {isRejected && todo.review_reason && (
                     <span style={{ fontSize: 12, color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 260 }} title={todo.review_reason}>
                       退回原因：{todo.review_reason}
@@ -418,6 +506,12 @@ export function TaskTodoPanel({ task }: TaskTodoPanelProps) {
                 {todo.error && (
                   <div style={{ fontSize: 13, color: 'var(--error)', whiteSpace: 'pre-wrap', background: 'rgba(244,63,94,0.06)', borderRadius: 'var(--radius-control)', padding: 6 }}>
                     {todo.error}
+                  </div>
+                )}
+                {inputSummary && todo.inputs && todo.inputs.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>输入位</div>
+                    <TodoInputList inputs={todo.inputs} />
                   </div>
                 )}
                 {todo.questions && todo.questions.length > 0 && (
